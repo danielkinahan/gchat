@@ -1,0 +1,20 @@
+people:
+  - name: Alice
+    color: "#E24B4A"
+    identities:
+      - platform: discord
+        id: "123456789012345678"
+      - platform: signal
+        id: "+15555550101"
+      - platform: facebook
+        name: "Alice Example"
+
+  - name: Bob
+    color: "#4A90E2"
+    identities:
+      - platform: discord
+        id: "234567890123456789"
+      - platform: signal
+        id: "+15555550102"
+      - platform: facebook
+        name: "Bob Example"

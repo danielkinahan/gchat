@@ -1,0 +1,14 @@
+themes:
+  - name: Main group chat
+    channels:
+      - source: "Discord: Example Server"
+        channel: general
+      - source: "Signal: signal"
+        channel: "Main Group"
+      - source: "Facebook: Example Chat"
+        channel: "Example Chat"
+
+  - name: Random
+    channels:
+      - source: "Discord: Example Server"
+        channel: random
