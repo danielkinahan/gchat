@@ -1,0 +1,8 @@
+{
+  "tasks": {
+    "dev": "./node_modules/.bin/vite dev",
+    "build": "./node_modules/.bin/vite build",
+    "check": "./node_modules/.bin/svelte-kit sync && ./node_modules/.bin/svelte-check --tsconfig ./tsconfig.json",
+    "preview": "./node_modules/.bin/vite preview"
+  }
+}

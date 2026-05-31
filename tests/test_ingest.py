@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import json
 import shutil
 from pathlib import Path
@@ -28,6 +27,7 @@ def _make_signal_subset(source: Path, target: Path) -> None:
     current_group_title: str | None = None
     group_chat: dict | None = None
     standard_message: dict | None = None
+    reacted_message: dict | None = None
     profile_change_update: dict | None = None
     group_name_update: dict | None = None
 
@@ -60,6 +60,9 @@ def _make_signal_subset(source: Path, target: Path) -> None:
                 if standard_message is None and "standardMessage" in item:
                     standard_message = record
                     continue
+                if reacted_message is None and (item.get("standardMessage") or {}).get("reactions"):
+                    reacted_message = record
+                    continue
                 if profile_change_update is None and update.get("profileChange"):
                     profile_change_update = record
                     continue
@@ -83,6 +86,7 @@ def _make_signal_subset(source: Path, target: Path) -> None:
         or group_recipient_id is None
         or group_chat_id is None
         or standard_message is None
+        or reacted_message is None
         or profile_change_update is None
         or group_name_update is None
     ):
@@ -93,6 +97,7 @@ def _make_signal_subset(source: Path, target: Path) -> None:
         group_recipient,
         group_chat,
         standard_message,
+        reacted_message,
         profile_change_update,
         group_name_update,
     ]
@@ -139,6 +144,7 @@ class IngestTests(unittest.TestCase):
             export = normalize_signal(subset)
         self.assertGreater(len(export.messages), 0)
         self.assertTrue(export.channels)
+        self.assertGreater(max((message.reaction_count for message in export.messages), default=0), 0)
 
     def test_build_database(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -158,12 +164,7 @@ class IngestTests(unittest.TestCase):
                 f"""themes:\n  - name: Example Theme\n    channels:\n      - source: '{sample_source}'\n        channel: '{sample_channel}'\n""",
                 encoding="utf-8",
             )
-            cwd = Path.cwd()
-            try:
-                os.chdir(tmp_path)
-                build_database(_make_subset_data_dir(tmp_path), output)
-            finally:
-                os.chdir(cwd)
+            build_database(_make_subset_data_dir(tmp_path), output, config_dir=config_dir)
             self.assertTrue(output.exists())
             import duckdb
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from dataclasses import dataclass
+from typing import Callable
 from pathlib import Path
 
 import duckdb
@@ -25,7 +26,12 @@ class NormalizedDataset:
     messages: list[MessageSeed]
 
 
-def _collect(data_dir: Path) -> NormalizedDataset:
+def _notify(status: Callable[[str], None] | None, message: str) -> None:
+    if status is not None:
+        status(message)
+
+
+def _collect(data_dir: Path, status: Callable[[str], None] | None = None) -> NormalizedDataset:
     paths = discover_dataset(data_dir)
     sources: "OrderedDict[str, SourceSeed]" = OrderedDict()
     channels: "OrderedDict[tuple[str, str], ChannelSeed]" = OrderedDict()
@@ -33,7 +39,9 @@ def _collect(data_dir: Path) -> NormalizedDataset:
     name_changes: list[NameChangeSeed] = []
     messages: list[MessageSeed] = []
 
+    _notify(status, f"Scanning {data_dir}")
     for path in paths.discord_files:
+        _notify(status, f"Normalizing Discord export {path.name}")
         export = normalize_discord(path)
         sources.setdefault(export.source.name, export.source)
         channels.setdefault((export.channel.source_name, export.channel.raw_id), export.channel)
@@ -43,6 +51,7 @@ def _collect(data_dir: Path) -> NormalizedDataset:
         messages.extend(export.messages)
 
     for chat_dir in paths.facebook_chats:
+        _notify(status, f"Normalizing Facebook archive {chat_dir.name}")
         export = normalize_facebook(chat_dir)
         sources.setdefault(export.source.name, export.source)
         channels.setdefault((export.channel.source_name, export.channel.raw_id), export.channel)
@@ -52,6 +61,8 @@ def _collect(data_dir: Path) -> NormalizedDataset:
         messages.extend(export.messages)
 
     for path in paths.signal_dbs + paths.signal_exports:
+        label = "legacy Signal export" if path.name.endswith(".sqlite") else "Signal backup"
+        _notify(status, f"Normalizing {label} {path.name}")
         export = normalize_signal(path)
         sources.setdefault(export.source.name, export.source)
         for channel in export.channels:
@@ -70,15 +81,33 @@ def _collect(data_dir: Path) -> NormalizedDataset:
     )
 
 
-def build_database(data_dir: Path, output_path: Path, overwrite: bool = True) -> None:
-    if overwrite and output_path.exists():
-        output_path.unlink()
+def build_database(
+    data_dir: Path,
+    output_path: Path,
+    overwrite: bool = True,
+    status: Callable[[str], None] | None = None,
+    config_dir: Path | None = None,
+) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Build to a temporary file so the API can continue serving the old DB
+    temp_output = output_path.with_suffix(output_path.suffix + '.tmp')
+    if temp_output.exists():
+        temp_output.unlink()
 
-    dataset = _collect(data_dir)
-    reconciliation = load_reconciliation(Path.cwd())
-    con = duckdb.connect(str(output_path))
+    _notify(status, "Collecting exports")
+    dataset = _collect(data_dir, status=status)
+    _notify(status, f"Collected {len(dataset.messages)} messages from {len(dataset.sources)} sources")
+    _notify(status, "Loading reconciliation")
+    reconciliation = load_reconciliation(config_dir=config_dir)
+    con = duckdb.connect(str(temp_output))
     con.execute(SCHEMA_SQL)
+    
+    # Optimize for bulk loading
+    con.execute("PRAGMA threads=4")
+    con.execute("PRAGMA memory_limit='4GB'")
+    
+    _notify(status, "Writing DuckDB tables")
 
     people_rows = []
     identity_rows = []
@@ -155,20 +184,44 @@ def build_database(data_dir: Path, output_path: Path, overwrite: bool = True) ->
                 (idx, channel_id, source_id, change.kind, change.previous_name, change.new_name, change.ts, change.payload_json)
             )
 
+    con.execute("BEGIN TRANSACTION")
+    
     if people_rows:
+        _notify(status, f"  Writing people ({len(people_rows)} rows)")
         con.executemany("INSERT INTO people VALUES (?, ?, ?)", people_rows)
     if identity_rows:
+        _notify(status, f"  Writing platform identities ({len(identity_rows)} rows)")
         con.executemany("INSERT INTO platform_identities VALUES (?, ?, ?, ?)", identity_rows)
     if source_rows:
+        _notify(status, f"  Writing sources ({len(source_rows)} rows)")
         con.executemany("INSERT INTO sources VALUES (?, ?, ?)", source_rows)
     if theme_rows:
+        _notify(status, f"  Writing themes ({len(theme_rows)} rows)")
         con.executemany("INSERT INTO themes VALUES (?, ?)", theme_rows)
     if channel_rows:
+        _notify(status, f"  Writing channels ({len(channel_rows)} rows)")
         con.executemany("INSERT INTO channels VALUES (?, ?, ?, ?, ?)", channel_rows)
     if person_name_change_rows:
+        _notify(status, f"  Writing person name changes ({len(person_name_change_rows)} rows)")
         con.executemany("INSERT INTO person_name_changes VALUES (?, ?, ?, ?, ?, ?, ?, ?)", person_name_change_rows)
     if channel_name_change_rows:
+        _notify(status, f"  Writing channel name changes ({len(channel_name_change_rows)} rows)")
         con.executemany("INSERT INTO channel_name_changes VALUES (?, ?, ?, ?, ?, ?, ?, ?)", channel_name_change_rows)
     if message_rows:
-        con.executemany("INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", message_rows)
+        _notify(status, f"  Writing messages ({len(message_rows)} rows)")
+        # Insert messages in batches for better performance
+        batch_size = 50000
+        for i in range(0, len(message_rows), batch_size):
+            batch = message_rows[i : i + batch_size]
+            con.executemany("INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", batch)
+            _notify(status, f"    Inserted {min(i + batch_size, len(message_rows))}/{len(message_rows)} messages")
+    
+    con.execute("COMMIT")
     con.close()
+    
+    # Atomically replace the old database with the new one
+    if output_path.exists():
+        output_path.unlink()
+    temp_output.rename(output_path)
+    
+    _notify(status, f"Build complete: {output_path}")

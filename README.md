@@ -21,6 +21,10 @@ gChat is a self-hosted ingest pipeline for consolidating chat exports from Disco
 pip install -e .
 ```
 
+```bash
+deno task check
+```
+
 ## Project layout
 
 ```text
@@ -68,16 +72,16 @@ If `config/people.yaml` or `config/themes.yaml` is missing, gChat uses the corre
 ## Building the database
 
 ```bash
-gchat-build --data-dir data --output gchat.duckdb
+uv run python -m gchat build --data-dir data --output gchat.duckdb
 ```
 
-or:
+The build command scans `data/`, applies reconciliation rules from `config/` (or `--config-dir`), writes a fresh DuckDB file, and prints progress while it runs.
+
+## Running the API
 
 ```bash
-python -m gchat build --data-dir data --output gchat.duckdb
+uv run python -m gchat serve --db gchat.duckdb --host 127.0.0.1 --port 8000
 ```
-
-The build command scans `data/`, applies reconciliation rules from `config/`, and writes a fresh DuckDB file.
 
 ## Output tables
 
@@ -108,4 +112,12 @@ Useful flags:
 
 ```bash
 python -m unittest
+```
+
+```bash
+deno task dev
+```
+
+```bash
+deno task build
 ```

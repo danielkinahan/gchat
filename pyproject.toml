@@ -9,12 +9,16 @@ description = "Self-hosted multi-platform chat analytics ingest pipeline"
 requires-python = ">=3.11"
 dependencies = [
   "beautifulsoup4>=4.12",
+  "fastapi>=0.115",
   "duckdb>=1.1",
   "PyYAML>=6.0",
+  "httpx2>=0.0.1",
+  "uvicorn>=0.30",
 ]
 
 [project.scripts]
 gchat-build = "gchat.cli:main"
+gchat-api = "gchat.api:main"
 gchat-copy-facebook-groups = "gchat.facebook_archive:main"
 
 [tool.setuptools]

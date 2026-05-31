@@ -117,6 +117,37 @@ def _extract_attachment_count(chat_item: dict) -> int:
     return 0
 
 
+def _extract_reaction_count(chat_item: dict) -> int:
+    def count_value(value: object) -> int:
+        if isinstance(value, list):
+            return len(value)
+        if isinstance(value, dict):
+            nested = value.get("reactions") or value.get("reactionList") or value.get("reactionData")
+            if isinstance(nested, list):
+                return len(nested)
+            if isinstance(nested, dict):
+                return count_value(nested)
+            return 1
+        if isinstance(value, int):
+            return value
+        return 0
+
+    standard = chat_item.get("standardMessage") or {}
+    for source in (
+        chat_item.get("reactions"),
+        chat_item.get("reactionList"),
+        chat_item.get("reactionData"),
+        standard.get("reactions"),
+        standard.get("reactionList"),
+        standard.get("reactionData"),
+    ):
+        if source:
+            count = count_value(source)
+            if count:
+                return count
+    return 0
+
+
 def _message_id(chat_item: dict) -> str:
     payload = json.dumps(chat_item, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
@@ -297,6 +328,7 @@ def normalize_backup(path: Path) -> SignalExport:
                 ts=timestamp,
                 content=_extract_message_content(item),
                 attachment_count=_extract_attachment_count(item),
+                reaction_count=_extract_reaction_count(item),
             )
         )
 
