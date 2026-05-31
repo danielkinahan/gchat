@@ -37,7 +37,9 @@ class MessageSeed:
     content: str
     reply_to_id: str | None = None
     attachment_count: int = 0
+    attachment_preview: str | None = None
     reaction_count: int = 0
+    reaction_summary: str | None = None
 
 
 @dataclass(frozen=True)

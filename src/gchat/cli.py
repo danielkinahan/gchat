@@ -19,6 +19,7 @@ def main() -> None:
 
     serve = sub.add_parser("serve", help="Run the read API")
     serve.add_argument("--db", type=Path, default=Path("gchat.duckdb"))
+    serve.add_argument("--data-dir", type=Path, default=Path("data"))
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--reload", action="store_true")
@@ -32,4 +33,4 @@ def main() -> None:
             config_dir=args.config_dir,
         )
     elif args.command == "serve":
-        run_server(args.db, host=args.host, port=args.port, reload=args.reload)
+        run_server(args.db, data_dir=args.data_dir, host=args.host, port=args.port, reload=args.reload)

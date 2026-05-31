@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -28,22 +30,34 @@ def _text(node) -> str:
     return fix_facebook_mojibake(normalize_whitespace(node.get_text(" ", strip=True)))
 
 
-def _content(node) -> tuple[str, int]:
+def _content(node) -> tuple[str, int, str | None]:
+    # In Facebook HTML exports, reactions are embedded as <ul class="_tqp"><li>...,
+    # nested under the message body; remove them so message text stays clean.
+    for reaction_list in node.select("ul._tqp"):
+        reaction_list.decompose()
+
     text = _text(node)
     if text:
-        return text, 0
+        return text, 0, None
 
     attachments = node.find_all(["img", "a"], recursive=True)
     if attachments:
         labels: list[str] = []
+        preview: str | None = None
         for attachment in attachments:
             if attachment.name == "img":
                 labels.append(attachment.get("alt") or "sticker")
+                if preview is None:
+                    src = attachment.get("src")
+                    if isinstance(src, str) and src.strip():
+                        preview = src.strip()
             else:
                 href = attachment.get("href") or ""
                 labels.append(Path(href).name if href else "attachment")
-        return fix_facebook_mojibake(normalize_whitespace(" ".join(labels))), len(attachments)
-    return "", 0
+                if preview is None and href:
+                    preview = str(href).strip()
+        return fix_facebook_mojibake(normalize_whitespace(" ".join(labels))), len(attachments), preview
+    return "", 0, None
 
 
 _NAME_CHANGE_PATTERNS = (
@@ -58,12 +72,15 @@ _NAME_CHANGE_PATTERNS = (
 )
 
 
-def _extract_group_name_change(content: str) -> str | None:
+def _extract_group_name_change(content: str) -> tuple[str, str | None] | None:
     text = normalize_whitespace(content)
     for pattern in _NAME_CHANGE_PATTERNS:
         match = pattern.match(text)
         if match:
-            return match.group("name").strip().rstrip(".!?").strip()
+            return (
+                match.group("name").strip().rstrip(".!?").strip(),
+                match.group("actor").strip() if match.group("actor") else None,
+            )
     return None
 
 
@@ -81,7 +98,46 @@ def _reaction_count(node) -> int:
     match = re.search(r"(\d+)\s+reactions?", text)
     if match:
         return int(match.group(1))
+
+    reaction_entries = [li for ul in node.select("ul._tqp") for li in ul.find_all("li", recursive=False)]
+    if reaction_entries:
+        return len(reaction_entries)
+
     return 0
+
+
+def _extract_reaction_emoji(text: str) -> str:
+    value = normalize_whitespace(text)
+    if not value:
+        return ""
+    prefix: list[str] = []
+    for ch in value:
+        if ch.isalnum():
+            break
+        if ch.isspace():
+            if prefix:
+                break
+            continue
+        prefix.append(ch)
+    return "".join(prefix).strip()
+
+
+def _reaction_summary(node) -> str | None:
+    counts: Counter[str] = Counter()
+    for li in node.select("ul._tqp > li"):
+        emoji = _extract_reaction_emoji(_text(li))
+        if emoji:
+            counts[emoji] += 1
+    if not counts:
+        return None
+    return " ".join(f"{emoji}×{count}" for emoji, count in counts.most_common())
+
+
+_REACTION_EMOJIS = {"👍", "❤️", "❤", "😂", "😮", "😢", "😡", "🥰"}
+
+
+def _looks_like_reaction_message(text: str) -> bool:
+    return normalize_whitespace(text) in _REACTION_EMOJIS
 
 
 def _timestamp_from_children(children) -> datetime | None:
@@ -107,7 +163,7 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
     people_by_key: dict[str, PersonSeed] = {}
     messages: list[MessageSeed] = []
     seen_message_ids: set[str] = set()
-    rename_events: list[tuple[datetime, int, str]] = []
+    rename_events: list[tuple[datetime, int, str, str | None]] = []
     event_index = 0
 
     for html_file in sorted(chat_dir.glob("message_*.html")):
@@ -118,7 +174,9 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
             if len(children) < 2:
                 continue
             author = _text(children[0])
-            content, attachment_count = _content(children[1])
+            reaction_count = _reaction_count(container)
+            reaction_summary = _reaction_summary(container)
+            content, attachment_count, attachment_preview = _content(children[1])
             ts = _timestamp_from_children(children)
             if not ts:
                 continue
@@ -127,12 +185,15 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
                 raw_id,
                 PersonSeed(platform="facebook", raw_id=raw_id, display_name=author),
             )
-            if rename := _extract_group_name_change(content or _text(container)):
-                rename_events.append((ts, event_index, rename))
+            if rename_data := _extract_group_name_change(content or _text(container)):
+                rename, actor_name = rename_data
+                rename_events.append((ts, event_index, rename, actor_name))
             message_id = hash_message([author, ts.isoformat(), content])
             if message_id in seen_message_ids:
                 continue
             seen_message_ids.add(message_id)
+            if not reaction_count and _looks_like_reaction_message(content):
+                reaction_count = 1
             messages.append(
                 MessageSeed(
                     id=message_id,
@@ -144,13 +205,15 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
                     ts=ts,
                     content=content,
                     attachment_count=attachment_count,
-                    reaction_count=_reaction_count(container),
+                    attachment_preview=attachment_preview,
+                    reaction_count=reaction_count,
+                    reaction_summary=reaction_summary,
                 )
             )
 
     name_changes: list[NameChangeSeed] = []
     last_name: str | None = None
-    for ts, _, new_name in sorted(rename_events, key=lambda item: (item[0], item[1], item[2].casefold())):
+    for ts, _, new_name, actor_name in sorted(rename_events, key=lambda item: (item[0], item[1], item[2].casefold())):
         if new_name == last_name:
             continue
         name_changes.append(
@@ -163,7 +226,7 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
                 new_name=new_name,
                 ts=ts,
                 kind="channel-title-change",
-                payload_json=None,
+                payload_json=json.dumps({"actor_name": actor_name}, ensure_ascii=False) if actor_name else None,
             )
         )
         last_name = new_name

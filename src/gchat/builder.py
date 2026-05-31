@@ -163,7 +163,9 @@ def build_database(
                 word_count,
                 char_count,
                 message.attachment_count,
+                message.attachment_preview,
                 message.reaction_count,
+                message.reaction_summary,
                 None,
                 None,
             )
@@ -213,7 +215,7 @@ def build_database(
         batch_size = 50000
         for i in range(0, len(message_rows), batch_size):
             batch = message_rows[i : i + batch_size]
-            con.executemany("INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", batch)
+            con.executemany("INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", batch)
             _notify(status, f"    Inserted {min(i + batch_size, len(message_rows))}/{len(message_rows)} messages")
     
     con.execute("COMMIT")

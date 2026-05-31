@@ -6,12 +6,14 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import duckdb
 import yaml
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from .reconciliation import load_reconciliation
 
@@ -33,6 +35,10 @@ _THEME_CHANNEL_IDS: dict[str, list[int]] = {}
 
 def _default_db_path() -> Path:
     return Path(os.environ.get("GCHAT_DB_PATH", "gchat.duckdb"))
+
+
+def _default_data_dir() -> Path:
+    return Path(os.environ.get("GCHAT_DATA_DIR", "data"))
 
 
 def _load_fb_chat_names() -> dict[str, str]:
@@ -78,6 +84,25 @@ def _count_metric_expr(metric: str) -> str:
 
 def _word_count_expr() -> str:
     return "COALESCE(array_length(regexp_extract_all(replace(lower(coalesce(m.content, '')), chr(39), ''), '[a-z]{3,}')), 0)"
+
+
+def _message_preview(content: str | None, attachment_count: int, attachment_preview: str | None = None) -> str:
+    text = (content or "").strip()
+    if text:
+        return text
+    preview = (attachment_preview or "").strip()
+    if preview:
+        return preview
+    if attachment_count > 0:
+        unit = "attachment" if attachment_count == 1 else "attachments"
+        return f"[{attachment_count} {unit}]"
+    return "[no text]"
+
+
+def _normalized_history_name(value: str | None) -> str:
+    if not value:
+        return ""
+    return " ".join(value.split()).casefold()
 
 
 @dataclass(frozen=True)
@@ -263,17 +288,75 @@ def _row_to_dict(row: tuple[Any, ...]) -> dict[str, Any]:
     return dict(row)
 
 
-def create_app(db_path: Path | None = None) -> FastAPI:
+def _messages_has_column(db_path: Path, column_name: str) -> bool:
+    with _connect(db_path) as con:
+        rows = con.execute("PRAGMA table_info(messages)").fetchall()
+    return any(str(row[1]) == column_name for row in rows)
+
+
+def _safe_child_path(root: Path, rel_path: str) -> Path | None:
+    cleaned_parts = [part for part in Path(rel_path).parts if part not in {"", ".", ".."}]
+    if not cleaned_parts:
+        return None
+    target = (root / Path(*cleaned_parts)).resolve()
+    try:
+        target.relative_to(root.resolve())
+    except ValueError:
+        return None
+    return target
+
+
+def _media_url(platform: str, source: str, rel_path: str) -> str:
+    return f"/api/media?{urlencode({'platform': platform, 'source': source, 'path': rel_path})}"
+
+
+def _resolve_local_attachment_url(attachment_preview: str | None, source_name: str, data_dir: Path) -> str | None:
+    preview = (attachment_preview or "").strip()
+    if not preview:
+        return None
+    lowered = preview.casefold()
+    if lowered.startswith("http://") or lowered.startswith("https://"):
+        return preview
+
+    if source_name.startswith("Facebook: "):
+        source_folder = source_name.removeprefix("Facebook: ").strip()
+        source_root = (data_dir / "facebook" / source_folder).resolve()
+        candidate = _safe_child_path(source_root, preview)
+        if candidate and candidate.exists() and candidate.is_file():
+            relative = candidate.relative_to(source_root).as_posix()
+            return _media_url("facebook", source_folder, relative)
+        return None
+
+    if source_name.startswith("Signal: "):
+        source_folder = source_name.removeprefix("Signal: ").strip()
+        source_root = (data_dir / "signal" / source_folder).resolve()
+        direct = _safe_child_path(source_root, preview)
+        if direct and direct.exists() and direct.is_file():
+            relative = direct.relative_to(source_root).as_posix()
+            return _media_url("signal", source_folder, relative)
+        fallback = _safe_child_path(source_root / "files", Path(preview).name)
+        if fallback and fallback.exists() and fallback.is_file():
+            relative = fallback.relative_to(source_root).as_posix()
+            return _media_url("signal", source_folder, relative)
+        return None
+
+    return None
+
+
+def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> FastAPI:
     global _THEME_CHANNEL_IDS
 
     app = FastAPI(title="gchat API", version="0.1.0")
     app.state.db_path = db_path or _default_db_path()
+    app.state.data_dir = (data_dir or _default_data_dir()).resolve()
     app.state.fb_chat_names = _load_fb_chat_names()
     app.state.reconciliation = load_reconciliation()
     app.state.configured_people_names = _load_configured_people_names()
     configured_theme_names = _load_configured_theme_names()
     app.state.theme_id_to_name = {i + 1: name for i, name in enumerate(configured_theme_names)}
     app.state.theme_to_channel_ids = _load_theme_channel_ids(app.state.db_path, app.state.reconciliation)
+    app.state.has_attachment_preview = _messages_has_column(app.state.db_path, "attachment_preview")
+    app.state.has_reaction_summary = _messages_has_column(app.state.db_path, "reaction_summary")
     _THEME_CHANNEL_IDS = app.state.theme_to_channel_ids
 
     app.add_middleware(
@@ -287,6 +370,16 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/api/media")
+    def media_file(platform: str, source: str, path: str) -> FileResponse:
+        if platform not in {"facebook", "signal"}:
+            raise HTTPException(status_code=404, detail="Unsupported media platform")
+        source_root = (app.state.data_dir / platform / source).resolve()
+        target = _safe_child_path(source_root, path)
+        if target is None or not target.exists() or not target.is_file():
+            raise HTTPException(status_code=404, detail="Media file not found")
+        return FileResponse(target)
 
     @app.get("/api/overview")
     def overview(
@@ -647,7 +740,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             ).fetchall()
 
             channel_change_params: list[Any] = []
-            channel_change_where = ["1 = 1"]
+            channel_change_where = ["trim(d.new_name) <> ''"]
             if start is not None:
                 channel_change_where.append("d.ts >= ?")
                 channel_change_params.append(datetime.combine(start, time.min))
@@ -662,10 +755,10 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             channel_change_rows = con.execute(
                 f"""
                 WITH deduped AS (
-                    SELECT DISTINCT channel_id, source_id, previous_name, new_name, ts
+                    SELECT DISTINCT channel_id, source_id, previous_name, new_name, ts, json_extract_string(payload_json, '$.actor_name') AS actor_name
                     FROM channel_name_changes
                 )
-                SELECT d.channel_id, d.previous_name, d.new_name, d.ts
+                SELECT d.channel_id, d.previous_name, d.new_name, d.ts, d.actor_name
                 FROM deduped d
                 JOIN channels c ON c.id = d.channel_id
                 JOIN sources s ON s.id = d.source_id
@@ -699,12 +792,13 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                         person_id,
                         source_id,
                         json_extract_string(payload_json, '$.chatId') AS chat_id,
+                        json_extract_string(payload_json, '$.actor_name') AS actor_name,
                         previous_name,
                         new_name,
                         ts
                     FROM person_name_changes
                 )
-                SELECT d.person_id, d.source_id, d.chat_id, p.display_name, d.previous_name, d.new_name, d.ts
+                SELECT d.person_id, d.source_id, d.chat_id, p.display_name, d.actor_name, d.previous_name, d.new_name, d.ts
                 FROM deduped d
                 JOIN people p ON p.id = d.person_id
                 JOIN sources s ON s.id = d.source_id
@@ -715,17 +809,18 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             ).fetchall()
 
             channel_history_by_id: dict[int, list[dict[str, Any]]] = {}
-            for channel_id, previous_name, new_name, ts in channel_change_rows:
+            for channel_id, previous_name, new_name, ts, actor_name in channel_change_rows:
                 channel_history_by_id.setdefault(int(channel_id), []).append(
                     {
                         "previous_name": previous_name,
                         "new_name": new_name,
+                        "author_name": actor_name,
                         "ts": ts.isoformat() if ts else None,
                     }
                 )
 
             participants_by_chat: dict[tuple[int, str], dict[int, dict[str, Any]]] = {}
-            for person_id, source_id, chat_id, display_name, previous_name, new_name, ts in person_change_rows:
+            for person_id, source_id, chat_id, display_name, actor_name, previous_name, new_name, ts in person_change_rows:
                 if not chat_id:
                     continue
                 chat_key = (int(source_id), str(chat_id))
@@ -741,6 +836,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                     {
                         "previous_name": previous_name,
                         "new_name": new_name,
+                        "author_name": actor_name or display_name,
                         "ts": ts.isoformat() if ts else None,
                     }
                 )
@@ -765,8 +861,21 @@ def create_app(db_path: Path | None = None) -> FastAPI:
 
             for channel_id, source_id, platform, source_name, current_name, platform_channel_id in channel_rows:
                 chat_key = (int(source_id), str(platform_channel_id))
-                previous_names = channel_history_by_id.get(int(channel_id), [])
-                if not previous_names:
+                raw_previous_names = channel_history_by_id.get(int(channel_id), [])
+                if not raw_previous_names:
+                    continue
+                previous_names: list[dict[str, Any]] = []
+                has_real_rename = False
+                for change in raw_previous_names:
+                    previous_norm = _normalized_history_name(change["previous_name"])
+                    new_norm = _normalized_history_name(change["new_name"])
+                    if not new_norm:
+                        continue
+                    if previous_norm and previous_norm != new_norm:
+                        has_real_rename = True
+                    if not previous_norm or previous_norm != new_norm:
+                        previous_names.append(change)
+                if not has_real_rename or not previous_names:
                     continue
                 if platform == "signal" and int(channel_id) not in signal_chat_ids:
                     continue
@@ -1304,6 +1413,8 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
         params: list[Any] = []
         where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        attachment_preview_select = "m.attachment_preview" if app.state.has_attachment_preview else "NULL::TEXT"
+        reaction_summary_select = "m.reaction_summary" if app.state.has_reaction_summary else "NULL::TEXT"
 
         with _connect(app.state.db_path) as con:
             rows = con.execute(
@@ -1312,11 +1423,14 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                     m.id,
                     m.ts,
                     m.content,
+                    m.attachment_count,
+                    {attachment_preview_select} AS attachment_preview,
                     p.display_name,
                     p.color,
                     c.name,
                     s.name,
-                    m.reaction_count
+                    m.reaction_count,
+                    {reaction_summary_select} AS reaction_summary
                 FROM messages m
                 JOIN people p ON p.id = m.person_id
                 JOIN channels c ON c.id = m.channel_id
@@ -1333,12 +1447,15 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                 {
                     "id": row[0],
                     "ts": row[1].isoformat() if row[1] else None,
-                    "content": row[2],
-                    "person_name": row[3],
-                    "person_color": row[4],
-                    "channel_name": _get_display_name(row[5], row[6], app.state.fb_chat_names),
-                    "source_name": row[6],
-                    "reaction_count": int(row[7]),
+                    "content": _message_preview(row[2], int(row[3] or 0), row[4]),
+                    "attachment_preview": row[4],
+                    "attachment_url": _resolve_local_attachment_url(row[4], row[8], app.state.data_dir),
+                    "person_name": row[5],
+                    "person_color": row[6],
+                    "channel_name": _get_display_name(row[7], row[8], app.state.fb_chat_names),
+                    "source_name": row[8],
+                    "reaction_count": int(row[9]),
+                    "reaction_summary": row[10],
                 }
                 for row in rows
             ]
@@ -1487,8 +1604,14 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     return app
 
 
-def run_server(db_path: Path | None = None, host: str = "127.0.0.1", port: int = 8000, reload: bool = False) -> None:
-    uvicorn.run(create_app(db_path), host=host, port=port, reload=reload)
+def run_server(
+    db_path: Path | None = None,
+    data_dir: Path | None = None,
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    reload: bool = False,
+) -> None:
+    uvicorn.run(create_app(db_path, data_dir=data_dir), host=host, port=port, reload=reload)
 
 
 def main() -> None:
@@ -1496,8 +1619,9 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(prog="gchat-api")
     parser.add_argument("--db", type=Path, default=None)
+    parser.add_argument("--data-dir", type=Path, default=None)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--reload", action="store_true")
     args = parser.parse_args()
-    run_server(args.db, host=args.host, port=args.port, reload=args.reload)
+    run_server(args.db, data_dir=args.data_dir, host=args.host, port=args.port, reload=args.reload)

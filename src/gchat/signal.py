@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -117,6 +118,29 @@ def _extract_attachment_count(chat_item: dict) -> int:
     return 0
 
 
+def _extract_attachment_preview(chat_item: dict) -> str | None:
+    standard = chat_item.get("standardMessage") or {}
+    attachments = standard.get("attachments")
+    if isinstance(attachments, list):
+        for attachment in attachments:
+            if not isinstance(attachment, dict):
+                continue
+            pointer = attachment.get("pointer") if isinstance(attachment.get("pointer"), dict) else {}
+            for value in (
+                pointer.get("fileName"),
+                attachment.get("fileName"),
+                pointer.get("contentType"),
+                attachment.get("contentType"),
+            ):
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    if "stickerMessage" in chat_item:
+        return "sticker"
+    if "viewOnceMessage" in chat_item:
+        return "view-once message"
+    return None
+
+
 def _extract_reaction_count(chat_item: dict) -> int:
     def count_value(value: object) -> int:
         if isinstance(value, list):
@@ -146,6 +170,40 @@ def _extract_reaction_count(chat_item: dict) -> int:
             if count:
                 return count
     return 0
+
+
+def _extract_reaction_summary(chat_item: dict) -> str | None:
+    standard = chat_item.get("standardMessage") or {}
+    raw_reactions: object = None
+    for source in (
+        chat_item.get("reactions"),
+        chat_item.get("reactionList"),
+        chat_item.get("reactionData"),
+        standard.get("reactions"),
+        standard.get("reactionList"),
+        standard.get("reactionData"),
+    ):
+        if source:
+            raw_reactions = source
+            break
+    if not isinstance(raw_reactions, list):
+        return None
+
+    counts: Counter[str] = Counter()
+    for reaction in raw_reactions:
+        if not isinstance(reaction, dict):
+            continue
+        emoji = str(
+            reaction.get("emoji")
+            or reaction.get("reaction")
+            or reaction.get("reactionEmoji")
+            or ""
+        ).strip()
+        if emoji:
+            counts[emoji] += 1
+    if not counts:
+        return None
+    return " ".join(f"{emoji}×{count}" for emoji, count in counts.most_common())
 
 
 def _message_id(chat_item: dict) -> str:
@@ -328,7 +386,9 @@ def normalize_backup(path: Path) -> SignalExport:
                 ts=timestamp,
                 content=_extract_message_content(item),
                 attachment_count=_extract_attachment_count(item),
+                attachment_preview=_extract_attachment_preview(item),
                 reaction_count=_extract_reaction_count(item),
+                reaction_summary=_extract_reaction_summary(item),
             )
         )
 
@@ -450,9 +510,90 @@ def normalize_database(path: Path) -> SignalExport:
         reaction_counts = dict(
             con.execute("SELECT messageId, COUNT(*) FROM reactions GROUP BY messageId").fetchall()
         )
+        reaction_summaries: dict[str, str] = {}
+        try:
+            reaction_cols = {
+                str(row["name"])
+                for row in con.execute("PRAGMA table_info(reactions)").fetchall()
+            }
+        except sqlite3.Error:
+            reaction_cols = set()
+        if "messageId" in reaction_cols:
+            selected_cols = ["messageId"]
+            for optional in ("emoji", "reaction", "emojiName", "json"):
+                if optional in reaction_cols:
+                    selected_cols.append(optional)
+            query = f"SELECT {', '.join(selected_cols)} FROM reactions ORDER BY rowid"
+            grouped: dict[str, Counter[str]] = {}
+            for row in con.execute(query).fetchall():
+                message_id = str(row["messageId"])
+                emoji = ""
+                for key in ("emoji", "reaction", "emojiName"):
+                    if key in selected_cols and row[key]:
+                        emoji = str(row[key]).strip()
+                        if emoji:
+                            break
+                if not emoji and "json" in selected_cols and row["json"]:
+                    try:
+                        payload = json.loads(str(row["json"]))
+                    except json.JSONDecodeError:
+                        payload = {}
+                    if isinstance(payload, dict):
+                        emoji = str(
+                            payload.get("emoji")
+                            or payload.get("reaction")
+                            or payload.get("emojiName")
+                            or ""
+                        ).strip()
+                if not emoji:
+                    continue
+                grouped.setdefault(message_id, Counter())[emoji] += 1
+            for message_id, counts in grouped.items():
+                reaction_summaries[message_id] = " ".join(
+                    f"{emoji}×{count}" for emoji, count in counts.most_common()
+                )
         attachment_counts = dict(
             con.execute("SELECT messageId, COUNT(*) FROM message_attachments GROUP BY messageId").fetchall()
         )
+        attachment_previews: dict[str, str] = {}
+        try:
+            attachment_cols = {
+                str(row["name"])
+                for row in con.execute("PRAGMA table_info(message_attachments)").fetchall()
+            }
+        except sqlite3.Error:
+            attachment_cols = set()
+        if "messageId" in attachment_cols:
+            selected_cols = ["messageId"]
+            for optional in ("fileName", "path", "contentType", "json"):
+                if optional in attachment_cols:
+                    selected_cols.append(optional)
+            query = f"SELECT {', '.join(selected_cols)} FROM message_attachments ORDER BY rowid"
+            for row in con.execute(query).fetchall():
+                message_id = str(row["messageId"])
+                if message_id in attachment_previews:
+                    continue
+                preview: str | None = None
+                for key in ("fileName", "path", "contentType"):
+                    if key in selected_cols:
+                        value = row[key]
+                        if isinstance(value, str) and value.strip():
+                            preview = value.strip()
+                            break
+                if preview is None and "json" in selected_cols and row["json"]:
+                    try:
+                        payload = json.loads(str(row["json"]))
+                    except json.JSONDecodeError:
+                        payload = {}
+                    if isinstance(payload, dict):
+                        for key in ("fileName", "path", "contentType", "url"):
+                            value = payload.get(key)
+                            if isinstance(value, str) and value.strip():
+                                preview = value.strip()
+                                break
+                if preview:
+                    attachment_previews[message_id] = preview
+
         messages: list[MessageSeed] = []
         rows = con.execute(
             "SELECT id, conversationId, sourceServiceId, body, timestamp, type FROM messages WHERE type IN ('incoming','outgoing') ORDER BY timestamp, id"
@@ -487,7 +628,9 @@ def normalize_database(path: Path) -> SignalExport:
                     ts=timestamp,
                     content=body,
                     attachment_count=int(attachment_counts.get(row["id"], 0)),
+                    attachment_preview=attachment_previews.get(str(row["id"])),
                     reaction_count=int(reaction_counts.get(row["id"], 0)),
+                    reaction_summary=reaction_summaries.get(str(row["id"])),
                 )
             )
 

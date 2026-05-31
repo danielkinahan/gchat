@@ -64,7 +64,9 @@ CREATE TABLE IF NOT EXISTS messages (
   word_count INTEGER,
   char_count INTEGER,
   attachment_count INTEGER DEFAULT 0,
+  attachment_preview TEXT,
   reaction_count INTEGER DEFAULT 0,
+  reaction_summary TEXT,
   lang TEXT,
   sentiment REAL
 );

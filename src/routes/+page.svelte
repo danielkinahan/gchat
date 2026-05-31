@@ -1,6 +1,11 @@
 <script lang="ts">
     import { goto } from "$app/navigation";
-    import { fetchJson, type Overview, type TimePoint, type TopPeople } from "$lib/api";
+    import {
+        fetchJson,
+        type Overview,
+        type TimePoint,
+        type TopPeople,
+    } from "$lib/api";
 
     type CountMetric = "messages" | "words";
     type MessageTabData = {
@@ -69,6 +74,7 @@
                 previous_names: Array<{
                     previous_name: string | null;
                     new_name: string;
+                    author_name?: string | null;
                     ts: string | null;
                 }>;
                 participants: Array<{
@@ -77,6 +83,7 @@
                     history: Array<{
                         previous_name: string | null;
                         new_name: string;
+                        author_name?: string | null;
                         ts: string | null;
                     }>;
                 }>;
@@ -112,7 +119,12 @@
     let selectedPlatforms = data.filters.platforms
         ? data.filters.platforms.split(",")
         : [];
-    let activeTab: "overview" | "language" | "history" | "links" | "interactions" = "overview";
+    let activeTab:
+        | "overview"
+        | "language"
+        | "history"
+        | "links"
+        | "interactions" = "overview";
     let messageMetric: CountMetric = "messages";
     let overviewData: MessageTabData = {
         overview: data.overview,
@@ -145,7 +157,12 @@
             color: string;
             count: number;
         }>;
-        chats: Array<{ id: number; name: string; source_name: string; count: number }>;
+        chats: Array<{
+            id: number;
+            name: string;
+            source_name: string;
+            count: number;
+        }>;
     } = { word: "", people: [], chats: [] };
     let showWordExamples = false;
     let isLoadingExamples = false;
@@ -163,7 +180,12 @@
     let linksError = "";
     let domainSearch = "";
     let linkedDomains: Array<{ domain: string; count: number }> = [];
-    let linksByAuthor: Array<{ id: number; display_name: string; color: string; count: number }> = [];
+    let linksByAuthor: Array<{
+        id: number;
+        display_name: string;
+        color: string;
+        count: number;
+    }> = [];
     let loadedLinksFilterKey: string | null = null;
     let isLoadingInteractions = false;
     let interactionsError = "";
@@ -173,13 +195,21 @@
         id: string;
         ts: string | null;
         content: string;
+        attachment_preview: string | null;
+        attachment_url: string | null;
         person_name: string;
         person_color: string;
         channel_name: string;
         source_name: string;
         reaction_count: number;
+        reaction_summary: string | null;
     }> = [];
-    let reactionAuthors: Array<{ id: number; display_name: string; color: string; count: number }> = [];
+    let reactionAuthors: Array<{
+        id: number;
+        display_name: string;
+        color: string;
+        count: number;
+    }> = [];
     let loadedInteractionsFilterKey: string | null = null;
 
     function messageCountLabel(metric: CountMetric): string {
@@ -188,6 +218,32 @@
 
     function messageCountTitle(metric: CountMetric): string {
         return metric === "words" ? "Word count" : "Message count";
+    }
+
+    function attachmentKind(
+        preview: string | null,
+    ): "image" | "video" | "audio" | "link" | "label" | null {
+        if (!preview) return null;
+        const normalized = preview.toLowerCase();
+        const hasProtocol =
+            normalized.startsWith("http://") ||
+            normalized.startsWith("https://");
+        if (/\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/.test(normalized))
+            return "image";
+        if (/\.(mp4|mov|webm|m4v)(\?|#|$)/.test(normalized)) return "video";
+        if (/\.(mp3|wav|ogg|m4a)(\?|#|$)/.test(normalized)) return "audio";
+        if (hasProtocol) return "link";
+        return "label";
+    }
+
+    function attachmentLabel(preview: string): string {
+        try {
+            const url = new URL(preview);
+            const segment = url.pathname.split("/").filter(Boolean).at(-1);
+            return segment ? decodeURIComponent(segment) : preview;
+        } catch {
+            return preview;
+        }
     }
 
     function updateFilters() {
@@ -209,9 +265,12 @@
         const params = new URLSearchParams();
         if (fromDate) params.set("from", fromDate);
         if (toDate) params.set("to", toDate);
-        if (selectedPeople.length > 0) params.set("people", selectedPeople.join(","));
-        if (selectedThemes.length > 0) params.set("themes", selectedThemes.join(","));
-        if (selectedPlatforms.length > 0) params.set("platforms", selectedPlatforms.join(","));
+        if (selectedPeople.length > 0)
+            params.set("people", selectedPeople.join(","));
+        if (selectedThemes.length > 0)
+            params.set("themes", selectedThemes.join(","));
+        if (selectedPlatforms.length > 0)
+            params.set("platforms", selectedPlatforms.join(","));
         return params;
     }
 
@@ -228,12 +287,16 @@
             } else {
                 params.set("all", "true");
             }
-            const response = await fetchJson<{ items: Array<{ word: string; count: number }> }>(
-                `/api/top-words?${params.toString()}`,
-            );
+            const response = await fetchJson<{
+                items: Array<{ word: string; count: number }>;
+            }>(`/api/top-words?${params.toString()}`);
             if (requestId !== wordsRequestId) return;
             topWords = response.items;
-            if (topWords.length > 0 && (!selectedWord || !topWords.some((item) => item.word === selectedWord))) {
+            if (
+                topWords.length > 0 &&
+                (!selectedWord ||
+                    !topWords.some((item) => item.word === selectedWord))
+            ) {
                 selectedWord = topWords[0].word;
             }
             if (selectedWord) {
@@ -241,7 +304,8 @@
             }
         } catch (err) {
             if (requestId !== wordsRequestId) return;
-            languageError = err instanceof Error ? err.message : "Failed to load words";
+            languageError =
+                err instanceof Error ? err.message : "Failed to load words";
         } finally {
             if (requestId === wordsRequestId) {
                 isLoadingWords = false;
@@ -265,10 +329,18 @@
                     color: string;
                     count: number;
                 }>;
-                chats: Array<{ id: number; name: string; source_name: string; count: number }>;
+                chats: Array<{
+                    id: number;
+                    name: string;
+                    source_name: string;
+                    count: number;
+                }>;
             }>(`/api/word-breakdown?${params.toString()}`);
         } catch (err) {
-            languageError = err instanceof Error ? err.message : "Failed to load word details";
+            languageError =
+                err instanceof Error
+                    ? err.message
+                    : "Failed to load word details";
             wordBreakdown = { word: word.toLowerCase(), people: [], chats: [] };
         } finally {
             isLoadingBreakdown = false;
@@ -302,13 +374,23 @@
             const authorsParams = new URLSearchParams(baseParams);
             authorsParams.set("limit", "15");
             const [domains, authors] = await Promise.all([
-                fetchJson<{ items: Array<{ domain: string; count: number }> }>(`/api/linked-domains?${domainsParams.toString()}`),
-                fetchJson<{ items: Array<{ id: number; display_name: string; color: string; count: number }> }>(`/api/links-by-author?${authorsParams.toString()}`),
+                fetchJson<{ items: Array<{ domain: string; count: number }> }>(
+                    `/api/linked-domains?${domainsParams.toString()}`,
+                ),
+                fetchJson<{
+                    items: Array<{
+                        id: number;
+                        display_name: string;
+                        color: string;
+                        count: number;
+                    }>;
+                }>(`/api/links-by-author?${authorsParams.toString()}`),
             ]);
             linkedDomains = domains.items;
             linksByAuthor = authors.items;
         } catch (err) {
-            linksError = err instanceof Error ? err.message : "Failed to load links";
+            linksError =
+                err instanceof Error ? err.message : "Failed to load links";
         } finally {
             loadedLinksFilterKey = filterKey;
             isLoadingLinks = false;
@@ -317,7 +399,8 @@
 
     async function loadInteractionsData() {
         const filterKey = currentFilterParams().toString();
-        if (isLoadingInteractions || loadedInteractionsFilterKey === filterKey) return;
+        if (isLoadingInteractions || loadedInteractionsFilterKey === filterKey)
+            return;
         isLoadingInteractions = true;
         interactionsError = "";
         try {
@@ -329,26 +412,41 @@
             const authorsParams = new URLSearchParams(baseParams);
             authorsParams.set("limit", "15");
             const [mentions, reactedMessages, authors] = await Promise.all([
-                fetchJson<{ items: Array<{ mention: string; count: number }> }>(`/api/most-mentioned?${mentionsParams.toString()}`),
+                fetchJson<{ items: Array<{ mention: string; count: number }> }>(
+                    `/api/most-mentioned?${mentionsParams.toString()}`,
+                ),
                 fetchJson<{
                     items: Array<{
                         id: string;
                         ts: string | null;
                         content: string;
+                        attachment_preview: string | null;
+                        attachment_url: string | null;
                         person_name: string;
                         person_color: string;
                         channel_name: string;
                         source_name: string;
                         reaction_count: number;
+                        reaction_summary: string | null;
                     }>;
                 }>(`/api/top-reacted-messages?${reactedParams.toString()}`),
-                fetchJson<{ items: Array<{ id: number; display_name: string; color: string; count: number }> }>(`/api/reaction-authors?${authorsParams.toString()}`),
+                fetchJson<{
+                    items: Array<{
+                        id: number;
+                        display_name: string;
+                        color: string;
+                        count: number;
+                    }>;
+                }>(`/api/reaction-authors?${authorsParams.toString()}`),
             ]);
             mostMentioned = mentions.items;
             topReactedMessages = reactedMessages.items;
             reactionAuthors = authors.items;
         } catch (err) {
-            interactionsError = err instanceof Error ? err.message : "Failed to load interactions";
+            interactionsError =
+                err instanceof Error
+                    ? err.message
+                    : "Failed to load interactions";
         } finally {
             loadedInteractionsFilterKey = filterKey;
             isLoadingInteractions = false;
@@ -357,7 +455,11 @@
 
     async function loadWordMetricData() {
         const filterKey = currentFilterParams().toString();
-        if (isLoadingWordMetric || (loadedWordMetricFilterKey === filterKey && wordMetricData)) return;
+        if (
+            isLoadingWordMetric ||
+            (loadedWordMetricFilterKey === filterKey && wordMetricData)
+        )
+            return;
         isLoadingWordMetric = true;
         wordMetricError = "";
         wordMetricData = null;
@@ -366,15 +468,49 @@
             const baseParams = currentFilterParams();
             baseParams.set("metric", "words");
             const query = baseParams.toString();
-            const [overview, topPeople, calendar, activityHeatmap, messagesByMonth, messagesByHour, topChats, topThemes] = await Promise.all([
+            const [
+                overview,
+                topPeople,
+                calendar,
+                activityHeatmap,
+                messagesByMonth,
+                messagesByHour,
+                topChats,
+                topThemes,
+            ] = await Promise.all([
                 fetchJson<Overview>(`/api/overview?${query}`),
                 fetchJson<TopPeople>(`/api/top-people?limit=15&${query}`),
-                fetchJson<{ points: Array<{ day: string; message_count: number }> }>(`/api/calendar?${query}`),
-                fetchJson<{ points: Array<{ weekday: number; hour: number; message_count: number }> }>(`/api/activity-heatmap?${query}`),
-                fetchJson<{ points: Array<{ month: string; message_count: number }> }>(`/api/messages-by-month?${query}`),
-                fetchJson<{ points: Array<{ hour: number; message_count: number }> }>(`/api/messages-by-hour?${query}`),
-                fetchJson<{ items: Array<{ id: number; name: string; theme_name: string; message_count: number }> }>(`/api/top-chats?limit=15&${query}`),
-                fetchJson<{ items: Array<{ id: number; name: string; message_count: number }> }>(`/api/top-themes?limit=15&${query}`),
+                fetchJson<{
+                    points: Array<{ day: string; message_count: number }>;
+                }>(`/api/calendar?${query}`),
+                fetchJson<{
+                    points: Array<{
+                        weekday: number;
+                        hour: number;
+                        message_count: number;
+                    }>;
+                }>(`/api/activity-heatmap?${query}`),
+                fetchJson<{
+                    points: Array<{ month: string; message_count: number }>;
+                }>(`/api/messages-by-month?${query}`),
+                fetchJson<{
+                    points: Array<{ hour: number; message_count: number }>;
+                }>(`/api/messages-by-hour?${query}`),
+                fetchJson<{
+                    items: Array<{
+                        id: number;
+                        name: string;
+                        theme_name: string;
+                        message_count: number;
+                    }>;
+                }>(`/api/top-chats?limit=15&${query}`),
+                fetchJson<{
+                    items: Array<{
+                        id: number;
+                        name: string;
+                        message_count: number;
+                    }>;
+                }>(`/api/top-themes?limit=15&${query}`),
             ]);
             if (requestId !== wordMetricRequestId) return;
             wordMetricData = {
@@ -391,7 +527,10 @@
             loadedWordMetricFilterKey = filterKey;
         } catch (err) {
             if (requestId !== wordMetricRequestId) return;
-            wordMetricError = err instanceof Error ? err.message : "Failed to load word counts";
+            wordMetricError =
+                err instanceof Error
+                    ? err.message
+                    : "Failed to load word counts";
         } finally {
             if (requestId === wordMetricRequestId) {
                 loadedWordMetricFilterKey = filterKey;
@@ -400,8 +539,8 @@
         }
     }
 
-    function formatChange(previousName: string | null, newName: string): string {
-        return `${previousName ?? "(new)"} → ${newName}`;
+    function formatChange(newName: string): string {
+        return newName;
     }
 
     async function selectWord(word: string) {
@@ -444,11 +583,16 @@
                 }>;
             }>(`/api/word-examples?${params.toString()}`);
             if (response.word === selectedWord) {
-                wordExamples = append ? [...wordExamples, ...response.messages] : response.messages;
+                wordExamples = append
+                    ? [...wordExamples, ...response.messages]
+                    : response.messages;
                 hasMoreWordExamples = response.has_more;
             }
         } catch (err) {
-            languageError = err instanceof Error ? err.message : "Failed to load example messages";
+            languageError =
+                err instanceof Error
+                    ? err.message
+                    : "Failed to load example messages";
             showWordExamples = false;
         } finally {
             isLoadingExamples = false;
@@ -469,30 +613,49 @@
 
     async function openLinksTab() {
         activeTab = "links";
-        if (linkedDomains.length === 0 && linksByAuthor.length === 0 && !isLoadingLinks) {
+        if (
+            linkedDomains.length === 0 &&
+            linksByAuthor.length === 0 &&
+            !isLoadingLinks
+        ) {
             await loadLinksData();
         }
     }
 
     async function openInteractionsTab() {
         activeTab = "interactions";
-        if (mostMentioned.length === 0 && topReactedMessages.length === 0 && reactionAuthors.length === 0 && !isLoadingInteractions) {
+        if (
+            mostMentioned.length === 0 &&
+            topReactedMessages.length === 0 &&
+            reactionAuthors.length === 0 &&
+            !isLoadingInteractions
+        ) {
             await loadInteractionsData();
         }
     }
 
     function setMessageMetric(metric: CountMetric) {
         messageMetric = metric;
-        if (metric === "words" && activeTab === "overview" && (loadedWordMetricFilterKey !== filterSignature || !wordMetricData)) {
+        if (
+            metric === "words" &&
+            activeTab === "overview" &&
+            (loadedWordMetricFilterKey !== filterSignature || !wordMetricData)
+        ) {
             void loadWordMetricData();
         }
     }
 
     $: fromDate = data.filters.from;
     $: toDate = data.filters.to;
-    $: selectedPeople = data.filters.people ? data.filters.people.split(",").map(Number) : [];
-    $: selectedThemes = data.filters.themes ? data.filters.themes.split(",").map(Number) : [];
-    $: selectedPlatforms = data.filters.platforms ? data.filters.platforms.split(",") : [];
+    $: selectedPeople = data.filters.people
+        ? data.filters.people.split(",").map(Number)
+        : [];
+    $: selectedThemes = data.filters.themes
+        ? data.filters.themes.split(",").map(Number)
+        : [];
+    $: selectedPlatforms = data.filters.platforms
+        ? data.filters.platforms.split(",")
+        : [];
     $: filterSignature = [
         fromDate,
         toDate,
@@ -501,7 +664,12 @@
         selectedPlatforms.join(","),
     ].join("|");
 
-    $: if (messageMetric === "words" && activeTab === "overview" && !isLoadingWordMetric && loadedWordMetricFilterKey !== filterSignature) {
+    $: if (
+        messageMetric === "words" &&
+        activeTab === "overview" &&
+        !isLoadingWordMetric &&
+        loadedWordMetricFilterKey !== filterSignature
+    ) {
         void loadWordMetricData();
     }
 
@@ -529,7 +697,12 @@
         : topWords;
     const WORD_LIST_LIMIT = 500;
     $: visibleWords = filteredWords.slice(0, WORD_LIST_LIMIT);
-    $: if (activeTab === "language" && !isLoadingWords && filteredWords.length > 0 && !filteredWords.some((item) => item.word === selectedWord)) {
+    $: if (
+        activeTab === "language" &&
+        !isLoadingWords &&
+        filteredWords.length > 0 &&
+        !filteredWords.some((item) => item.word === selectedWord)
+    ) {
         void selectWord(filteredWords[0].word);
     }
 
@@ -572,7 +745,10 @@
         return Math.max(...points.map((point) => point.message_count || 0), 1);
     }
 
-    $: monthLabelStep = Math.max(1, Math.ceil(overviewData.messagesByMonth.points.length / 8));
+    $: monthLabelStep = Math.max(
+        1,
+        Math.ceil(overviewData.messagesByMonth.points.length / 8),
+    );
     $: monthMax = maxMessageCount(overviewData.messagesByMonth.points);
     $: hourMax = maxMessageCount(overviewData.messagesByHour.points);
     $: weekdayTotals = weekdayLabels.map((_, index) =>
@@ -582,48 +758,72 @@
     );
     $: weekdayMax = Math.max(...weekdayTotals, 1);
     $: hourTotals = Array.from({ length: 24 }, (_, hour) => {
-        const point = overviewData.messagesByHour.points.find((item) => item.hour === hour);
+        const point = overviewData.messagesByHour.points.find(
+            (item) => item.hour === hour,
+        );
         return point?.message_count ?? 0;
     });
     $: hourTotalsMax = Math.max(...hourTotals, 1);
     $: dayStart = data.overview.date_range.start
         ? new Date(data.overview.date_range.start)
         : null;
-    $: dayEnd = data.overview.date_range.end ? new Date(data.overview.date_range.end) : null;
-    $: totalDays = dayStart && dayEnd
-        ? Math.max(
-              1,
-              Math.ceil((dayEnd.getTime() - dayStart.getTime()) / (1000 * 60 * 60 * 24)),
-          )
-        : 1;
-    $: avgMessagesPerDay = Math.round(overviewData.overview.total_messages / totalDays);
+    $: dayEnd = data.overview.date_range.end
+        ? new Date(data.overview.date_range.end)
+        : null;
+    $: totalDays =
+        dayStart && dayEnd
+            ? Math.max(
+                  1,
+                  Math.ceil(
+                      (dayEnd.getTime() - dayStart.getTime()) /
+                          (1000 * 60 * 60 * 24),
+                  ),
+              )
+            : 1;
+    $: avgMessagesPerDay = Math.round(
+        overviewData.overview.total_messages / totalDays,
+    );
 
     $: mostActiveMonth = overviewData.messagesByMonth.points.reduce(
-        (best, current) => (current.message_count > best.message_count ? current : best),
-        overviewData.messagesByMonth.points[0] ?? { month: "", message_count: 0 },
+        (best, current) =>
+            current.message_count > best.message_count ? current : best,
+        overviewData.messagesByMonth.points[0] ?? {
+            month: "",
+            message_count: 0,
+        },
     );
     $: mostActiveDay = overviewData.calendar.points.reduce(
-        (best, current) => (current.message_count > best.message_count ? current : best),
+        (best, current) =>
+            current.message_count > best.message_count ? current : best,
         overviewData.calendar.points[0] ?? { day: "", message_count: 0 },
     );
     $: mostActiveHour = overviewData.messagesByHour.points.reduce(
-        (best, current) => (current.message_count > best.message_count ? current : best),
+        (best, current) =>
+            current.message_count > best.message_count ? current : best,
         overviewData.messagesByHour.points[0] ?? { hour: 0, message_count: 0 },
     );
     $: normalizedDomainSearch = domainSearch.trim().toLowerCase();
     $: filteredDomains = normalizedDomainSearch
-        ? linkedDomains.filter((item) => item.domain.includes(normalizedDomainSearch))
+        ? linkedDomains.filter((item) =>
+              item.domain.includes(normalizedDomainSearch),
+          )
         : linkedDomains;
     const DOMAIN_LIMIT = 20;
     $: visibleDomains = filteredDomains.slice(0, DOMAIN_LIMIT);
     $: normalizedMentionSearch = mentionSearch.trim().toLowerCase();
     $: filteredMentions = normalizedMentionSearch
-        ? mostMentioned.filter((item) => item.mention.includes(normalizedMentionSearch))
+        ? mostMentioned.filter((item) =>
+              item.mention.includes(normalizedMentionSearch),
+          )
         : mostMentioned;
     const MENTION_LIMIT = 20;
     $: visibleMentions = filteredMentions.slice(0, MENTION_LIMIT);
     $: linksFilterKey = filterSignature;
-    $: if (activeTab === "links" && !isLoadingLinks && loadedLinksFilterKey !== linksFilterKey) {
+    $: if (
+        activeTab === "links" &&
+        !isLoadingLinks &&
+        loadedLinksFilterKey !== linksFilterKey
+    ) {
         void loadLinksData();
     }
     $: interactionsFilterKey = filterSignature;
@@ -725,16 +925,33 @@
             type="button"
             on:click={() => (activeTab = "overview")}>Messages</button
         >
-        <button class:active={activeTab === "language"} type="button" on:click={openLanguageTab}
-            >Language</button
+        <button
+            class:active={activeTab === "language"}
+            type="button"
+            on:click={openLanguageTab}>Language</button
         >
-        <button class:active={activeTab === "history"} type="button" on:click={openHistoryTab}>History</button>
-        <button class:active={activeTab === "links"} type="button" on:click={openLinksTab}>Links</button>
-        <button class:active={activeTab === "interactions"} type="button" on:click={openInteractionsTab}>Interactions</button>
+        <button
+            class:active={activeTab === "history"}
+            type="button"
+            on:click={openHistoryTab}>History</button
+        >
+        <button
+            class:active={activeTab === "links"}
+            type="button"
+            on:click={openLinksTab}>Links</button
+        >
+        <button
+            class:active={activeTab === "interactions"}
+            type="button"
+            on:click={openInteractionsTab}>Interactions</button
+        >
     </section>
 
     {#if messageMetric === "words" && !wordMetricData}
-        <section class="overview-top" class:tab-hidden={activeTab !== "overview"}>
+        <section
+            class="overview-top"
+            class:tab-hidden={activeTab !== "overview"}
+        >
             <div class="panel timeline-panel">
                 <div class="panel-head">
                     <h2>Word counts</h2>
@@ -742,155 +959,243 @@
                 {#if isLoadingWordMetric}
                     <p class="muted">Loading word counts...</p>
                 {:else}
-                    <p class="muted">{wordMetricError || "Word counts are unavailable."}</p>
+                    <p class="muted">
+                        {wordMetricError || "Word counts are unavailable."}
+                    </p>
                 {/if}
             </div>
         </section>
     {:else}
-    <section class="overview-top" class:tab-hidden={activeTab !== "overview"}>
-        <div class="panel timeline-panel">
-            <div class="panel-head">
-                <h2>{overviewMetricTitle} sent over time by month</h2>
-                <div class="metric-switch" role="group" aria-label="Message metric">
-                    <button type="button" class:active={messageMetric === "messages"} on:click={() => setMessageMetric("messages")}>Messages</button>
-                    <button type="button" class:active={messageMetric === "words"} on:click={() => setMessageMetric("words")}>Words</button>
+        <section
+            class="overview-top"
+            class:tab-hidden={activeTab !== "overview"}
+        >
+            <div class="panel timeline-panel">
+                <div class="panel-head">
+                    <h2>{overviewMetricTitle} sent over time by month</h2>
+                    <div
+                        class="metric-switch"
+                        role="group"
+                        aria-label="Message metric"
+                    >
+                        <button
+                            type="button"
+                            class:active={messageMetric === "messages"}
+                            on:click={() => setMessageMetric("messages")}
+                            >Messages</button
+                        >
+                        <button
+                            type="button"
+                            class:active={messageMetric === "words"}
+                            on:click={() => setMessageMetric("words")}
+                            >Words</button
+                        >
+                    </div>
+                </div>
+                <div class="timeline-plot">
+                    <div class="timeline-axis">
+                        <span>{Math.round(monthMax).toLocaleString()}</span>
+                        <span
+                            >{Math.round(
+                                monthMax * 0.75,
+                            ).toLocaleString()}</span
+                        >
+                        <span
+                            >{Math.round(monthMax * 0.5).toLocaleString()}</span
+                        >
+                        <span
+                            >{Math.round(
+                                monthMax * 0.25,
+                            ).toLocaleString()}</span
+                        >
+                        <span>0</span>
+                    </div>
+                    <div class="timeline-chart">
+                        {#each overviewData.messagesByMonth.points as point, i}
+                            <div class="timeline-bar-wrap">
+                                <div class="timeline-bar-slot">
+                                    <div
+                                        class="timeline-bar"
+                                        style={`height:${(point.message_count / monthMax) * 100}%`}
+                                        title={`${new Date(point.month).toLocaleDateString("en-US", { month: "long", year: "numeric" })}: ${point.message_count.toLocaleString()} ${overviewMetricLabel}`}
+                                    ></div>
+                                </div>
+                                <span class="timeline-label"
+                                    >{i % monthLabelStep === 0
+                                        ? new Date(
+                                              point.month,
+                                          ).toLocaleDateString("en-US", {
+                                              month: "short",
+                                              year: "2-digit",
+                                          })
+                                        : ""}</span
+                                >
+                            </div>
+                        {/each}
+                    </div>
                 </div>
             </div>
-            <div class="timeline-plot">
-                <div class="timeline-axis">
-                    <span>{Math.round(monthMax).toLocaleString()}</span>
-                    <span>{Math.round(monthMax * 0.75).toLocaleString()}</span>
-                    <span>{Math.round(monthMax * 0.5).toLocaleString()}</span>
-                    <span>{Math.round(monthMax * 0.25).toLocaleString()}</span>
-                    <span>0</span>
+
+            <div class="panel stats-panel">
+                <h2>{overviewMetricTitle} statistics</h2>
+                <div class="stats-list">
+                    <div>
+                        <span>Total {overviewMetricLabel} sent</span><strong
+                            >{overviewData.overview.total_messages.toLocaleString()}</strong
+                        >
+                    </div>
+                    <div>
+                        <span>Average {overviewMetricLabel} per day</span
+                        ><strong>{avgMessagesPerDay.toLocaleString()}</strong>
+                    </div>
+                    <div>
+                        <span>Date range start</span><strong
+                            >{overviewData.overview.date_range.start
+                                ? overviewData.overview.date_range.start.split(
+                                      "T",
+                                  )[0]
+                                : "N/A"}</strong
+                        >
+                    </div>
+                    <div>
+                        <span>Date range end</span><strong
+                            >{overviewData.overview.date_range.end
+                                ? overviewData.overview.date_range.end.split(
+                                      "T",
+                                  )[0]
+                                : "N/A"}</strong
+                        >
+                    </div>
+                    <div>
+                        <span>Most active month</span><strong
+                            >{mostActiveMonth.month
+                                ? new Date(
+                                      mostActiveMonth.month,
+                                  ).toLocaleDateString("en-US", {
+                                      month: "long",
+                                      year: "numeric",
+                                  })
+                                : "N/A"}</strong
+                        >
+                    </div>
+                    <div>
+                        <span>Most active day</span><strong
+                            >{mostActiveDay.day || "N/A"}</strong
+                        >
+                    </div>
+                    <div>
+                        <span>Most active hour</span><strong
+                            >{`${mostActiveHour.hour}:00`}</strong
+                        >
+                    </div>
                 </div>
-                <div class="timeline-chart">
-                    {#each overviewData.messagesByMonth.points as point, i}
-                        <div class="timeline-bar-wrap">
-                            <div class="timeline-bar-slot">
+            </div>
+        </section>
+
+        <section
+            class="overview-bottom"
+            class:tab-hidden={activeTab !== "overview"}
+        >
+            <div class="panel split-panel">
+                <h2>{overviewMetricTitle} by week day & hour (split)</h2>
+                <div class="weekday-chart">
+                    {#each weekdayLabels as label, i}
+                        <div class="weekday-bar-wrap">
+                            <div
+                                class="weekday-bar"
+                                style={`height:${(weekdayTotals[i] / weekdayMax) * 100}%`}
+                                title={`${label}: ${weekdayTotals[i].toLocaleString()} ${overviewMetricLabel}`}
+                            ></div>
+                            <span>{label}</span>
+                        </div>
+                    {/each}
+                </div>
+                <div class="hour-chart">
+                    {#each hourTotals as count, hour}
+                        <div class="hour-bar-wrap">
+                            <div class="hour-bar-slot">
                                 <div
-                                    class="timeline-bar"
-                                    style={`height:${(point.message_count / monthMax) * 100}%`}
-                                    title={`${new Date(point.month).toLocaleDateString("en-US", { month: "long", year: "numeric" })}: ${point.message_count.toLocaleString()} ${overviewMetricLabel}`}
+                                    class="hour-bar"
+                                    style={`height:${(count / hourTotalsMax) * 100}%`}
+                                    title={`${hour}:00 - ${count.toLocaleString()} ${overviewMetricLabel}`}
                                 ></div>
                             </div>
-                            <span class="timeline-label"
-                                >{i % monthLabelStep === 0
-                                    ? new Date(point.month).toLocaleDateString("en-US", {
-                                          month: "short",
-                                          year: "2-digit",
-                                      })
-                                    : ""}</span
+                            <span>{hour % 3 === 0 ? hour : ""}</span>
+                        </div>
+                    {/each}
+                </div>
+            </div>
+
+            <div class="panel rank-panel">
+                <h2>{overviewMetricTitle} sent by author</h2>
+                <div class="rank-list">
+                    {#each overviewData.topPeople.items as person}
+                        <div class="rank-row">
+                            <span class="rank-name">
+                                <span
+                                    class="swatch"
+                                    style={`background:${person.color}`}
+                                ></span>{person.display_name}
+                            </span>
+                            <div class="rank-track">
+                                <div
+                                    class="rank-fill author"
+                                    style={`width:${(person.message_count / Math.max(overviewData.topPeople.items[0]?.message_count || 1, 1)) * 100}%`}
+                                ></div>
+                            </div>
+                            <strong
+                                >{person.message_count.toLocaleString()}</strong
                             >
                         </div>
                     {/each}
                 </div>
             </div>
-        </div>
+        </section>
 
-        <div class="panel stats-panel">
-            <h2>{overviewMetricTitle} statistics</h2>
-            <div class="stats-list">
-                <div><span>Total {overviewMetricLabel} sent</span><strong>{overviewData.overview.total_messages.toLocaleString()}</strong></div>
-                <div><span>Average {overviewMetricLabel} per day</span><strong>{avgMessagesPerDay.toLocaleString()}</strong></div>
-                <div><span>Date range start</span><strong>{overviewData.overview.date_range.start ? overviewData.overview.date_range.start.split("T")[0] : "N/A"}</strong></div>
-                <div><span>Date range end</span><strong>{overviewData.overview.date_range.end ? overviewData.overview.date_range.end.split("T")[0] : "N/A"}</strong></div>
-                <div><span>Most active month</span><strong>{mostActiveMonth.month ? new Date(mostActiveMonth.month).toLocaleDateString("en-US", { month: "long", year: "numeric" }) : "N/A"}</strong></div>
-                <div><span>Most active day</span><strong>{mostActiveDay.day || "N/A"}</strong></div>
-                <div><span>Most active hour</span><strong>{`${mostActiveHour.hour}:00`}</strong></div>
-            </div>
-        </div>
-    </section>
-
-    <section class="overview-bottom" class:tab-hidden={activeTab !== "overview"}>
-        <div class="panel split-panel">
-            <h2>{overviewMetricTitle} by week day & hour (split)</h2>
-            <div class="weekday-chart">
-                {#each weekdayLabels as label, i}
-                    <div class="weekday-bar-wrap">
-                        <div
-                            class="weekday-bar"
-                            style={`height:${(weekdayTotals[i] / weekdayMax) * 100}%`}
-                            title={`${label}: ${weekdayTotals[i].toLocaleString()} ${overviewMetricLabel}`}
-                        ></div>
-                        <span>{label}</span>
-                    </div>
-                {/each}
-            </div>
-            <div class="hour-chart">
-                {#each hourTotals as count, hour}
-                    <div class="hour-bar-wrap">
-                        <div class="hour-bar-slot">
-                            <div
-                                class="hour-bar"
-                                style={`height:${(count / hourTotalsMax) * 100}%`}
-                                title={`${hour}:00 - ${count.toLocaleString()} ${overviewMetricLabel}`}
-                            ></div>
+        <section
+            class="overview-bottom-secondary"
+            class:tab-hidden={activeTab !== "overview"}
+        >
+            <div class="panel rank-panel">
+                <h2>{overviewMetricTitle} sent by channel</h2>
+                <div class="rank-list">
+                    {#each overviewData.topChats.items as chat}
+                        <div class="rank-row">
+                            <span class="rank-name">{chat.name}</span>
+                            <div class="rank-track">
+                                <div
+                                    class="rank-fill channel"
+                                    style={`width:${(chat.message_count / Math.max(overviewData.topChats.items[0]?.message_count || 1, 1)) * 100}%`}
+                                ></div>
+                            </div>
+                            <strong
+                                >{chat.message_count.toLocaleString()}</strong
+                            >
                         </div>
-                        <span>{hour % 3 === 0 ? hour : ""}</span>
-                    </div>
-                {/each}
+                    {/each}
+                </div>
             </div>
-        </div>
 
-        <div class="panel rank-panel">
-            <h2>{overviewMetricTitle} sent by author</h2>
-            <div class="rank-list">
-                {#each overviewData.topPeople.items as person}
-                    <div class="rank-row">
-                        <span class="rank-name">
-                            <span class="swatch" style={`background:${person.color}`}></span>{person.display_name}
-                        </span>
-                        <div class="rank-track">
-                            <div
-                                class="rank-fill author"
-                                style={`width:${(person.message_count / Math.max(overviewData.topPeople.items[0]?.message_count || 1, 1)) * 100}%`}
-                            ></div>
+            <div class="panel rank-panel">
+                <h2>{overviewMetricTitle} sent by theme</h2>
+                <div class="rank-list">
+                    {#each overviewData.topThemes.items as theme}
+                        <div class="rank-row">
+                            <span class="rank-name">{theme.name}</span>
+                            <div class="rank-track">
+                                <div
+                                    class="rank-fill theme"
+                                    style={`width:${(theme.message_count / Math.max(overviewData.topThemes.items[0]?.message_count || 1, 1)) * 100}%`}
+                                ></div>
+                            </div>
+                            <strong
+                                >{theme.message_count.toLocaleString()}</strong
+                            >
                         </div>
-                        <strong>{person.message_count.toLocaleString()}</strong>
-                    </div>
-                {/each}
+                    {/each}
+                </div>
             </div>
-        </div>
-    </section>
-
-    <section class="overview-bottom-secondary" class:tab-hidden={activeTab !== "overview"}>
-        <div class="panel rank-panel">
-            <h2>{overviewMetricTitle} sent by channel</h2>
-            <div class="rank-list">
-                {#each overviewData.topChats.items as chat}
-                    <div class="rank-row">
-                        <span class="rank-name">{chat.name}</span>
-                        <div class="rank-track">
-                            <div
-                                class="rank-fill channel"
-                                style={`width:${(chat.message_count / Math.max(overviewData.topChats.items[0]?.message_count || 1, 1)) * 100}%`}
-                            ></div>
-                        </div>
-                        <strong>{chat.message_count.toLocaleString()}</strong>
-                    </div>
-                {/each}
-            </div>
-        </div>
-
-        <div class="panel rank-panel">
-            <h2>{overviewMetricTitle} sent by theme</h2>
-            <div class="rank-list">
-                {#each overviewData.topThemes.items as theme}
-                    <div class="rank-row">
-                        <span class="rank-name">{theme.name}</span>
-                        <div class="rank-track">
-                            <div
-                                class="rank-fill theme"
-                                style={`width:${(theme.message_count / Math.max(overviewData.topThemes.items[0]?.message_count || 1, 1)) * 100}%`}
-                            ></div>
-                        </div>
-                        <strong>{theme.message_count.toLocaleString()}</strong>
-                    </div>
-                {/each}
-            </div>
-        </div>
-    </section>
+        </section>
     {/if}
 
     <section class="language" class:tab-hidden={activeTab !== "language"}>
@@ -924,7 +1229,10 @@
                     {/each}
                 </div>
                 {#if filteredWords.length > visibleWords.length}
-                    <p class="muted">Showing {visibleWords.length.toLocaleString()} of {filteredWords.length.toLocaleString()} words.</p>
+                    <p class="muted">
+                        Showing {visibleWords.length.toLocaleString()} of {filteredWords.length.toLocaleString()}
+                        words.
+                    </p>
                 {/if}
             {/if}
         </div>
@@ -969,8 +1277,14 @@
                     </div>
                 </div>
                 {#if selectedWord}
-                    <button type="button" class="examples-toggle" on:click={toggleWordExamples}>
-                        {showWordExamples ? "Hide example messages" : "Show example messages"}
+                    <button
+                        type="button"
+                        class="examples-toggle"
+                        on:click={toggleWordExamples}
+                    >
+                        {showWordExamples
+                            ? "Hide example messages"
+                            : "Show example messages"}
                     </button>
                 {/if}
                 {#if showWordExamples}
@@ -981,16 +1295,31 @@
                             {#each wordExamples as message}
                                 <div class="example-message">
                                     <div class="example-meta">
-                                        <strong style={`color:${message.person_color}`}>{message.person_name}</strong>
-                                        <span>{message.source_name} · {message.channel_name}</span>
-                                        <time>{message.ts ? new Date(message.ts).toLocaleString() : "N/A"}</time>
+                                        <strong
+                                            style={`color:${message.person_color}`}
+                                            >{message.person_name}</strong
+                                        >
+                                        <span
+                                            >{message.source_name} · {message.channel_name}</span
+                                        >
+                                        <time
+                                            >{message.ts
+                                                ? new Date(
+                                                      message.ts,
+                                                  ).toLocaleString()
+                                                : "N/A"}</time
+                                        >
                                     </div>
                                     <p>{message.content}</p>
                                 </div>
                             {/each}
                         </div>
                         {#if hasMoreWordExamples}
-                            <button type="button" class="examples-toggle" on:click={showMoreWordExamples}>
+                            <button
+                                type="button"
+                                class="examples-toggle"
+                                on:click={showMoreWordExamples}
+                            >
                                 Show 5 more messages
                             </button>
                         {/if}
@@ -1025,7 +1354,11 @@
                     {#each visibleDomains as domain}
                         <div class="rank-row">
                             <span class="rank-name">
-                                <a href={`https://${domain.domain}`} target="_blank" rel="noreferrer">{domain.domain}</a>
+                                <a
+                                    href={`https://${domain.domain}`}
+                                    target="_blank"
+                                    rel="noreferrer">{domain.domain}</a
+                                >
                             </span>
                             <div class="rank-track">
                                 <div
@@ -1049,7 +1382,10 @@
                     {#each linksByAuthor as person}
                         <div class="rank-row">
                             <span class="rank-name">
-                                <span class="swatch" style={`background:${person.color}`}></span>{person.display_name}
+                                <span
+                                    class="swatch"
+                                    style={`background:${person.color}`}
+                                ></span>{person.display_name}
                             </span>
                             <div class="rank-track">
                                 <div
@@ -1065,7 +1401,10 @@
         </div>
     </section>
 
-    <section class="interactions" class:tab-hidden={activeTab !== "interactions"}>
+    <section
+        class="interactions"
+        class:tab-hidden={activeTab !== "interactions"}
+    >
         <div class="panel rank-panel">
             <h2>Most mentioned</h2>
             <input
@@ -1110,14 +1449,89 @@
                     {#each topReactedMessages as message, index}
                         <article class="reaction-card">
                             <div class="reaction-card-head">
-                                <strong>#{index + 1} {message.reaction_count.toLocaleString()} reactions</strong>
-                                <time>{message.ts ? new Date(message.ts).toLocaleDateString() : "N/A"}</time>
+                                <strong>
+                                    {message.reaction_count.toLocaleString()} reactions</strong
+                                >
+                                <time
+                                    >{message.ts
+                                        ? new Date(
+                                              message.ts,
+                                          ).toLocaleDateString()
+                                        : "N/A"}</time
+                                >
                             </div>
+                            {#if message.reaction_summary}
+                                <p class="reaction-summary">
+                                    {message.reaction_summary}
+                                </p>
+                            {/if}
                             <div class="example-meta">
-                                <strong style={`color:${message.person_color}`}>{message.person_name}</strong>
-                                <span>{message.source_name} · {message.channel_name}</span>
+                                <strong style={`color:${message.person_color}`}
+                                    >{message.person_name}</strong
+                                >
+                                <span>{message.channel_name}</span>
                             </div>
-                            <p>{message.content}</p>
+                            {#if (message.attachment_url || message.attachment_preview) && attachmentKind(message.attachment_url || message.attachment_preview) === "image"}
+                                <img
+                                    class="reaction-attachment-image"
+                                    src={message.attachment_url ||
+                                        message.attachment_preview ||
+                                        ""}
+                                    alt={attachmentLabel(
+                                        message.attachment_preview ||
+                                            message.attachment_url ||
+                                            "attachment",
+                                    )}
+                                    loading="lazy"
+                                />
+                            {:else if (message.attachment_url || message.attachment_preview) && attachmentKind(message.attachment_url || message.attachment_preview) === "video"}
+                                <p>
+                                    <a
+                                        href={message.attachment_url ||
+                                            message.attachment_preview ||
+                                            "#"}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        >{attachmentLabel(
+                                            message.attachment_preview ||
+                                                message.attachment_url ||
+                                                "attachment",
+                                        )}</a
+                                    >
+                                </p>
+                            {:else if (message.attachment_url || message.attachment_preview) && attachmentKind(message.attachment_url || message.attachment_preview) === "audio"}
+                                <audio
+                                    class="reaction-attachment-audio"
+                                    src={message.attachment_url ||
+                                        message.attachment_preview ||
+                                        ""}
+                                    controls
+                                    preload="none"
+                                ></audio>
+                            {:else if (message.attachment_url || message.attachment_preview) && attachmentKind(message.attachment_url || message.attachment_preview) === "link"}
+                                <p>
+                                    <a
+                                        href={message.attachment_url ||
+                                            message.attachment_preview ||
+                                            "#"}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        >{attachmentLabel(
+                                            message.attachment_preview ||
+                                                message.attachment_url ||
+                                                "attachment",
+                                        )}</a
+                                    >
+                                </p>
+                            {:else if message.attachment_preview}
+                                <p>
+                                    Attachment: {attachmentLabel(
+                                        message.attachment_preview,
+                                    )}
+                                </p>
+                            {:else}
+                                <p>{message.content}</p>
+                            {/if}
                         </article>
                     {/each}
                 </div>
@@ -1133,7 +1547,10 @@
                     {#each reactionAuthors as person}
                         <div class="rank-row">
                             <span class="rank-name">
-                                <span class="swatch" style={`background:${person.color}`}></span>{person.display_name}
+                                <span
+                                    class="swatch"
+                                    style={`background:${person.color}`}
+                                ></span>{person.display_name}
                             </span>
                             <div class="rank-track">
                                 <div
@@ -1155,11 +1572,15 @@
                 <summary>
                     <div>
                         <strong>{chat.current_name}</strong>
-                        <span>{chat.platform} · {chat.source_name}</span>
+                        <span>{chat.platform}</span>
                     </div>
                     <span class="history-counts">
-                        {chat.previous_names.length ? `${chat.previous_names.length} chat changes` : ""}
-                        {chat.participants.length ? `${chat.participants.length} people` : ""}
+                        {chat.previous_names.length
+                            ? `${chat.previous_names.length} chat changes`
+                            : ""}
+                        {chat.participants.length
+                            ? `${chat.participants.length} people`
+                            : ""}
                     </span>
                 </summary>
 
@@ -1169,8 +1590,19 @@
                         <div class="history-list">
                             {#each chat.previous_names as change}
                                 <div class="history-row">
-                                    <div class="history-change">{formatChange(change.previous_name, change.new_name)}</div>
-                                    <time>{change.ts ? new Date(change.ts).toLocaleString() : "N/A"}</time>
+                                    <div class="history-change">
+                                        {formatChange(change.new_name)}
+                                        {#if change.author_name}
+                                            <span class="muted"> · by {change.author_name}</span>
+                                        {/if}
+                                    </div>
+                                    <time
+                                        >{change.ts
+                                            ? new Date(
+                                                  change.ts,
+                                              ).toLocaleString()
+                                            : "N/A"}</time
+                                    >
                                 </div>
                             {/each}
                         </div>
@@ -1188,8 +1620,23 @@
                                         <div class="history-list">
                                             {#each person.history as change}
                                                 <div class="history-row">
-                                                    <div class="history-change">{formatChange(change.previous_name, change.new_name)}</div>
-                                                    <time>{change.ts ? new Date(change.ts).toLocaleString() : "N/A"}</time>
+                                                    <div class="history-change">
+                                                        {formatChange(
+                                                            change.new_name,
+                                                        )}
+                                                        {#if change.author_name}
+                                                            <span class="muted">
+                                                                · by {change.author_name}
+                                                            </span>
+                                                        {/if}
+                                                    </div>
+                                                    <time
+                                                        >{change.ts
+                                                            ? new Date(
+                                                                  change.ts,
+                                                              ).toLocaleString()
+                                                            : "N/A"}</time
+                                                    >
                                                 </div>
                                             {/each}
                                         </div>
@@ -1790,6 +2237,27 @@
         word-break: break-word;
     }
 
+    .reaction-summary {
+        margin-top: 0;
+        margin-bottom: 8px;
+        color: #cbd5e1;
+        font-size: 0.8rem;
+    }
+
+    .reaction-attachment-image {
+        margin-top: 8px;
+        max-width: min(100%, 520px);
+        max-height: 320px;
+        border-radius: 10px;
+        border: 1px solid #1f2937;
+        background: #020617;
+    }
+
+    .reaction-attachment-audio {
+        margin-top: 8px;
+        width: min(100%, 380px);
+    }
+
     .language {
         margin-top: 16px;
         display: grid;
@@ -1809,7 +2277,10 @@
     }
 
     .interactions {
-        grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.2fr) minmax(0, 1fr);
+        grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.2fr) minmax(
+                0,
+                1fr
+            );
     }
 
     .word-filter {

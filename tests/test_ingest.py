@@ -132,10 +132,14 @@ class IngestTests(unittest.TestCase):
         self.assertTrue(export.messages[0].id)
 
     def test_facebook_thread(self) -> None:
-        chat_dir = next((ROOT / "data" / "facebook").iterdir())
+        chat_dir = ROOT / "data" / "facebook" / "VirgilsDisciplesR_JuKl_Syh8Q"
         export = normalize_chat(chat_dir)
         self.assertGreater(len(export.messages), 0)
         self.assertTrue(export.messages[0].content)
+        self.assertGreaterEqual(max((message.reaction_count for message in export.messages), default=0), 3)
+        reacted = next((message for message in export.messages if message.reaction_count >= 3), None)
+        self.assertIsNotNone(reacted)
+        self.assertTrue(reacted and reacted.reaction_summary and "×" in reacted.reaction_summary)
 
     def test_signal_database(self) -> None:
         with TemporaryDirectory() as tmp:
