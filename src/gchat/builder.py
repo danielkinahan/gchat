@@ -31,7 +31,11 @@ def _notify(status: Callable[[str], None] | None, message: str) -> None:
         status(message)
 
 
-def _collect(data_dir: Path, status: Callable[[str], None] | None = None) -> NormalizedDataset:
+def _collect(
+    data_dir: Path,
+    status: Callable[[str], None] | None = None,
+    signal_identities: set[str] | None = None,
+) -> NormalizedDataset:
     paths = discover_dataset(data_dir)
     sources: "OrderedDict[str, SourceSeed]" = OrderedDict()
     channels: "OrderedDict[tuple[str, str], ChannelSeed]" = OrderedDict()
@@ -63,7 +67,7 @@ def _collect(data_dir: Path, status: Callable[[str], None] | None = None) -> Nor
     for path in paths.signal_dbs + paths.signal_exports:
         label = "legacy Signal export" if path.name.endswith(".sqlite") else "Signal backup"
         _notify(status, f"Normalizing {label} {path.name}")
-        export = normalize_signal(path)
+        export = normalize_signal(path, include_signal_identities=signal_identities)
         sources.setdefault(export.source.name, export.source)
         for channel in export.channels:
             channels.setdefault((channel.source_name, channel.raw_id), channel)
@@ -81,6 +85,14 @@ def _collect(data_dir: Path, status: Callable[[str], None] | None = None) -> Nor
     )
 
 
+def _configured_signal_identities(config: "ReconciliationConfig") -> set[str]:
+    return {
+        raw_id
+        for platform, raw_id in config.people.identity_to_person.keys()
+        if platform.casefold() == "signal"
+    }
+
+
 def build_database(
     data_dir: Path,
     output_path: Path,
@@ -95,11 +107,16 @@ def build_database(
     if temp_output.exists():
         temp_output.unlink()
 
-    _notify(status, "Collecting exports")
-    dataset = _collect(data_dir, status=status)
-    _notify(status, f"Collected {len(dataset.messages)} messages from {len(dataset.sources)} sources")
     _notify(status, "Loading reconciliation")
     reconciliation = load_reconciliation(config_dir=config_dir)
+    signal_identities = _configured_signal_identities(reconciliation)
+    _notify(status, "Collecting exports")
+    dataset = _collect(
+        data_dir,
+        status=status,
+        signal_identities=signal_identities,
+    )
+    _notify(status, f"Collected {len(dataset.messages)} messages from {len(dataset.sources)} sources")
     con = duckdb.connect(str(temp_output))
     con.execute(SCHEMA_SQL)
     

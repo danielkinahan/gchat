@@ -28,22 +28,22 @@ class FacebookArchiveTests(unittest.TestCase):
 
             (config_dir / "config" / "people.yaml").write_text(
                 """people:
-  - name: Daniel
+  - name: Person A
     identities:
       - platform: facebook
-        id: "Daniel Kinahan"
-  - name: Theo
+        id: "Person A"
+  - name: Person B
     identities:
       - platform: facebook
-        id: "Theo Mohamed"
-  - name: Ben
+        id: "Person B"
+  - name: Person C
     identities:
       - platform: facebook
-        id: "Ben Wood"
-  - name: Robby
+        id: "Person C"
+  - name: Person D
     identities:
       - platform: facebook
-        id: "Robby Royston"
+        id: "Person D"
 """,
                 encoding="utf-8",
             )
@@ -53,21 +53,21 @@ class FacebookArchiveTests(unittest.TestCase):
             match_dir.mkdir()
             miss_dir.mkdir()
             (match_dir / "message_1.html").write_text(
-                _chat_html("GARGBOYZ", "Daniel Kinahan, Theo Mohamed, Ben Wood and Robby Royston"),
+                _chat_html("Group Chat", "Person A, Person B, Person C and Person D"),
                 encoding="utf-8",
             )
             (miss_dir / "message_1.html").write_text(
-                _chat_html("Pair Chat", "Daniel Kinahan and Theo Mohamed"),
+                _chat_html("Pair Chat", "Person A and Person B"),
                 encoding="utf-8",
             )
 
             matches = find_matching_archives(source_dir, config_dir)
 
             self.assertEqual([match.source_dir.name for match in matches], ["gargboyz_123"])
-            self.assertEqual(matches[0].title, "GARGBOYZ")
+            self.assertEqual(matches[0].title, "Group Chat")
             self.assertEqual(
                 matches[0].matched_participants,
-                ("Daniel Kinahan", "Theo Mohamed", "Ben Wood", "Robby Royston"),
+                ("Person A", "Person B", "Person C", "Person D"),
             )
 
     def test_copy_matching_archives_copies_and_skips_existing_without_overwrite(self) -> None:
@@ -81,18 +81,18 @@ class FacebookArchiveTests(unittest.TestCase):
 
             (config_dir / "config" / "people.yaml").write_text(
                 """people:
-  - name: Daniel
+  - name: Person A
     identities:
       - platform: facebook
-        id: "Daniel Kinahan"
-  - name: Theo
+        id: "Person A"
+  - name: Person B
     identities:
       - platform: facebook
-        id: "Theo Mohamed"
-  - name: Ben
+        id: "Person B"
+  - name: Person C
     identities:
       - platform: facebook
-        id: "Ben Wood"
+        id: "Person C"
 """,
                 encoding="utf-8",
             )
@@ -100,7 +100,7 @@ class FacebookArchiveTests(unittest.TestCase):
             chat_dir = source_dir / "group_1"
             chat_dir.mkdir()
             (chat_dir / "message_1.html").write_text(
-                _chat_html("Group 1", "Daniel Kinahan, Theo Mohamed and Ben Wood"),
+                _chat_html("Group 1", "Person A, Person B and Person C"),
                 encoding="utf-8",
             )
 
@@ -123,18 +123,18 @@ class FacebookArchiveTests(unittest.TestCase):
 
             (config_dir / "config" / "people.yaml").write_text(
                 """people:
-  - name: Daniel
+  - name: Person A
     identities:
       - platform: facebook
-        id: "Daniel Kinahan"
-  - name: Theo
+        id: "Person A"
+  - name: Person B
     identities:
       - platform: facebook
-        id: "Theo Mohamed"
-  - name: Ben
+        id: "Person B"
+  - name: Person C
     identities:
       - platform: facebook
-        id: "Ben Wood"
+        id: "Person C"
 """,
                 encoding="utf-8",
             )
@@ -144,7 +144,7 @@ class FacebookArchiveTests(unittest.TestCase):
             good_dir.mkdir()
             bad_dir.mkdir()
             (good_dir / "message_1.html").write_text(
-                _chat_html("Group 1", "Daniel Kinahan, Theo Mohamed and Ben Wood"),
+                _chat_html("Group 1", "Person A, Person B and Person C"),
                 encoding="utf-8",
             )
             (bad_dir / "message_1.html").write_text("<html><head><title>Broken</title></head><body></body></html>", encoding="utf-8")
@@ -165,18 +165,18 @@ class FacebookArchiveTests(unittest.TestCase):
 
             (config_dir / "config" / "people.yaml").write_text(
                 """people:
-  - name: Daniel
+  - name: Person A
     identities:
       - platform: facebook
-        id: "Daniel Kinahan"
-  - name: Theo
+        id: "Person A"
+  - name: Person B
     identities:
       - platform: facebook
-        id: "Theo Mohamed"
-  - name: Ben
+        id: "Person B"
+  - name: Person C
     identities:
       - platform: facebook
-        id: "Ben Wood"
+        id: "Person C"
 """,
                 encoding="utf-8",
             )
@@ -184,7 +184,7 @@ class FacebookArchiveTests(unittest.TestCase):
             chat_dir = source_dir / "group_1"
             chat_dir.mkdir()
             (chat_dir / "message_1.html").write_text(
-                _chat_html("Group 1", "Daniel Kinahan, Theo Mohamed and Ben Wood"),
+                _chat_html("Group 1", "Person A, Person B and Person C"),
                 encoding="utf-8",
             )
 
@@ -208,9 +208,69 @@ class FacebookArchiveTests(unittest.TestCase):
 
             output = stdout.getvalue()
             self.assertIn("Found 1 matching Facebook group chat folders:", output)
-            self.assertIn("- group_1 (Group 1)", output)
+            self.assertIn("- group_1", output)
+            self.assertIn("Compared with", output)
+            self.assertIn("+ group_1", output)
             self.assertIn("Copied 1 folder(s)", output)
             self.assertTrue((dest_dir / "group_1" / "message_1.html").exists())
+
+    def test_main_shows_existing_destination_matches(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_dir = root / "source"
+            dest_dir = root / "dest"
+            config_dir = root / "config-root"
+            (config_dir / "config").mkdir(parents=True)
+            source_dir.mkdir()
+            dest_dir.mkdir()
+
+            (config_dir / "config" / "people.yaml").write_text(
+                """people:
+  - name: Person A
+    identities:
+      - platform: facebook
+        id: "Person A"
+  - name: Person B
+    identities:
+      - platform: facebook
+        id: "Person B"
+  - name: Person C
+    identities:
+      - platform: facebook
+        id: "Person C"
+""",
+                encoding="utf-8",
+            )
+
+            chat_dir = source_dir / "group_1"
+            chat_dir.mkdir()
+            (chat_dir / "message_1.html").write_text(
+                _chat_html("Group 1", "Person A, Person B and Person C"),
+                encoding="utf-8",
+            )
+            (dest_dir / "group_1").mkdir()
+
+            stdout = StringIO()
+            argv = sys.argv[:]
+            try:
+                sys.argv = [
+                    "gchat-copy-facebook-groups",
+                    "--source",
+                    str(source_dir),
+                    "--dest",
+                    str(dest_dir),
+                    "--config-dir",
+                    str(config_dir),
+                    "--yes",
+                ]
+                with redirect_stdout(stdout):
+                    main()
+            finally:
+                sys.argv = argv
+
+            output = stdout.getvalue()
+            self.assertIn("Compared with", output)
+            self.assertIn("= group_1", output)
 
     def test_load_reconciliation_allows_empty_theme_channels(self) -> None:
         with TemporaryDirectory() as tmp:

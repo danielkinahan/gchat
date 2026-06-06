@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import hashlib
+from base64 import b64encode
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse, unquote
 
 import duckdb
 import yaml
@@ -15,6 +17,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from .discovery import _signal_root
 from .reconciliation import load_reconciliation
 
 COMMON_STOP_WORDS = {
@@ -41,9 +44,18 @@ def _default_data_dir() -> Path:
     return Path(os.environ.get("GCHAT_DATA_DIR", "data"))
 
 
+def _default_config_dir() -> Path:
+    env_dir = os.environ.get("GCHAT_CONFIG_DIR")
+    if env_dir:
+        return Path(env_dir)
+    if Path("/config").exists():
+        return Path("/config")
+    return Path.cwd() / "config"
+
+
 def _load_fb_chat_names() -> dict[str, str]:
     """Load Facebook chat name mappings from config."""
-    config_path = Path.cwd() / "config" / "fb_chat_names.json"
+    config_path = _default_config_dir() / "fb_chat_names.json"
     if config_path.exists():
         try:
             return json.loads(config_path.read_text(encoding="utf-8"))
@@ -105,6 +117,45 @@ def _normalized_history_name(value: str | None) -> str:
     return " ".join(value.split()).casefold()
 
 
+def _format_history_actor_name(
+    actor_name: str | None,
+    actor_raw_id: str | None,
+    platform: str,
+    identity_to_display_name: dict[tuple[str, str], str],
+    actor_nickname: str | None = None,
+    you_fallback_name: str | None = None,
+) -> str | None:
+    def _replace_you_placeholder(value: str, canonical_name: str | None, fallback_name: str | None) -> str:
+        replacement_name = canonical_name
+        if _normalized_history_name(replacement_name) == "you":
+            replacement_name = None
+        replacement_name = replacement_name or fallback_name
+        normalized = _normalized_history_name(value)
+        if normalized == "you" and replacement_name:
+            return replacement_name
+        if "(you)" in value.casefold() and replacement_name:
+            replaced = value.replace("(You)", f"({replacement_name})")
+            replaced = replaced.replace("(you)", f"({replacement_name})")
+            return " ".join(replaced.split())
+        return value
+
+    resolved = identity_to_display_name.get((platform, actor_raw_id)) if actor_raw_id else None
+    if _normalized_history_name(resolved) == "you":
+        resolved = you_fallback_name or None
+    display_actor = actor_nickname or resolved or actor_name
+    if display_actor:
+        display_actor = _replace_you_placeholder(display_actor, resolved, you_fallback_name)
+    if display_actor and resolved:
+        if f"({resolved})".casefold() in display_actor.casefold():
+            return display_actor
+        if _normalized_history_name(display_actor) == _normalized_history_name(resolved):
+            return display_actor
+        return f"{display_actor} ({resolved})"
+    if display_actor:
+        return display_actor
+    return resolved
+
+
 @dataclass(frozen=True)
 class QueryFilters:
     start: date | None
@@ -136,7 +187,7 @@ def _csv_strings(value: str | None) -> list[str]:
 
 
 def _load_configured_theme_names() -> list[str]:
-    config_path = Path.cwd() / "config" / "themes.yaml"
+    config_path = _default_config_dir() / "themes.yaml"
     if not config_path.exists():
         return []
     try:
@@ -150,8 +201,16 @@ def _load_configured_theme_names() -> list[str]:
     return names
 
 
+def _load_db_theme_names(db_path: Path) -> list[str]:
+    if not db_path.exists():
+        return []
+    with _connect(db_path) as con:
+        rows = con.execute("SELECT name FROM themes ORDER BY id").fetchall()
+    return [str(row[0]) for row in rows]
+
+
 def _load_configured_people_names() -> set[str]:
-    config_path = Path.cwd() / "config" / "people.yaml"
+    config_path = _default_config_dir() / "people.yaml"
     if not config_path.exists():
         return set()
     try:
@@ -163,6 +222,23 @@ def _load_configured_people_names() -> set[str]:
         if isinstance(person, dict) and "name" in person:
             names.add(str(person["name"]))
     return names
+
+
+def _load_primary_person_name() -> str | None:
+    config_path = _default_config_dir() / "people.yaml"
+    if not config_path.exists():
+        return None
+    try:
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return None
+    people = data.get("people", [])
+    if not isinstance(people, list) or not people:
+        return None
+    first = people[0]
+    if isinstance(first, dict) and first.get("name"):
+        return str(first["name"])
+    return None
 
 
 def _filters_clause(
@@ -264,7 +340,7 @@ def _connect(db_path: Path):
 
 def _load_theme_channel_ids(db_path: Path, reconciliation: Any) -> dict[str, list[int]]:
     configured_themes = reconciliation.themes.configured_theme_names
-    if not configured_themes:
+    if not configured_themes or not db_path.exists():
         return {}
 
     with _connect(db_path) as con:
@@ -289,6 +365,8 @@ def _row_to_dict(row: tuple[Any, ...]) -> dict[str, Any]:
 
 
 def _messages_has_column(db_path: Path, column_name: str) -> bool:
+    if not db_path.exists():
+        return False
     with _connect(db_path) as con:
         rows = con.execute("PRAGMA table_info(messages)").fetchall()
     return any(str(row[1]) == column_name for row in rows)
@@ -310,18 +388,175 @@ def _media_url(platform: str, source: str, rel_path: str) -> str:
     return f"/api/media?{urlencode({'platform': platform, 'source': source, 'path': rel_path})}"
 
 
-def _resolve_local_attachment_url(attachment_preview: str | None, source_name: str, data_dir: Path) -> str | None:
+def _normalize_facebook_preview_path(preview: str, source_folder: str) -> str:
+    local_preview = preview
+    parsed = urlparse(preview)
+    if parsed.scheme in {"http", "https"} and parsed.netloc.startswith(("localhost:", "127.0.0.1:")):
+        local_preview = parsed.path or ""
+    local_preview = unquote(local_preview).strip()
+    if local_preview.startswith("/"):
+        local_preview = local_preview[1:]
+
+    inbox_prefix = "messages/inbox/"
+    if local_preview.startswith(inbox_prefix):
+        remainder = local_preview[len(inbox_prefix):]
+        source_prefix = f"{source_folder}/"
+        if remainder.startswith(source_prefix):
+            return remainder[len(source_prefix):]
+    source_prefix = f"{source_folder}/"
+    if local_preview.startswith(source_prefix):
+        return local_preview[len(source_prefix):]
+    return local_preview
+
+
+def _normalize_local_preview_path(preview: str) -> str:
+    parsed = urlparse(preview)
+    local_preview = preview
+    if parsed.scheme in {"http", "https"} and parsed.netloc.startswith(("localhost:", "127.0.0.1:")):
+        local_preview = parsed.path or ""
+    local_preview = unquote(local_preview).strip()
+    if local_preview.startswith("/"):
+        local_preview = local_preview[1:]
+    return local_preview
+
+
+def _build_signal_filename_index(data_dir: Path) -> dict[str, dict[str, str]]:
+    signal_root = _signal_root(data_dir)
+    if not signal_root:
+        return {}
+
+    index: dict[str, dict[str, str]] = {}
+    mime_extensions = {
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+        "image/gif": ".gif",
+        "video/mp4": ".mp4",
+        "audio/mpeg": ".mp3",
+        "audio/mp4": ".m4a",
+        "audio/x-m4a": ".m4a",
+        "audio/ogg": ".ogg",
+    }
+
+    for source_dir in signal_root.iterdir():
+        if not source_dir.is_dir():
+            continue
+        main_jsonl = source_dir / "main.jsonl"
+        files_root = source_dir / "files"
+        if not main_jsonl.exists() or not files_root.exists():
+            continue
+
+        files_by_key: dict[tuple[int, str], list[str]] = {}
+        files_by_plaintext_hash: dict[str, list[str]] = {}
+        for file_path in files_root.rglob("*"):
+            if not file_path.is_file():
+                continue
+            relative = file_path.relative_to(source_dir).as_posix()
+            ext = file_path.suffix.casefold()
+            if ext:
+                key = (file_path.stat().st_size, ext)
+                files_by_key.setdefault(key, []).append(relative)
+            try:
+                digest = b64encode(hashlib.sha256(file_path.read_bytes()).digest()).decode("ascii")
+            except OSError:
+                continue
+            files_by_plaintext_hash.setdefault(digest, []).append(relative)
+
+        source_map: dict[str, str] = {}
+        with main_jsonl.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                chat_item = record.get("chatItem")
+                if not isinstance(chat_item, dict):
+                    continue
+                attachments = (chat_item.get("standardMessage") or {}).get("attachments") or []
+                if not isinstance(attachments, list):
+                    continue
+                for attachment in attachments:
+                    if not isinstance(attachment, dict):
+                        continue
+                    pointer = attachment.get("pointer") if isinstance(attachment.get("pointer"), dict) else {}
+                    file_name = str(pointer.get("fileName") or attachment.get("fileName") or "").strip()
+                    normalized_file_name = Path(file_name).name.casefold()
+                    if not normalized_file_name or normalized_file_name in source_map:
+                        continue
+                    locator = pointer.get("locatorInfo") if isinstance(pointer.get("locatorInfo"), dict) else {}
+                    size = locator.get("size")
+                    content_type = str(pointer.get("contentType") or attachment.get("contentType") or "").casefold()
+                    ext_candidates = [Path(file_name).suffix.casefold(), mime_extensions.get(content_type, "")]
+                    ext_candidates = [ext for ext in ext_candidates if ext]
+                    resolved_candidate: str | None = None
+                    if isinstance(size, int):
+                        for ext in dict.fromkeys(ext_candidates):
+                            candidates = files_by_key.get((size, ext), [])
+                            if len(candidates) == 1:
+                                resolved_candidate = candidates[0]
+                                break
+                    if not resolved_candidate:
+                        plaintext_hash = str(locator.get("plaintextHash") or "").strip()
+                        if plaintext_hash:
+                            hash_candidates = files_by_plaintext_hash.get(plaintext_hash, [])
+                            if ext_candidates and len(hash_candidates) > 1:
+                                ext_set = set(ext_candidates)
+                                hash_candidates = [
+                                    candidate
+                                    for candidate in hash_candidates
+                                    if Path(candidate).suffix.casefold() in ext_set
+                                ]
+                            if len(hash_candidates) == 1:
+                                resolved_candidate = hash_candidates[0]
+                    if resolved_candidate:
+                        source_map[normalized_file_name] = resolved_candidate
+        if source_map:
+            index[source_dir.name] = source_map
+
+    return index
+
+
+def _signal_source_root(data_dir: Path, source_folder: str) -> Path | None:
+    direct_root = (data_dir / source_folder).resolve()
+    if direct_root.exists() and direct_root.is_dir():
+        return direct_root
+
+    signal_root = _signal_root(data_dir)
+    if signal_root:
+        nested_root = (signal_root / source_folder).resolve()
+        if nested_root.exists() and nested_root.is_dir():
+            return nested_root
+
+    fallback_root = (data_dir / "signal" / source_folder).resolve()
+    if fallback_root.exists() and fallback_root.is_dir():
+        return fallback_root
+
+    return None
+
+
+def _resolve_local_attachment_url(
+    attachment_preview: str | None,
+    source_name: str,
+    data_dir: Path,
+    signal_filename_index: dict[str, dict[str, str]] | None = None,
+) -> str | None:
     preview = (attachment_preview or "").strip()
     if not preview:
         return None
     lowered = preview.casefold()
-    if lowered.startswith("http://") or lowered.startswith("https://"):
-        return preview
+    if lowered.startswith(("http://", "https://")):
+        parsed = urlparse(preview)
+        if parsed.netloc and not parsed.netloc.startswith(("localhost:", "127.0.0.1:")):
+            return preview
 
     if source_name.startswith("Facebook: "):
         source_folder = source_name.removeprefix("Facebook: ").strip()
         source_root = (data_dir / "facebook" / source_folder).resolve()
-        candidate = _safe_child_path(source_root, preview)
+        candidate = _safe_child_path(
+            source_root,
+            _normalize_facebook_preview_path(preview, source_folder),
+        )
         if candidate and candidate.exists() and candidate.is_file():
             relative = candidate.relative_to(source_root).as_posix()
             return _media_url("facebook", source_folder, relative)
@@ -329,15 +564,38 @@ def _resolve_local_attachment_url(attachment_preview: str | None, source_name: s
 
     if source_name.startswith("Signal: "):
         source_folder = source_name.removeprefix("Signal: ").strip()
-        source_root = (data_dir / "signal" / source_folder).resolve()
-        direct = _safe_child_path(source_root, preview)
+        source_root = _signal_source_root(data_dir, source_folder)
+        if source_root is None:
+            return None
+        normalized_preview = _normalize_local_preview_path(preview)
+        direct = _safe_child_path(source_root, normalized_preview)
         if direct and direct.exists() and direct.is_file():
             relative = direct.relative_to(source_root).as_posix()
             return _media_url("signal", source_folder, relative)
-        fallback = _safe_child_path(source_root / "files", Path(preview).name)
+        fallback = _safe_child_path(source_root / "files", Path(normalized_preview).name)
         if fallback and fallback.exists() and fallback.is_file():
             relative = fallback.relative_to(source_root).as_posix()
             return _media_url("signal", source_folder, relative)
+        if signal_filename_index:
+            mapped_rel_path = signal_filename_index.get(source_folder, {}).get(Path(normalized_preview).name.casefold())
+            if mapped_rel_path:
+                mapped = _safe_child_path(source_root, mapped_rel_path)
+                if mapped and mapped.exists() and mapped.is_file():
+                    return _media_url("signal", source_folder, mapped_rel_path)
+        return None
+
+    if source_name.startswith("Discord: "):
+        source_folder = source_name.removeprefix("Discord: ").strip()
+        source_root = (data_dir / "discord").resolve()
+        normalized_preview = _normalize_local_preview_path(preview)
+        direct = _safe_child_path(source_root, normalized_preview)
+        if direct and direct.exists() and direct.is_file():
+            relative = direct.relative_to(source_root).as_posix()
+            return _media_url("discord", source_folder, relative)
+        fallback = _safe_child_path(source_root / "assets", Path(normalized_preview).name)
+        if fallback and fallback.exists() and fallback.is_file():
+            relative = fallback.relative_to(source_root).as_posix()
+            return _media_url("discord", source_folder, relative)
         return None
 
     return None
@@ -352,11 +610,15 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     app.state.fb_chat_names = _load_fb_chat_names()
     app.state.reconciliation = load_reconciliation()
     app.state.configured_people_names = _load_configured_people_names()
+    app.state.primary_person_name = _load_primary_person_name()
     configured_theme_names = _load_configured_theme_names()
+    if not configured_theme_names:
+        configured_theme_names = _load_db_theme_names(app.state.db_path)
     app.state.theme_id_to_name = {i + 1: name for i, name in enumerate(configured_theme_names)}
     app.state.theme_to_channel_ids = _load_theme_channel_ids(app.state.db_path, app.state.reconciliation)
     app.state.has_attachment_preview = _messages_has_column(app.state.db_path, "attachment_preview")
     app.state.has_reaction_summary = _messages_has_column(app.state.db_path, "reaction_summary")
+    app.state.signal_filename_index = _build_signal_filename_index(app.state.data_dir)
     _THEME_CHANNEL_IDS = app.state.theme_to_channel_ids
 
     app.add_middleware(
@@ -373,9 +635,16 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
 
     @app.get("/api/media")
     def media_file(platform: str, source: str, path: str) -> FileResponse:
-        if platform not in {"facebook", "signal"}:
+        if platform not in {"facebook", "signal", "discord"}:
             raise HTTPException(status_code=404, detail="Unsupported media platform")
-        source_root = (app.state.data_dir / platform / source).resolve()
+        if platform == "facebook":
+            source_root = (app.state.data_dir / "facebook" / source).resolve()
+        elif platform == "signal":
+            source_root = _signal_source_root(app.state.data_dir, source)
+            if source_root is None:
+                raise HTTPException(status_code=404, detail="Media source not found")
+        else:
+            source_root = (app.state.data_dir / "discord").resolve()
         target = _safe_child_path(source_root, path)
         if target is None or not target.exists() or not target.is_file():
             raise HTTPException(status_code=404, detail="Media file not found")
@@ -664,42 +933,24 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
 
     @app.get("/api/metadata")
     def metadata() -> dict[str, Any]:
-        """Get available filters: configured people, themes, and platforms."""
-        # Load configured people from people.yaml
-        config_dir = Path.cwd() / "config"
-        people_config_path = config_dir / "people.yaml"
-        configured_people_names = set()
-        if people_config_path.exists():
-            try:
-                config_data = yaml.safe_load(people_config_path.read_text(encoding="utf-8"))
-                for person in config_data.get("people", []):
-                    configured_people_names.add(person["name"])
-            except Exception:
-                pass
-        
+        """Get available filters from the database and reconciliation config."""
         with _connect(app.state.db_path) as con:
-            # Only return people that are in the config
             people = con.execute(
-                "SELECT id, display_name FROM people ORDER BY display_name"
+                "SELECT id, display_name FROM people ORDER BY display_name, id"
             ).fetchall()
-            configured_people = [
-                {"id": int(row[0]), "name": row[1]} 
-                for row in people 
-                if row[1] in configured_people_names
-            ]
-            
-            themes_result = [
-                {"id": int(theme_id), "name": theme_name}
-                for theme_id, theme_name in sorted(app.state.theme_id_to_name.items())
-            ]
-            
             platforms = con.execute(
                 "SELECT DISTINCT platform FROM sources ORDER BY platform"
             ).fetchall()
-        
+
+        if app.state.configured_people_names:
+            people = [row for row in people if row[1] in app.state.configured_people_names]
+
         return {
-            "people": configured_people,
-            "themes": themes_result,
+            "people": [{"id": int(row[0]), "name": row[1]} for row in people],
+            "themes": [
+                {"id": int(theme_id), "name": theme_name}
+                for theme_id, theme_name in sorted(app.state.theme_id_to_name.items())
+            ],
             "platforms": [row[0] for row in platforms],
         }
 
@@ -755,10 +1006,20 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             channel_change_rows = con.execute(
                 f"""
                 WITH deduped AS (
-                    SELECT DISTINCT channel_id, source_id, previous_name, new_name, ts, json_extract_string(payload_json, '$.actor_name') AS actor_name
+                    SELECT DISTINCT
+                        channel_id,
+                        source_id,
+                        previous_name,
+                        new_name,
+                        ts,
+                        json_extract_string(payload_json, '$.actor_name') AS actor_name,
+                        coalesce(
+                            json_extract_string(payload_json, '$.actor_raw_id'),
+                            json_extract_string(payload_json, '$.updateMessage.groupChange.updates[0].groupNameUpdate.updaterAci')
+                        ) AS actor_raw_id
                     FROM channel_name_changes
                 )
-                SELECT d.channel_id, d.previous_name, d.new_name, d.ts, d.actor_name
+                SELECT d.channel_id, d.source_id, s.platform, c.platform_channel_id, d.previous_name, d.new_name, d.ts, d.actor_name, d.actor_raw_id
                 FROM deduped d
                 JOIN channels c ON c.id = d.channel_id
                 JOIN sources s ON s.id = d.source_id
@@ -793,12 +1054,13 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                         source_id,
                         json_extract_string(payload_json, '$.chatId') AS chat_id,
                         json_extract_string(payload_json, '$.actor_name') AS actor_name,
+                        json_extract_string(payload_json, '$.actor_raw_id') AS actor_raw_id,
                         previous_name,
                         new_name,
                         ts
                     FROM person_name_changes
                 )
-                SELECT d.person_id, d.source_id, d.chat_id, p.display_name, d.actor_name, d.previous_name, d.new_name, d.ts
+                SELECT d.person_id, d.source_id, s.platform, d.chat_id, p.display_name, d.actor_name, d.actor_raw_id, d.previous_name, d.new_name, d.ts
                 FROM deduped d
                 JOIN people p ON p.id = d.person_id
                 JOIN sources s ON s.id = d.source_id
@@ -808,19 +1070,133 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 person_change_params,
             ).fetchall()
 
+            nickname_timeline_rows = con.execute(
+                f"""
+                WITH deduped AS (
+                    SELECT DISTINCT
+                        person_id,
+                        source_id,
+                        json_extract_string(payload_json, '$.chatId') AS chat_id,
+                        new_name,
+                        ts
+                    FROM person_name_changes
+                )
+                SELECT d.person_id, d.source_id, s.platform, d.chat_id, d.new_name, d.ts
+                FROM deduped d
+                JOIN sources s ON s.id = d.source_id
+                WHERE {' AND '.join(["1 = 1"] + ([f"s.platform IN ({', '.join('?' for _ in platforms_filter)})"] if platforms_filter else []))}
+                ORDER BY d.source_id, d.chat_id, d.person_id, d.ts
+                """,
+                platforms_filter if platforms_filter else [],
+            ).fetchall()
+
+            identity_rows = con.execute(
+                """
+                SELECT pi.platform, pi.platform_user_id, p.id, p.display_name
+                FROM platform_identities pi
+                JOIN people p ON p.id = pi.person_id
+                """
+            ).fetchall()
+            preferred_name_by_person_id: dict[int, str] = {}
+            for platform, platform_user_id, person_id, display_name in identity_rows:
+                key = (str(platform), str(platform_user_id))
+                configured = app.state.reconciliation.people.identity_to_person.get(key)
+                if configured:
+                    preferred_name_by_person_id[int(person_id)] = configured[0]
+                    continue
+                candidate_name = str(display_name)
+                if _normalized_history_name(candidate_name) not in {"", "you"}:
+                    preferred_name_by_person_id.setdefault(int(person_id), candidate_name)
+                    continue
+                candidate_id = str(platform_user_id)
+                if _normalized_history_name(candidate_id) not in {"", "you"}:
+                    preferred_name_by_person_id.setdefault(int(person_id), candidate_id)
+            identity_to_display_name = {
+                (str(platform), str(platform_user_id)): str(display_name)
+                for platform, platform_user_id, _, display_name in identity_rows
+            }
+            for (platform, raw_id), (configured_name, _color) in app.state.reconciliation.people.identity_to_person.items():
+                key = (str(platform), str(raw_id))
+                existing = identity_to_display_name.get(key)
+                if existing is None or _normalized_history_name(existing) == "you":
+                    identity_to_display_name[key] = configured_name
+            for platform, platform_user_id, person_id, _display_name in identity_rows:
+                key = (str(platform), str(platform_user_id))
+                existing = identity_to_display_name.get(key)
+                if existing and _normalized_history_name(existing) == "you":
+                    preferred_name = preferred_name_by_person_id.get(int(person_id))
+                    if preferred_name:
+                        identity_to_display_name[key] = preferred_name
+            identity_to_person_id = {
+                (str(platform), str(platform_user_id)): int(person_id)
+                for platform, platform_user_id, person_id, _ in identity_rows
+            }
+
+            nickname_timeline: dict[tuple[str, int, str, int], list[tuple[datetime | None, str]]] = {}
+            for person_id, source_id, platform, chat_id, new_name, ts in nickname_timeline_rows:
+                if not chat_id:
+                    continue
+                key = (str(platform), int(source_id), str(chat_id), int(person_id))
+                nickname_timeline.setdefault(key, []).append((ts, str(new_name or "")))
+            for key in nickname_timeline:
+                nickname_timeline[key].sort(key=lambda item: item[0] or datetime.min)
+
+            def person_display_name(person_id: int, fallback_display_name: str) -> str:
+                preferred = preferred_name_by_person_id.get(person_id)
+                if preferred:
+                    return preferred
+                if _normalized_history_name(fallback_display_name) == "you" and app.state.primary_person_name:
+                    return app.state.primary_person_name
+                return fallback_display_name
+
+            def actor_nickname_at(
+                platform: str,
+                source_id: int,
+                chat_id: str | None,
+                actor_raw_id: str | None,
+                ts: datetime | None,
+            ) -> str | None:
+                if not chat_id or not actor_raw_id or ts is None:
+                    return None
+                person_id = identity_to_person_id.get((platform, actor_raw_id))
+                if person_id is None:
+                    return None
+                events = nickname_timeline.get((platform, source_id, str(chat_id), person_id), [])
+                nickname: str | None = None
+                for event_ts, event_new_name in events:
+                    if event_ts is None or event_ts > ts:
+                        break
+                    normalized = _normalized_history_name(event_new_name)
+                    nickname = None if normalized in {"", "(cleared)"} else event_new_name
+                return nickname
+
             channel_history_by_id: dict[int, list[dict[str, Any]]] = {}
-            for channel_id, previous_name, new_name, ts, actor_name in channel_change_rows:
+            for channel_id, source_id, platform, platform_chat_id, previous_name, new_name, ts, actor_name, actor_raw_id in channel_change_rows:
+                historical_actor_nickname = actor_nickname_at(
+                    str(platform),
+                    int(source_id),
+                    str(platform_chat_id) if platform_chat_id is not None else None,
+                    actor_raw_id,
+                    ts,
+                )
                 channel_history_by_id.setdefault(int(channel_id), []).append(
                     {
                         "previous_name": previous_name,
                         "new_name": new_name,
-                        "author_name": actor_name,
+                        "author_name": _format_history_actor_name(
+                            actor_name,
+                            actor_raw_id,
+                            str(platform),
+                            identity_to_display_name,
+                            actor_nickname=historical_actor_nickname,
+                            you_fallback_name=app.state.primary_person_name,
+                        ),
                         "ts": ts.isoformat() if ts else None,
                     }
                 )
 
             participants_by_chat: dict[tuple[int, str], dict[int, dict[str, Any]]] = {}
-            for person_id, source_id, chat_id, display_name, actor_name, previous_name, new_name, ts in person_change_rows:
+            for person_id, source_id, platform, chat_id, display_name, actor_name, actor_raw_id, previous_name, new_name, ts in person_change_rows:
                 if not chat_id:
                     continue
                 chat_key = (int(source_id), str(chat_id))
@@ -828,7 +1204,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     int(person_id),
                     {
                         "id": int(person_id),
-                        "display_name": display_name,
+                        "display_name": person_display_name(int(person_id), str(display_name)),
                         "history": [],
                     },
                 )
@@ -836,7 +1212,20 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     {
                         "previous_name": previous_name,
                         "new_name": new_name,
-                        "author_name": actor_name or display_name,
+                        "author_name": _format_history_actor_name(
+                            actor_name,
+                            actor_raw_id,
+                            str(platform),
+                            identity_to_display_name,
+                            actor_nickname=actor_nickname_at(
+                                str(platform),
+                                int(source_id),
+                                str(chat_id),
+                                actor_raw_id,
+                                ts,
+                            ),
+                            you_fallback_name=app.state.primary_person_name,
+                        ) or display_name,
                         "ts": ts.isoformat() if ts else None,
                     }
                 )
@@ -879,16 +1268,14 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     continue
                 if platform == "signal" and int(channel_id) not in signal_chat_ids:
                     continue
-                participants = []
-                if platform != "signal":
-                    participants = [
-                        participant
-                        for participant in sorted(
-                            participants_by_chat.get(chat_key, {}).values(),
-                            key=lambda item: item["display_name"].casefold(),
-                        )
-                        if participant["history"]
-                    ]
+                participants = [
+                    participant
+                    for participant in sorted(
+                        participants_by_chat.get(chat_key, {}).values(),
+                        key=lambda item: item["display_name"].casefold(),
+                    )
+                    if participant["history"]
+                ]
                 chats.append(
                     {
                         "id": int(channel_id),
@@ -1449,7 +1836,12 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     "ts": row[1].isoformat() if row[1] else None,
                     "content": _message_preview(row[2], int(row[3] or 0), row[4]),
                     "attachment_preview": row[4],
-                    "attachment_url": _resolve_local_attachment_url(row[4], row[8], app.state.data_dir),
+                    "attachment_url": _resolve_local_attachment_url(
+                        row[4],
+                        row[8],
+                        app.state.data_dir,
+                        app.state.signal_filename_index,
+                    ),
                     "person_name": row[5],
                     "person_color": row[6],
                     "channel_name": _get_display_name(row[7], row[8], app.state.fb_chat_names),

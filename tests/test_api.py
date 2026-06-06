@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -10,7 +13,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import duckdb
 from fastapi.testclient import TestClient
 
-from gchat.api import create_app
+from gchat.api import (
+    _build_signal_filename_index,
+    _resolve_local_attachment_url,
+    create_app,
+)
 from gchat.builder import build_database
 
 from tests.test_ingest import ROOT, SIGNAL_EXPORT, _make_signal_subset
@@ -50,7 +57,7 @@ class ApiTests(unittest.TestCase):
             facebook_dir.mkdir()
             facebook_chat = next((ROOT / "data" / "facebook").iterdir())
             shutil.copytree(facebook_chat, facebook_dir / facebook_chat.name)
-            _make_signal_subset(SIGNAL_EXPORT, data_dir / "signal" / SIGNAL_EXPORT.name)
+            _make_signal_subset(SIGNAL_EXPORT, data_dir / SIGNAL_EXPORT.name)
 
             db_path = tmp_path / "gchat.duckdb"
             build_database(data_dir, db_path, config_dir=config_dir)
@@ -111,7 +118,7 @@ class ApiTests(unittest.TestCase):
             con = duckdb.connect(str(db_path))
             channel_row = con.execute(
                 """
-                SELECT c.id, c.source_id, c.name, s.platform
+                SELECT c.id, c.source_id, c.name, c.platform_channel_id, s.platform
                 FROM channels c
                 JOIN sources s ON s.id = c.source_id
                 WHERE s.platform <> 'signal'
@@ -131,8 +138,23 @@ class ApiTests(unittest.TestCase):
             ).fetchone()
             self.assertIsNotNone(channel_row)
             self.assertIsNotNone(second_channel_row)
-            channel_id, source_id, current_name, platform = channel_row
+            channel_id, source_id, current_name, platform_channel_id, platform = channel_row
             second_channel_id, second_source_id, second_current_name = second_channel_row
+            actor_row = con.execute(
+                """
+                SELECT pi.platform_user_id, p.id, p.display_name
+                FROM messages m
+                JOIN channels c ON c.id = m.channel_id
+                JOIN sources s ON s.id = c.source_id
+                JOIN people p ON p.id = m.person_id
+                JOIN platform_identities pi ON pi.person_id = p.id AND pi.platform = s.platform
+                WHERE c.id = ?
+                LIMIT 1
+                """,
+                [channel_id],
+            ).fetchone()
+            self.assertIsNotNone(actor_row)
+            actor_raw_id, actor_person_id, actor_real_name = actor_row
             renamed_name = f"{current_name} renamed"
             con.execute(
                 "DELETE FROM channel_name_changes WHERE channel_id = ?",
@@ -151,7 +173,16 @@ class ApiTests(unittest.TestCase):
             )
             con.execute(
                 "INSERT INTO channel_name_changes VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                [next_id + 1, channel_id, source_id, "channel_name", current_name, renamed_name, "2024-01-02 00:00:00", '{"actor_name":"Rename Tester"}'],
+                [
+                    next_id + 1,
+                    channel_id,
+                    source_id,
+                    "channel_name",
+                    current_name,
+                    renamed_name,
+                    "2023-12-31 00:00:00",
+                    f'{{"actor_name":"Crystal cowboy","actor_raw_id":"{actor_raw_id}"}}',
+                ],
             )
             con.execute(
                 "INSERT INTO channel_name_changes VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -161,19 +192,200 @@ class ApiTests(unittest.TestCase):
                 "INSERT INTO channel_name_changes VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 [next_id + 3, second_channel_id, second_source_id, "channel_name", None, second_current_name, "2024-01-04 00:00:00", None],
             )
+            next_person_change_id = con.execute(
+                "SELECT COALESCE(MAX(id), 0) + 1 FROM person_name_changes"
+            ).fetchone()[0]
+            person_id = con.execute(
+                "SELECT id FROM people ORDER BY id LIMIT 1"
+            ).fetchone()[0]
+            con.execute(
+                "INSERT INTO person_name_changes VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    next_person_change_id,
+                    actor_person_id,
+                    source_id,
+                    "nickname",
+                    "Old Actor Nick",
+                    "Horton",
+                    "2024-01-01 12:00:00",
+                    f'{{"chatId":"{platform_channel_id}","actor_name":"You","actor_raw_id":"{actor_raw_id}"}}',
+                ],
+            )
+            con.execute(
+                "INSERT INTO person_name_changes VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    next_person_change_id + 1,
+                    person_id,
+                    source_id,
+                    "nickname",
+                    "Old Nick",
+                    "New Nick",
+                    "2024-01-05 00:00:00",
+                    f'{{"chatId":"{platform_channel_id}","actor_name":"cokehead","actor_raw_id":"{actor_raw_id}"}}',
+                ],
+            )
             con.close()
 
             history = client.get(f"/api/name-history?platforms={platform}").json()
             chat = next((item for item in history["chats"] if item["id"] == channel_id), None)
             self.assertIsNotNone(chat)
             self.assertEqual(len(chat["previous_names"]), 2)
-            self.assertEqual(chat["previous_names"][0]["new_name"], current_name)
-            self.assertIsNone(chat["previous_names"][0]["previous_name"])
-            self.assertEqual(chat["previous_names"][0]["author_name"], "Bootstrapper")
-            self.assertEqual(chat["previous_names"][1]["new_name"], renamed_name)
-            self.assertEqual(chat["previous_names"][1]["previous_name"], current_name)
-            self.assertEqual(chat["previous_names"][1]["author_name"], "Rename Tester")
+            bootstrap_entry = next((entry for entry in chat["previous_names"] if entry["new_name"] == current_name), None)
+            rename_entry = next((entry for entry in chat["previous_names"] if entry["new_name"] == renamed_name), None)
+            self.assertIsNotNone(bootstrap_entry)
+            self.assertIsNotNone(rename_entry)
+            self.assertIsNone(bootstrap_entry["previous_name"])
+            self.assertEqual(bootstrap_entry["author_name"], "Bootstrapper")
+            self.assertEqual(rename_entry["previous_name"], current_name)
+            self.assertEqual(
+                rename_entry["author_name"],
+                actor_real_name,
+            )
+            participant = next((item for item in chat["participants"] if item["id"] == person_id), None)
+            self.assertIsNotNone(participant)
+            self.assertEqual(participant["history"][0]["new_name"], "New Nick")
+            self.assertEqual(
+                participant["history"][0]["author_name"],
+                f"Horton ({actor_real_name})",
+            )
             self.assertIsNone(next((item for item in history["chats"] if item["id"] == second_channel_id), None))
+
+    def test_local_attachment_resolution_helpers(self) -> None:
+        with TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / "data"
+            fb_source = data_dir / "facebook" / "sample_chat" / "photos"
+            fb_source.mkdir(parents=True)
+            (fb_source / "preview.jpg").write_bytes(b"jpeg")
+
+            fb_url = _resolve_local_attachment_url(
+                "http://localhost:5173/messages/inbox/sample_chat/photos/preview.jpg",
+                "Facebook: sample_chat",
+                data_dir,
+            )
+            self.assertEqual(
+                fb_url,
+                "/api/media?platform=facebook&source=sample_chat&path=photos%2Fpreview.jpg",
+            )
+
+            signal_source = data_dir / "signal-export-test"
+            signal_files = signal_source / "files" / "41"
+            signal_files.mkdir(parents=True)
+            media = signal_files / "413317d826d79d0246709eda6dc92ab896613c176d81d3c09e06bbc89d99fc5e.jpg"
+            media.write_bytes(b"signal-jpeg")
+            size = media.stat().st_size
+            main_record = {
+                "chatItem": {
+                    "standardMessage": {
+                        "attachments": [
+                            {
+                                "pointer": {
+                                    "contentType": "image/jpeg",
+                                    "fileName": "signal-2022-08-16-105045 PM.jpeg",
+                                    "locatorInfo": {"size": size},
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+            (signal_source / "main.jsonl").write_text(
+                json.dumps(main_record, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            (signal_source / "metadata.json").write_text("{}", encoding="utf-8")
+
+            signal_index = _build_signal_filename_index(data_dir)
+            signal_url = _resolve_local_attachment_url(
+                "http://localhost:5173/signal-2022-08-16-105045%20PM.jpeg",
+                "Signal: signal-export-test",
+                data_dir,
+                signal_index,
+            )
+            self.assertEqual(
+                signal_url,
+                "/api/media?platform=signal&source=signal-export-test&path=files%2F41%2F413317d826d79d0246709eda6dc92ab896613c176d81d3c09e06bbc89d99fc5e.jpg",
+            )
+
+            hash_only_media = signal_source / "files" / "42" / "hash-only.jpg"
+            hash_only_media.parent.mkdir(parents=True, exist_ok=True)
+            hash_only_media.write_bytes(b"hash-match-jpeg")
+            hash_only_digest = base64.b64encode(hashlib.sha256(hash_only_media.read_bytes()).digest()).decode("ascii")
+            hash_only_record = {
+                "chatItem": {
+                    "standardMessage": {
+                        "attachments": [
+                            {
+                                "pointer": {
+                                    "contentType": "image/jpeg",
+                                    "fileName": "signal-hash-only.jpeg",
+                                    "locatorInfo": {
+                                        "size": 999999,
+                                        "plaintextHash": hash_only_digest,
+                                    },
+                                }
+                            }
+                        ]
+                    }
+                }
+            }
+            with (signal_source / "main.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(hash_only_record, ensure_ascii=False) + "\n")
+
+            rebuilt_index = _build_signal_filename_index(data_dir)
+            hash_only_url = _resolve_local_attachment_url(
+                "http://localhost:5173/signal-hash-only.jpeg",
+                "Signal: signal-export-test",
+                data_dir,
+                rebuilt_index,
+            )
+            self.assertEqual(
+                hash_only_url,
+                "/api/media?platform=signal&source=signal-export-test&path=files%2F42%2Fhash-only.jpg",
+            )
+
+    def test_local_attachment_resolution_helpers_flat_signal_layout(self) -> None:
+        with TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / "data"
+            signal_source = data_dir / "signal-export-test"
+            signal_files = signal_source / "files" / "41"
+            signal_files.mkdir(parents=True)
+            media = signal_files / "413317d826d79d0246709eda6dc92ab896613c176d81d3c09e06bbc89d99fc5e.jpg"
+            media.write_bytes(b"signal-jpeg")
+            (signal_source / "main.jsonl").write_text(
+                json.dumps(
+                    {
+                        "chatItem": {
+                            "standardMessage": {
+                                "attachments": [
+                                    {
+                                        "pointer": {
+                                            "contentType": "image/jpeg",
+                                            "fileName": "signal-2022-08-16-105045 PM.jpeg",
+                                            "locatorInfo": {"size": media.stat().st_size},
+                                        }
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            (signal_source / "metadata.json").write_text("{}", encoding="utf-8")
+
+            signal_index = _build_signal_filename_index(data_dir)
+            signal_url = _resolve_local_attachment_url(
+                "http://localhost:5173/signal-2022-08-16-105045%20PM.jpeg",
+                "Signal: signal-export-test",
+                data_dir,
+                signal_index,
+            )
+            self.assertEqual(
+                signal_url,
+                "/api/media?platform=signal&source=signal-export-test&path=files%2F41%2F413317d826d79d0246709eda6dc92ab896613c176d81d3c09e06bbc89d99fc5e.jpg",
+            )
 
 
 if __name__ == "__main__":

@@ -35,7 +35,16 @@ data/
   discord/*.json
   facebook/<chat folder>/message_*.html
   signal/db.sqlite
-  signal/<export folder>/main.jsonl
+  signal/main.jsonl
+```
+
+Signal also works if its files are moved up one level into `data/` directly or
+kept in a nested `data/signal/` folder:
+
+```text
+data/db.sqlite
+data/<export folder>/main.jsonl
+data/signal/main.jsonl
 ```
 
 ## Configuration
@@ -82,6 +91,57 @@ The build command scans `data/`, applies reconciliation rules from `config/` (or
 ```bash
 uv run python -m gchat serve --db gchat.duckdb --host 127.0.0.1 --port 8000
 ```
+
+## Running in Docker
+
+```bash
+docker compose -f compose.yml up --build
+```
+
+The compose stack starts with the scheduler building the DuckDB file on startup,
+then starts the API on `:8000` behind the web gateway on `:3000`.
+
+The web gateway uses HTTP basic auth and proxies `/api/*` to the internal API
+service, so only the web service needs a published port.
+
+Set these required environment variables before running compose:
+
+- `BASIC_AUTH_PASSWORD`
+
+It also includes two recurring-job services:
+
+- `scheduler` for periodic DuckDB rebuilds.
+- `discord-exporter-scheduler` for periodic DiscordChatExporter runs.
+
+### Scheduler configuration
+
+The `scheduler` service handles all recurring jobs:
+
+- `DB_REBUILD_CRON` (default: `0 3 */14 * *`) - periodic DuckDB rebuild schedule.
+- `DISCORD_EXPORT_CRON` (default: `0 2 * * 0`) - periodic Discord export schedule.
+- `DISCORD_EXPORT_COMMAND` (default: empty) - shell command to run for Discord exports. If empty, export job is skipped.
+
+The scheduler container is based on Arch Linux and installs `signalbackup-tools` and `discord-chat-exporter-cli` from the AUR.
+
+### Signal backup decryption
+
+If your Signal data (`data/signal/sql/db.sqlite`) is encrypted, the scheduler automatically decrypts it
+before each rebuild using the encryption key stored in `data/signal/config.json`.
+
+The decrypted backup is written to `data/signal_decrypted/` (outside the Signal working directory to avoid conflicts with the running app).
+The scheduler uses [signalbackup-tools](https://github.com/bepaald/signalbackup-tools) to decrypt the backup.
+The encrypted file remains on disk; only the decrypted copy is used during import.
+
+Example:
+
+```bash
+export BASIC_AUTH_PASSWORD='replace-this'
+export DISCORD_EXPORT_COMMAND='DiscordChatExporter.Cli exportall --token "$DISCORD_BOT_TOKEN" --output "/data/discord"'
+docker compose -f compose.yml up --build -d
+```
+
+If `DISCORD_EXPORT_COMMAND` is empty, the export job logs a skip and does not
+run.
 
 ## Output tables
 

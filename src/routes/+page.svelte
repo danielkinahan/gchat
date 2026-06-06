@@ -1,6 +1,7 @@
 <script lang="ts">
     import { goto } from "$app/navigation";
     import {
+        apiUrl,
         fetchJson,
         type Overview,
         type TimePoint,
@@ -8,6 +9,28 @@
     } from "$lib/api";
 
     type CountMetric = "messages" | "words";
+    type NicknameChange = {
+        previous_name?: string | null;
+        new_name: string;
+        author_name?: string | null;
+        ts: string | null;
+    };
+    type NicknameChatGroup = {
+        id: number;
+        current_name: string;
+        platform: string;
+        source_name: string;
+        history: NicknameChange[];
+    };
+    type NicknamePersonGroup = {
+        id: number;
+        display_name: string;
+        chats: NicknameChatGroup[];
+    };
+    type PeopleFilterOption = {
+        name: string;
+        ids: number[];
+    };
     type MessageTabData = {
         overview: Overview;
         topPeople: TopPeople;
@@ -122,7 +145,8 @@
     let activeTab:
         | "overview"
         | "language"
-        | "history"
+        | "chats"
+        | "nicknames"
         | "links"
         | "interactions" = "overview";
     let messageMetric: CountMetric = "messages";
@@ -197,6 +221,7 @@
         content: string;
         attachment_preview: string | null;
         attachment_url: string | null;
+        attachment_display_url: string | null;
         person_name: string;
         person_color: string;
         channel_name: string;
@@ -210,7 +235,35 @@
         color: string;
         count: number;
     }> = [];
+    let peopleFilterOptions: PeopleFilterOption[] = [];
+    const toMediaUrl = (value: string | null): string | null =>
+        value && value.startsWith("/api/") ? apiUrl(value) : value;
+    const toDisplayAttachmentUrl = (
+        attachmentUrl: string | null,
+        attachmentPreview: string | null,
+    ): string | null => {
+        const resolved = toMediaUrl(attachmentUrl);
+        if (resolved) return resolved;
+        const preview = (attachmentPreview ?? "").trim();
+        if (!preview) return null;
+        if (preview.startsWith("http://") || preview.startsWith("https://")) {
+            try {
+                const parsed = new URL(preview);
+                if (
+                    parsed.hostname === "localhost" ||
+                    parsed.hostname === "127.0.0.1"
+                ) {
+                    return null;
+                }
+                return preview;
+            } catch {
+                return null;
+            }
+        }
+        return null;
+    };
     let loadedInteractionsFilterKey: string | null = null;
+    let nicknamePeople: NicknamePersonGroup[] = [];
 
     function messageCountLabel(metric: CountMetric): string {
         return metric === "words" ? "words" : "messages";
@@ -358,8 +411,12 @@
         activeTab = "overview";
     }
 
-    function openHistoryTab() {
-        activeTab = "history";
+    function openChatsTab() {
+        activeTab = "chats";
+    }
+
+    function openNicknamesTab() {
+        activeTab = "nicknames";
     }
 
     async function loadLinksData() {
@@ -440,7 +497,14 @@
                 }>(`/api/reaction-authors?${authorsParams.toString()}`),
             ]);
             mostMentioned = mentions.items;
-            topReactedMessages = reactedMessages.items;
+            topReactedMessages = reactedMessages.items.map((message) => ({
+                ...message,
+                attachment_url: toMediaUrl(message.attachment_url),
+                attachment_display_url: toDisplayAttachmentUrl(
+                    message.attachment_url,
+                    message.attachment_preview,
+                ),
+            }));
             reactionAuthors = authors.items;
         } catch (err) {
             interactionsError =
@@ -479,7 +543,7 @@
                 topThemes,
             ] = await Promise.all([
                 fetchJson<Overview>(`/api/overview?${query}`),
-                fetchJson<TopPeople>(`/api/top-people?limit=15&${query}`),
+                fetchJson<TopPeople>(`/api/top-people?limit=10&${query}`),
                 fetchJson<{
                     points: Array<{ day: string; message_count: number }>;
                 }>(`/api/calendar?${query}`),
@@ -706,11 +770,12 @@
         void selectWord(filteredWords[0].word);
     }
 
-    function togglePerson(id: number) {
-        if (selectedPeople.includes(id)) {
-            selectedPeople = selectedPeople.filter((p) => p !== id);
+    function togglePerson(ids: number[]) {
+        const hasAnySelected = ids.some((id) => selectedPeople.includes(id));
+        if (hasAnySelected) {
+            selectedPeople = selectedPeople.filter((p) => !ids.includes(p));
         } else {
-            selectedPeople = [...selectedPeople, id];
+            selectedPeople = [...new Set([...selectedPeople, ...ids])];
         }
         updateFilters();
     }
@@ -764,6 +829,88 @@
         return point?.message_count ?? 0;
     });
     $: hourTotalsMax = Math.max(...hourTotals, 1);
+    $: nicknamePeople = (() => {
+        const grouped = new Map<string, NicknamePersonGroup>();
+        for (const chat of data.nameHistory.chats) {
+            if (chat.platform !== "facebook") continue;
+            for (const person of chat.participants) {
+                if (!person.history.length) continue;
+                const personKey = person.display_name
+                    .trim()
+                    .toLocaleLowerCase();
+                const existing = grouped.get(personKey) ?? {
+                    id: person.id,
+                    display_name: person.display_name,
+                    chats: [],
+                };
+                const existingChat = existing.chats.find(
+                    (item) => item.id === chat.id,
+                );
+                if (existingChat) {
+                    existingChat.history = [
+                        ...existingChat.history,
+                        ...person.history,
+                    ];
+                } else {
+                    existing.chats.push({
+                        id: chat.id,
+                        current_name: chat.current_name,
+                        platform: chat.platform,
+                        source_name: chat.source_name,
+                        history: [...person.history],
+                    });
+                }
+                grouped.set(personKey, existing);
+            }
+        }
+        const sortedPeople = [...grouped.values()].sort((a, b) =>
+            a.display_name.localeCompare(b.display_name, undefined, {
+                sensitivity: "base",
+            }),
+        );
+        for (const person of sortedPeople) {
+            person.chats.sort((a, b) =>
+                a.current_name.localeCompare(b.current_name, undefined, {
+                    sensitivity: "base",
+                }),
+            );
+            for (const chat of person.chats) {
+                const seen = new Set<string>();
+                chat.history = chat.history
+                    .filter((change) => {
+                        const dedupeKey = `${change.ts ?? ""}|${change.new_name}|${change.author_name ?? ""}`;
+                        if (seen.has(dedupeKey)) return false;
+                        seen.add(dedupeKey);
+                        return true;
+                    })
+                    .sort(
+                        (a, b) =>
+                            (a.ts ?? "").localeCompare(b.ts ?? "") ||
+                            a.new_name.localeCompare(b.new_name, undefined, {
+                                sensitivity: "base",
+                            }),
+                    );
+            }
+        }
+        return sortedPeople;
+    })();
+    $: peopleFilterOptions = (() => {
+        const grouped = new Map<string, PeopleFilterOption>();
+        for (const person of data.metadata.people) {
+            const key = person.name.trim().toLocaleLowerCase();
+            const existing = grouped.get(key);
+            if (existing) {
+                existing.ids.push(person.id);
+            } else {
+                grouped.set(key, { name: person.name, ids: [person.id] });
+            }
+        }
+        return [...grouped.values()]
+            .map((option) => ({ ...option, ids: [...new Set(option.ids)] }))
+            .sort((a, b) =>
+                a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+            );
+    })();
     $: dayStart = data.overview.date_range.start
         ? new Date(data.overview.date_range.start)
         : null;
@@ -853,7 +1000,8 @@
 
     <section class="filters">
         <div class="filter-group">
-            <label>Date Range</label>
+            <fieldset class="date-range-fieldset">
+            <legend>Date Range</legend>
             <div class="date-inputs">
                 <input
                     type="date"
@@ -868,10 +1016,12 @@
                     placeholder="To"
                 />
             </div>
+            </fieldset>
         </div>
 
         <div class="filter-group">
-            <label>Platforms</label>
+            <fieldset class="date-range-fieldset">
+            <legend>Platforms</legend>
             <div class="dropdown-list">
                 {#each data.metadata.platforms as platform}
                     <label class="checkbox-label">
@@ -884,26 +1034,32 @@
                     </label>
                 {/each}
             </div>
+            </fieldset>
         </div>
 
         <div class="filter-group">
-            <label>People</label>
+            <fieldset class="date-range-fieldset">
+            <legend>People</legend>
             <div class="dropdown-list">
-                {#each data.metadata.people as person}
+                {#each peopleFilterOptions as person}
                     <label class="checkbox-label">
                         <input
                             type="checkbox"
-                            checked={selectedPeople.includes(person.id)}
-                            on:change={() => togglePerson(person.id)}
+                            checked={person.ids.some((id) =>
+                                selectedPeople.includes(id),
+                            )}
+                            on:change={() => togglePerson(person.ids)}
                         />
                         {person.name}
                     </label>
                 {/each}
             </div>
+            </fieldset>
         </div>
 
         <div class="filter-group">
-            <label>Themes (group chat collections)</label>
+            <fieldset class="date-range-fieldset">
+            <legend>Themes (group chat collections)</legend>
             <div class="themes-scroll">
                 {#each data.metadata.themes as theme}
                     <label class="checkbox-label">
@@ -916,6 +1072,7 @@
                     </label>
                 {/each}
             </div>
+            </fieldset>
         </div>
     </section>
 
@@ -931,9 +1088,14 @@
             on:click={openLanguageTab}>Language</button
         >
         <button
-            class:active={activeTab === "history"}
+            class:active={activeTab === "chats"}
             type="button"
-            on:click={openHistoryTab}>History</button
+            on:click={openChatsTab}>Chats</button
+        >
+        <button
+            class:active={activeTab === "nicknames"}
+            type="button"
+            on:click={openNicknamesTab}>Nicknames</button
         >
         <button
             class:active={activeTab === "links"}
@@ -1299,9 +1461,7 @@
                                             style={`color:${message.person_color}`}
                                             >{message.person_name}</strong
                                         >
-                                        <span
-                                            >{message.source_name} · {message.channel_name}</span
-                                        >
+                                        <span>{message.channel_name}</span>
                                         <time
                                             >{message.ts
                                                 ? new Date(
@@ -1471,12 +1631,10 @@
                                 >
                                 <span>{message.channel_name}</span>
                             </div>
-                            {#if (message.attachment_url || message.attachment_preview) && attachmentKind(message.attachment_url || message.attachment_preview) === "image"}
+                            {#if message.attachment_display_url && attachmentKind(message.attachment_display_url) === "image"}
                                 <img
                                     class="reaction-attachment-image"
-                                    src={message.attachment_url ||
-                                        message.attachment_preview ||
-                                        ""}
+                                    src={message.attachment_display_url}
                                     alt={attachmentLabel(
                                         message.attachment_preview ||
                                             message.attachment_url ||
@@ -1484,12 +1642,10 @@
                                     )}
                                     loading="lazy"
                                 />
-                            {:else if (message.attachment_url || message.attachment_preview) && attachmentKind(message.attachment_url || message.attachment_preview) === "video"}
+                            {:else if message.attachment_display_url && attachmentKind(message.attachment_display_url) === "video"}
                                 <p>
                                     <a
-                                        href={message.attachment_url ||
-                                            message.attachment_preview ||
-                                            "#"}
+                                        href={message.attachment_display_url}
                                         target="_blank"
                                         rel="noreferrer"
                                         >{attachmentLabel(
@@ -1499,21 +1655,17 @@
                                         )}</a
                                     >
                                 </p>
-                            {:else if (message.attachment_url || message.attachment_preview) && attachmentKind(message.attachment_url || message.attachment_preview) === "audio"}
+                            {:else if message.attachment_display_url && attachmentKind(message.attachment_display_url) === "audio"}
                                 <audio
                                     class="reaction-attachment-audio"
-                                    src={message.attachment_url ||
-                                        message.attachment_preview ||
-                                        ""}
+                                    src={message.attachment_display_url}
                                     controls
                                     preload="none"
                                 ></audio>
-                            {:else if (message.attachment_url || message.attachment_preview) && attachmentKind(message.attachment_url || message.attachment_preview) === "link"}
+                            {:else if message.attachment_display_url && attachmentKind(message.attachment_display_url) === "link"}
                                 <p>
                                     <a
-                                        href={message.attachment_url ||
-                                            message.attachment_preview ||
-                                            "#"}
+                                        href={message.attachment_display_url}
                                         target="_blank"
                                         rel="noreferrer"
                                         >{attachmentLabel(
@@ -1566,7 +1718,7 @@
         </div>
     </section>
 
-    <section class="history" class:tab-hidden={activeTab !== "history"}>
+    <section class="history" class:tab-hidden={activeTab !== "chats"}>
         {#each data.nameHistory.chats as chat}
             <details class="panel history-card">
                 <summary>
@@ -1577,9 +1729,6 @@
                     <span class="history-counts">
                         {chat.previous_names.length
                             ? `${chat.previous_names.length} chat changes`
-                            : ""}
-                        {chat.participants.length
-                            ? `${chat.participants.length} people`
                             : ""}
                     </span>
                 </summary>
@@ -1593,7 +1742,9 @@
                                     <div class="history-change">
                                         {formatChange(change.new_name)}
                                         {#if change.author_name}
-                                            <span class="muted"> · by {change.author_name}</span>
+                                            <span class="muted">
+                                                · by {change.author_name}</span
+                                            >
                                         {/if}
                                     </div>
                                     <time
@@ -1608,46 +1759,62 @@
                         </div>
                     </div>
                 {/if}
-
-                {#if chat.participants.length}
-                    <div class="history-group">
-                        <h3>Participant nickname history</h3>
-                        <div class="participant-list">
-                            {#each chat.participants as person}
-                                {#if person.history.length}
-                                    <div class="participant-card">
-                                        <strong>{person.display_name}</strong>
-                                        <div class="history-list">
-                                            {#each person.history as change}
-                                                <div class="history-row">
-                                                    <div class="history-change">
-                                                        {formatChange(
-                                                            change.new_name,
-                                                        )}
-                                                        {#if change.author_name}
-                                                            <span class="muted">
-                                                                · by {change.author_name}
-                                                            </span>
-                                                        {/if}
-                                                    </div>
-                                                    <time
-                                                        >{change.ts
-                                                            ? new Date(
-                                                                  change.ts,
-                                                              ).toLocaleString()
-                                                            : "N/A"}</time
-                                                    >
-                                                </div>
-                                            {/each}
-                                        </div>
-                                    </div>
-                                {/if}
-                            {/each}
-                        </div>
-                    </div>
-                {/if}
             </details>
         {/each}
+    </section>
+
+    <section class="history" class:tab-hidden={activeTab !== "nicknames"}>
+        {#if nicknamePeople.length === 0}
+            <div class="panel">
+                <p class="muted">No nickname changes found.</p>
+            </div>
+        {:else}
+            {#each nicknamePeople as person}
+                <details class="panel history-card">
+                    <summary>
+                        <div>
+                            <strong>{person.display_name}</strong>
+                            <span>{person.chats.length} chats</span>
+                        </div>
+                        <span class="history-counts">
+                            {person.chats.reduce(
+                                (sum, chat) => sum + chat.history.length,
+                                0,
+                            )} nickname changes
+                        </span>
+                    </summary>
+                    <div class="participant-list">
+                        {#each person.chats as chat}
+                            <div class="participant-card">
+                                <strong>{chat.current_name}</strong>
+                                <span class="muted">{chat.platform}</span>
+                                <div class="history-list">
+                                    {#each chat.history as change}
+                                        <div class="history-row">
+                                            <div class="history-change">
+                                                {formatChange(change.new_name)}
+                                                {#if change.author_name}
+                                                    <span class="muted">
+                                                        · by {change.author_name}
+                                                    </span>
+                                                {/if}
+                                            </div>
+                                            <time
+                                                >{change.ts
+                                                    ? new Date(
+                                                          change.ts,
+                                                      ).toLocaleString()
+                                                    : "N/A"}</time
+                                            >
+                                        </div>
+                                    {/each}
+                                </div>
+                            </div>
+                        {/each}
+                    </div>
+                </details>
+            {/each}
+        {/if}
     </section>
 </main>
 
@@ -1745,6 +1912,20 @@
         font-size: 0.85rem;
         color: #cbd5e1;
         font-weight: 600;
+    }
+
+    .date-range-fieldset {
+        border: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    .date-range-fieldset legend {
+        font-size: 0.85rem;
+        color: #cbd5e1;
+        font-weight: 600;
+        padding: 0;
+        margin-bottom: 8px;
     }
 
     .date-inputs {

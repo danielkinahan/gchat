@@ -1,0 +1,54 @@
+FROM archlinux:latest
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    LANG=C.UTF-8
+
+WORKDIR /app
+
+# Install build tools and dependencies
+RUN pacman -Syu --noconfirm && \
+    pacman -S --noconfirm base-devel python python-pip git curl ca-certificates cmake openssl
+
+# Create non-root builder user (required for AUR)
+RUN useradd -m builder && \
+    echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+# Build discord-chat-exporter-bin from AUR
+USER builder
+WORKDIR /tmp
+
+RUN git clone https://aur.archlinux.org/discord-chat-exporter-bin.git && \
+    cd discord-chat-exporter-bin && \
+    git checkout e4498d8 && \
+    makepkg -si --noconfirm
+
+# Build signalbackup-tools from source
+RUN git clone https://github.com/bepaald/signalbackup-tools.git && \
+    cd signalbackup-tools && \
+    cmake . && \
+    make
+
+USER root
+
+# Install signalbackup-tools binary
+RUN cp /tmp/signalbackup-tools/signalbackup-tools /usr/local/bin/ && \
+    chmod +x /usr/local/bin/signalbackup-tools
+
+# Install supercronic
+RUN curl -fsSL -o /usr/local/bin/supercronic https://github.com/aptible/supercronic/releases/download/v0.2.33/supercronic-linux-amd64 && \
+    chmod +x /usr/local/bin/supercronic
+
+WORKDIR /app
+
+COPY pyproject.toml README.md ./
+COPY src ./src
+COPY scripts/scheduler ./scripts/scheduler
+
+RUN python -m venv /app/.venv && \
+    /app/.venv/bin/pip install --no-cache-dir . && \
+    chmod +x /app/scripts/scheduler/*.sh
+
+ENV PATH="/app/.venv/bin:$PATH"
+
+CMD ["sh", "/app/scripts/scheduler/entrypoint.sh"]

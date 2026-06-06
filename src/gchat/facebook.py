@@ -30,6 +30,10 @@ def _text(node) -> str:
     return fix_facebook_mojibake(normalize_whitespace(node.get_text(" ", strip=True)))
 
 
+def _name_key(value: str) -> str:
+    return " ".join(value.split()).casefold()
+
+
 def _content(node) -> tuple[str, int, str | None]:
     # In Facebook HTML exports, reactions are embedded as <ul class="_tqp"><li>...,
     # nested under the message body; remove them so message text stays clean.
@@ -81,6 +85,73 @@ def _extract_group_name_change(content: str) -> tuple[str, str | None] | None:
                 match.group("name").strip().rstrip(".!?").strip(),
                 match.group("actor").strip() if match.group("actor") else None,
             )
+    return None
+
+
+_NICKNAME_SET_PATTERNS = (
+    re.compile(
+        r"^(?P<actor>.+?) (?:set|changed) the nickname for (?P<target>.+?) to (?P<nickname>.+?)\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) (?:set|changed) your nickname to (?P<nickname>.+?)\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) (?:set|changed) (?:his|her|their) own nickname to (?P<nickname>.+?)\.?$",
+        re.IGNORECASE,
+    ),
+)
+
+_NICKNAME_CLEAR_PATTERNS = (
+    re.compile(
+        r"^(?P<actor>.+?) cleared the nickname for (?P<target>.+?)\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) cleared your nickname\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) cleared (?:his|her|their) own nickname\.?$",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _extract_nickname_change(content: str) -> tuple[str, str, str | None, bool] | None:
+    text = normalize_whitespace(content)
+    for pattern in _NICKNAME_SET_PATTERNS:
+        match = pattern.match(text)
+        if not match:
+            continue
+        actor_name = match.group("actor").strip()
+        target_name = match.groupdict().get("target")
+        if target_name:
+            target_name = target_name.strip()
+        elif "your nickname" in text.casefold():
+            target_name = "You"
+        else:
+            target_name = actor_name
+        nickname = match.group("nickname").strip().rstrip(".!?").strip()
+        if not nickname:
+            return None
+        return target_name, nickname, actor_name, False
+
+    for pattern in _NICKNAME_CLEAR_PATTERNS:
+        match = pattern.match(text)
+        if not match:
+            continue
+        actor_name = match.group("actor").strip()
+        target_name = match.groupdict().get("target")
+        if target_name:
+            target_name = target_name.strip()
+        elif "your nickname" in text.casefold():
+            target_name = "You"
+        else:
+            target_name = actor_name
+        return target_name, "(cleared)", actor_name, True
+
     return None
 
 
@@ -161,9 +232,11 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
         theme_name=chat_dir.name,
     )
     people_by_key: dict[str, PersonSeed] = {}
+    alias_to_raw_id: dict[str, str] = {}
     messages: list[MessageSeed] = []
     seen_message_ids: set[str] = set()
-    rename_events: list[tuple[datetime, int, str, str | None]] = []
+    rename_events: list[tuple[datetime, int, str, str | None, str | None]] = []
+    nickname_events: list[tuple[datetime, int, str, str, str | None, str | None, bool]] = []
     event_index = 0
 
     for html_file in sorted(chat_dir.glob("message_*.html")):
@@ -180,14 +253,50 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
             ts = _timestamp_from_children(children)
             if not ts:
                 continue
-            raw_id = author
+            raw_id = alias_to_raw_id.get(_name_key(author), author)
             person = people_by_key.setdefault(
                 raw_id,
                 PersonSeed(platform="facebook", raw_id=raw_id, display_name=author),
             )
+            alias_to_raw_id.setdefault(_name_key(author), raw_id)
             if rename_data := _extract_group_name_change(content or _text(container)):
                 rename, actor_name = rename_data
-                rename_events.append((ts, event_index, rename, actor_name))
+                actor_raw_id = (
+                    alias_to_raw_id.get(_name_key(actor_name))
+                    if actor_name
+                    else None
+                )
+                rename_events.append((ts, event_index, rename, actor_name, actor_raw_id))
+            if nickname_data := _extract_nickname_change(content or _text(container)):
+                target_name, nickname, actor_name, is_cleared = nickname_data
+                target_raw_id = alias_to_raw_id.get(_name_key(target_name), target_name)
+                people_by_key.setdefault(
+                    target_raw_id,
+                    PersonSeed(
+                        platform="facebook",
+                        raw_id=target_raw_id,
+                        display_name=target_name,
+                    ),
+                )
+                alias_to_raw_id.setdefault(_name_key(target_name), target_raw_id)
+                actor_raw_id = (
+                    alias_to_raw_id.get(_name_key(actor_name))
+                    if actor_name
+                    else None
+                )
+                nickname_events.append(
+                    (
+                        ts,
+                        event_index,
+                        target_raw_id,
+                        nickname,
+                        actor_name,
+                        actor_raw_id,
+                        is_cleared,
+                    )
+                )
+                if not is_cleared:
+                    alias_to_raw_id.setdefault(_name_key(nickname), target_raw_id)
             message_id = hash_message([author, ts.isoformat(), content])
             if message_id in seen_message_ids:
                 continue
@@ -213,9 +322,14 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
 
     name_changes: list[NameChangeSeed] = []
     last_name: str | None = None
-    for ts, _, new_name, actor_name in sorted(rename_events, key=lambda item: (item[0], item[1], item[2].casefold())):
+    for ts, _, new_name, actor_name, actor_raw_id in sorted(rename_events, key=lambda item: (item[0], item[1], item[2].casefold())):
         if new_name == last_name:
             continue
+        payload: dict[str, str] = {}
+        if actor_name:
+            payload["actor_name"] = actor_name
+        if actor_raw_id:
+            payload["actor_raw_id"] = actor_raw_id
         name_changes.append(
             NameChangeSeed(
                 source_name=source.name,
@@ -226,10 +340,42 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
                 new_name=new_name,
                 ts=ts,
                 kind="channel-title-change",
-                payload_json=json.dumps({"actor_name": actor_name}, ensure_ascii=False) if actor_name else None,
+                payload_json=json.dumps(payload, ensure_ascii=False) if payload else None,
             )
         )
         last_name = new_name
+
+    nickname_state: dict[str, str | None] = {}
+    for ts, _, target_raw_id, new_nickname, actor_name, actor_raw_id, is_cleared in sorted(
+        nickname_events,
+        key=lambda item: (item[0], item[1], item[2].casefold(), item[3].casefold()),
+    ):
+        previous_nickname = nickname_state.get(target_raw_id)
+        if is_cleared and previous_nickname is None:
+            continue
+        if not is_cleared and previous_nickname == new_nickname:
+            continue
+        name_changes.append(
+            NameChangeSeed(
+                source_name=source.name,
+                platform="facebook",
+                entity_kind="person",
+                entity_raw_id=target_raw_id,
+                previous_name=previous_nickname,
+                new_name=new_nickname,
+                ts=ts,
+                kind="nickname-change",
+                payload_json=json.dumps(
+                    {
+                        "chatId": channel.raw_id,
+                        "actor_name": actor_name,
+                        "actor_raw_id": actor_raw_id,
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        )
+        nickname_state[target_raw_id] = None if is_cleared else new_nickname
 
     return FacebookThread(
         source=source,

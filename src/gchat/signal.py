@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 from collections import Counter
 from dataclasses import dataclass
@@ -10,6 +11,17 @@ from pathlib import Path
 
 from .models import MessageSeed, NameChangeSeed, PersonSeed, SourceSeed, ChannelSeed
 from .util import to_utc_naive
+
+_GROUP_NAME_PATTERNS = (
+    re.compile(
+        r"^(?P<actor>.+?) named the group (?P<name>.+?)(?:[.!?])?(?:\n.*)?$",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) changed the group name to (?P<name>.+?)(?:[.!?])?(?:\n.*)?$",
+        re.IGNORECASE | re.DOTALL,
+    ),
+)
 
 
 @dataclass(frozen=True)
@@ -106,6 +118,18 @@ def _extract_message_content(chat_item: dict) -> str:
     if text.get("body"):
         return str(text["body"])
     return ""
+
+
+def _extract_group_name_from_text(content: str) -> str | None:
+    text = " ".join(content.split())
+    for pattern in _GROUP_NAME_PATTERNS:
+        match = pattern.match(text)
+        if not match:
+            continue
+        group_name = match.group("name").strip().rstrip(".!?").strip()
+        if group_name:
+            return group_name
+    return None
 
 
 def _extract_attachment_count(chat_item: dict) -> int:
@@ -211,7 +235,7 @@ def _message_id(chat_item: dict) -> str:
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
-def normalize_backup(path: Path) -> SignalExport:
+def normalize_backup(path: Path, include_signal_identities: set[str] | None = None) -> SignalExport:
     root = path / "main.jsonl" if path.is_dir() else path
     source = _backup_source(path if path.is_dir() else path.parent)
 
@@ -249,13 +273,55 @@ def normalize_backup(path: Path) -> SignalExport:
                 group_titles[chat_id] = str(title.get("title") or f"Signal group {chat_id}")
 
     group_chat_ids = {chat_id for chat_id, chat in chats.items() if str(chat.get("recipientId") or "") in group_recipient_ids}
+    group_chat_participants: dict[str, set[str]] = {chat_id: set() for chat_id in group_chat_ids}
+
+    for chat_id in group_chat_ids:
+        recipient_id = str(chats[chat_id].get("recipientId") or "")
+        recipient = recipients.get(recipient_id)
+        if recipient and "group" in recipient:
+            snapshot = (recipient.get("group") or {}).get("snapshot") or {}
+            for member in snapshot.get("members") or []:
+                if not isinstance(member, dict):
+                    continue
+                user_id = member.get("userId")
+                if not user_id:
+                    continue
+                stable_id = str(user_id)
+                group_chat_participants[chat_id].add(stable_id)
+                mapped = recipient_ids_by_stable_id.get(stable_id)
+                if mapped:
+                    mapped_recipient = recipients.get(mapped)
+                    if mapped_recipient is not None:
+                        group_chat_participants[chat_id].add(_recipient_primary_id(mapped_recipient, account))
+
+    for record in _jsonl_records(root):
+        if "chatItem" not in record:
+            continue
+        item = record["chatItem"]
+        chat_id = str(item.get("chatId") or "")
+        if chat_id not in group_chat_ids:
+            continue
+        author_id = str(item.get("authorId") or "")
+        author = recipients.get(author_id)
+        if author is not None:
+            group_chat_participants[chat_id].add(_recipient_primary_id(author, account))
+
+    allowed_group_chat_ids = set(group_chat_ids)
+    if include_signal_identities is not None:
+        configured_ids = {identity.casefold() for identity in include_signal_identities}
+        allowed_group_chat_ids = {
+            chat_id
+            for chat_id, participant_ids in group_chat_participants.items()
+            if len({participant_id.casefold() for participant_id in participant_ids if participant_id.casefold() in configured_ids}) >= 2
+        }
 
     relevant_recipient_ids: set[str] = set()
     relevant_stable_ids: set[str] = set()
     channels: dict[str, ChannelSeed] = {}
     name_changes: list[NameChangeSeed] = []
+    group_title_updates: dict[str, list[tuple[datetime, str | None, str, dict]]] = {}
 
-    for chat_id in group_chat_ids:
+    for chat_id in allowed_group_chat_ids:
         channels[chat_id] = ChannelSeed(
             source_name=source.name,
             raw_id=chat_id,
@@ -285,7 +351,7 @@ def normalize_backup(path: Path) -> SignalExport:
             continue
         item = record["chatItem"]
         chat_id = str(item.get("chatId") or "")
-        if chat_id not in group_chat_ids:
+        if chat_id not in allowed_group_chat_ids:
             continue
 
         author_id = str(item.get("authorId") or "")
@@ -322,27 +388,82 @@ def normalize_backup(path: Path) -> SignalExport:
                 new_title = str(title_update.get("newGroupName") or "").strip()
                 if not new_title:
                     continue
-                current = channels[chat_id].name
-                if current != new_title:
-                    name_changes.append(
-                        NameChangeSeed(
-                            source_name=source.name,
-                            platform="signal",
-                            entity_kind="channel",
-                            entity_raw_id=chat_id,
-                            previous_name=current,
-                            new_name=new_title,
-                            ts=to_utc_naive(datetime.fromtimestamp(int(item["dateSent"]) / 1000.0)),
-                            kind="channel-title-change",
-                            payload_json=json.dumps(item, ensure_ascii=False),
-                        )
+                old_title = str(title_update.get("oldGroupName") or "").strip() or None
+                group_title_updates.setdefault(chat_id, []).append(
+                    (
+                        to_utc_naive(datetime.fromtimestamp(int(item["dateSent"]) / 1000.0)),
+                        old_title,
+                        new_title,
+                        item,
                     )
-                    channels[chat_id] = ChannelSeed(
+                )
+
+        content = _extract_message_content(item)
+        text_title = _extract_group_name_from_text(content)
+        if text_title:
+            group_title_updates.setdefault(chat_id, []).append(
+                (
+                    to_utc_naive(datetime.fromtimestamp(int(item["dateSent"]) / 1000.0)),
+                    None,
+                    text_title,
+                    item,
+                )
+            )
+
+    for chat_id, updates in group_title_updates.items():
+        updates.sort(key=lambda entry: (entry[0], entry[2].casefold()))
+        last_title: str | None = None
+        seeded_initial_title = False
+        for ts, old_title, new_title, payload in updates:
+            if (
+                old_title
+                and old_title != new_title
+                and not seeded_initial_title
+                and last_title is None
+            ):
+                name_changes.append(
+                    NameChangeSeed(
                         source_name=source.name,
-                        raw_id=chat_id,
-                        name=new_title,
-                        theme_name=new_title,
+                        platform="signal",
+                        entity_kind="channel",
+                        entity_raw_id=chat_id,
+                        previous_name=None,
+                        new_name=old_title,
+                        ts=ts,
+                        kind="channel-title-change",
+                        payload_json=json.dumps(payload, ensure_ascii=False),
                     )
+                )
+                last_title = old_title
+                seeded_initial_title = True
+            previous_name = old_title
+            if previous_name is None and last_title and last_title != new_title:
+                previous_name = last_title
+            if last_title == new_title and previous_name in (None, new_title):
+                continue
+            if previous_name == new_title:
+                continue
+            name_changes.append(
+                NameChangeSeed(
+                    source_name=source.name,
+                    platform="signal",
+                    entity_kind="channel",
+                    entity_raw_id=chat_id,
+                    previous_name=previous_name,
+                    new_name=new_title,
+                    ts=ts,
+                    kind="channel-title-change",
+                    payload_json=json.dumps(payload, ensure_ascii=False),
+                )
+            )
+            last_title = new_title
+        if last_title and chat_id in channels:
+            channels[chat_id] = ChannelSeed(
+                source_name=source.name,
+                raw_id=chat_id,
+                name=last_title,
+                theme_name=last_title,
+            )
 
     people: dict[str, PersonSeed] = {}
     for recipient_id in sorted(relevant_recipient_ids):
@@ -364,7 +485,7 @@ def normalize_backup(path: Path) -> SignalExport:
             continue
         item = record["chatItem"]
         chat_id = str(item.get("chatId") or "")
-        if chat_id not in group_chat_ids:
+        if chat_id not in allowed_group_chat_ids:
             continue
         author_id = str(item.get("authorId") or "")
         author = recipients.get(author_id)
@@ -401,7 +522,7 @@ def normalize_backup(path: Path) -> SignalExport:
     )
 
 
-def normalize_database(path: Path) -> SignalExport:
+def normalize_database(path: Path, include_signal_identities: set[str] | None = None) -> SignalExport:
     con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
         con.row_factory = sqlite3.Row
@@ -410,15 +531,47 @@ def normalize_database(path: Path) -> SignalExport:
         conversation_rows = con.execute(
             "SELECT id, name, profileName, profileFullName, e164, serviceId, members FROM conversations"
         ).fetchall()
+        configured_ids = (
+            {identity.casefold() for identity in include_signal_identities}
+            if include_signal_identities is not None
+            else None
+        )
         people_by_key: dict[str, PersonSeed] = {}
         channels: dict[str, ChannelSeed] = {}
         name_changes: list[NameChangeSeed] = []
 
         for row in conversation_rows:
+            conversation_id = str(row["id"])
+            member_ids: set[str] = set()
+            members = row["members"]
+            parsed: list[dict] = []
+            if members:
+                try:
+                    decoded = json.loads(members)
+                except json.JSONDecodeError:
+                    decoded = []
+                parsed = decoded if isinstance(decoded, list) else []
+                for member in parsed:
+                    if isinstance(member, dict):
+                        for key in ("aci", "e164", "serviceId", "id", "uuid"):
+                            value = member.get(key)
+                            if value:
+                                member_ids.add(str(value))
+                                break
+            is_group_chat = len(member_ids) > 1
+            if configured_ids is not None and is_group_chat:
+                configured_participants = {
+                    member_id.casefold()
+                    for member_id in member_ids
+                    if member_id.casefold() in configured_ids
+                }
+                if len(configured_participants) < 2:
+                    continue
+
             channel_name = _conversation_name(row)
-            channels[str(row["id"])] = ChannelSeed(
+            channels[conversation_id] = ChannelSeed(
                 source_name=source.name,
-                raw_id=str(row["id"]),
+                raw_id=conversation_id,
                 name=channel_name,
                 theme_name=channel_name,
             )
@@ -430,23 +583,17 @@ def normalize_database(path: Path) -> SignalExport:
                         raw_id,
                         PersonSeed(platform="signal", raw_id=raw_id, display_name=_display_name(row)),
                     )
-            members = row["members"]
-            if members:
-                try:
-                    parsed = json.loads(members)
-                except json.JSONDecodeError:
-                    parsed = []
-                for member in parsed if isinstance(parsed, list) else []:
-                    if isinstance(member, dict):
-                        for key in ("aci", "e164", "serviceId", "id", "uuid"):
-                            value = member.get(key)
-                            if value:
-                                raw_id = str(value)
-                                people_by_key.setdefault(
-                                    raw_id,
-                                    PersonSeed(platform="signal", raw_id=raw_id, display_name=str(member.get("name") or member.get("profileName") or raw_id)),
-                                )
-                                break
+            for member in parsed:
+                if isinstance(member, dict):
+                    for key in ("aci", "e164", "serviceId", "id", "uuid"):
+                        value = member.get(key)
+                        if value:
+                            raw_id = str(value)
+                            people_by_key.setdefault(
+                                raw_id,
+                                PersonSeed(platform="signal", raw_id=raw_id, display_name=str(member.get("name") or member.get("profileName") or raw_id)),
+                            )
+                            break
 
         event_rows = con.execute(
             "SELECT id, conversationId, timestamp, type, json FROM messages WHERE type IN ('profile-change', 'group-v2-change') ORDER BY timestamp, id"
@@ -454,10 +601,13 @@ def normalize_database(path: Path) -> SignalExport:
         for row in event_rows:
             payload = json.loads(row["json"] or "{}")
             ts = to_utc_naive(datetime.fromtimestamp(int(row["timestamp"]) / 1000.0))
+            conversation_id = str(row["conversationId"])
+            if configured_ids is not None and conversation_id not in channels:
+                continue
             if row["type"] == "profile-change":
                 change = payload.get("profileChange") or {}
                 if change.get("type") == "name":
-                    changed_id = str(payload.get("changedId") or row["conversationId"])
+                    changed_id = str(payload.get("changedId") or conversation_id)
                     new_name = str(change.get("newName") or change.get("oldName") or changed_id)
                     previous_name = change.get("oldName")
                     people_by_key.setdefault(
@@ -479,7 +629,7 @@ def normalize_database(path: Path) -> SignalExport:
                     )
             elif row["type"] == "group-v2-change":
                 details = (payload.get("groupV2Change") or {}).get("details") or []
-                channel_id = str(row["conversationId"])
+                channel_id = conversation_id
                 channel = channels.get(channel_id)
                 if channel is None:
                     channel_name = channel_id
@@ -602,6 +752,8 @@ def normalize_database(path: Path) -> SignalExport:
             conversation_id = str(row["conversationId"])
             channel = channels.get(conversation_id)
             if channel is None:
+                if configured_ids is not None:
+                    continue
                 channel_name = conversation_id
                 channel = ChannelSeed(
                     source_name=source.name,
@@ -645,7 +797,7 @@ def normalize_database(path: Path) -> SignalExport:
         con.close()
 
 
-def normalize(path: Path) -> SignalExport:
+def normalize(path: Path, include_signal_identities: set[str] | None = None) -> SignalExport:
     if path.is_dir() and (path / "main.jsonl").exists():
-        return normalize_backup(path)
-    return normalize_database(path)
+        return normalize_backup(path, include_signal_identities=include_signal_identities)
+    return normalize_database(path, include_signal_identities=include_signal_identities)

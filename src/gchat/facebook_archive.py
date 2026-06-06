@@ -10,8 +10,7 @@ from bs4 import BeautifulSoup
 from .reconciliation import load_reconciliation
 from .util import fix_facebook_mojibake, normalize_whitespace
 
-
-DEFAULT_SOURCE_DIR = Path("/home/daniel/Nextcloud/Archive/Facebook Data/messages/inbox")
+DEFAULT_SOURCE_DIR = Path("~/Nextcloud/Archive/Facebook Data/messages/inbox")
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DEST_DIR = PROJECT_ROOT / "data" / "facebook"
 
@@ -39,14 +38,26 @@ def _parse_participants_text(text: str) -> tuple[str, ...]:
     if not text.startswith(prefix):
         return ()
     people = text[len(prefix) :].replace(", and ", ", ").replace(" and ", ", ")
-    return tuple(participant for participant in (_clean_text(part) for part in people.split(",")) if participant)
+    return tuple(
+        participant
+        for participant in (_clean_text(part) for part in people.split(","))
+        if participant
+    )
 
 
 def _read_chat_header(chat_dir: Path) -> tuple[str, tuple[str, ...]]:
     for html_file in sorted(chat_dir.glob("message_*.html")):
         soup = BeautifulSoup(html_file.read_text(encoding="utf-8"), "html.parser")
-        title = _clean_text(soup.title.get_text(" ", strip=True)) if soup.title else chat_dir.name
-        participants_node = soup.find(string=lambda text: isinstance(text, str) and text.strip().startswith("Participants:"))
+        title = (
+            _clean_text(soup.title.get_text(" ", strip=True))
+            if soup.title
+            else chat_dir.name
+        )
+        participants_node = soup.find(
+            string=lambda text: (
+                isinstance(text, str) and text.strip().startswith("Participants:")
+            )
+        )
         if participants_node is None:
             continue
         participants = _parse_participants_text(_clean_text(participants_node.strip()))
@@ -56,7 +67,12 @@ def _read_chat_header(chat_dir: Path) -> tuple[str, tuple[str, ...]]:
 
 
 def _facebook_people(config_dir: Path) -> set[str]:
-    reconciliation = load_reconciliation(config_dir)
+    if (config_dir / "people.yaml").exists() or (
+        config_dir / "people.example.yaml"
+    ).exists():
+        reconciliation = load_reconciliation(config_dir=config_dir)
+    else:
+        reconciliation = load_reconciliation(base_dir=config_dir)
     return {
         raw_id
         for platform, raw_id in reconciliation.people.identity_to_person
@@ -86,7 +102,11 @@ def scan_archives(
         except ValueError:
             unreadable_dirs.append(chat_dir)
             continue
-        matched_participants = tuple(participant for participant in participants if participant in facebook_people)
+        matched_participants = tuple(
+            participant
+            for participant in participants
+            if participant in facebook_people
+        )
         if len(matched_participants) < minimum_matches:
             continue
         matches.append(
@@ -123,9 +143,35 @@ def copy_matching_archives(
 def _print_matches(matches: list[FacebookArchiveMatch]) -> None:
     print(f"Found {len(matches)} matching Facebook group chat folders:")
     for match in matches:
-        matched = ", ".join(match.matched_participants)
-        print(f"- {match.source_dir.name} ({match.title})")
-        print(f"  matched participants: {matched}")
+        print(f"- {match.source_dir.name}")
+
+
+def _split_existing_matches(
+    matches: list[FacebookArchiveMatch],
+    destination_dir: Path,
+) -> tuple[list[FacebookArchiveMatch], list[FacebookArchiveMatch]]:
+    existing: list[FacebookArchiveMatch] = []
+    new: list[FacebookArchiveMatch] = []
+    for match in matches:
+        if (destination_dir / match.source_dir.name).exists():
+            existing.append(match)
+        else:
+            new.append(match)
+    return new, existing
+
+
+def _print_destination_diff(
+    matches: list[FacebookArchiveMatch],
+    destination_dir: Path,
+) -> None:
+    new_matches, existing_matches = _split_existing_matches(matches, destination_dir)
+    if not existing_matches and not new_matches:
+        return
+    print(f"Compared with {destination_dir}:")
+    for match in existing_matches:
+        print(f"  = {match.source_dir.name}")
+    for match in new_matches:
+        print(f"  + {match.source_dir.name}")
 
 
 def _confirm_copy() -> bool:
@@ -142,8 +188,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dest", type=Path, default=DEFAULT_DEST_DIR)
     parser.add_argument("--config-dir", type=Path, default=PROJECT_ROOT)
     parser.add_argument("--min-participants", type=int, default=2)
-    parser.add_argument("--yes", action="store_true", help="Copy without prompting for confirmation.")
-    parser.add_argument("--overwrite", action="store_true", help="Replace destination folders that already exist.")
+    parser.add_argument(
+        "--yes", action="store_true", help="Copy without prompting for confirmation."
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Replace destination folders that already exist.",
+    )
     return parser
 
 
@@ -151,10 +203,15 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
-    scan = scan_archives(args.source, args.config_dir, minimum_matches=args.min_participants)
+    scan = scan_archives(
+        args.source, args.config_dir, minimum_matches=args.min_participants
+    )
     _print_matches(scan.matches)
+    _print_destination_diff(scan.matches, args.dest)
     if scan.unreadable_dirs:
-        print(f"Skipped {len(scan.unreadable_dirs)} folder(s) with no readable participants header.")
+        print(
+            f"Skipped {len(scan.unreadable_dirs)} folder(s) with no readable participants header."
+        )
     if not scan.matches:
         return
 
@@ -162,10 +219,14 @@ def main() -> None:
         print("Aborted.")
         return
 
-    copied, skipped = copy_matching_archives(scan.matches, args.dest, overwrite=args.overwrite)
+    copied, skipped = copy_matching_archives(
+        scan.matches, args.dest, overwrite=args.overwrite
+    )
     print(f"Copied {len(copied)} folder(s) to {args.dest}.")
     if skipped:
-        print(f"Skipped {len(skipped)} existing folder(s). Use --overwrite to replace them.")
+        print(
+            f"Skipped {len(skipped)} existing folder(s). Use --overwrite to replace them."
+        )
 
 
 if __name__ == "__main__":

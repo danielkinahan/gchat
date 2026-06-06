@@ -1,0 +1,37 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Containerfile.api
+    volumes:
+      - ./data:/data:ro
+      - ./config:/config:ro
+      - ./data/gchat-db:/db
+    # depends_on:
+    #   scheduler:
+    #     condition: service_completed_successfully
+
+  web:
+    build:
+      context: .
+      dockerfile: Containerfile.web
+    ports:
+      - "3000:80"
+    environment:
+      BASIC_AUTH_PASSWORD: "password"
+    depends_on:
+      - api
+
+  # scheduler:
+  #   build:
+  #     context: .
+  #     dockerfile: Containerfile.scheduler
+  #   environment:
+  #     DB_REBUILD_CRON: "0 3 */14 * *"
+  #     DISCORD_EXPORT_CRON: "0 2 * * 0"
+  #     DISCORD_EXPORT_COMMAND: ""
+  #   volumes:
+  #     - ./data:/data
+  #     - ./config:/config:ro
+  #     - ./gchat-db:/db
+  #   restart: unless-stopped

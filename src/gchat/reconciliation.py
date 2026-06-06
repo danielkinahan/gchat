@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from pathlib import Path
 
 import yaml
@@ -79,10 +80,18 @@ def _load_yaml(path: Path) -> dict:
     return data or {}
 
 
+def _default_config_dir(base_dir: Path | None = None) -> Path:
+    env_dir = os.environ.get("GCHAT_CONFIG_DIR")
+    if env_dir:
+        return Path(env_dir)
+    if Path("/config").exists():
+        return Path("/config")
+    root = base_dir or Path.cwd()
+    return root / "config"
+
 def load_reconciliation(base_dir: Path | None = None, config_dir: Path | None = None) -> ReconciliationConfig:
     if config_dir is None:
-        root = base_dir or Path.cwd()
-        config_dir = root / "config"
+        config_dir = _default_config_dir(base_dir)
     else:
         config_dir = Path(config_dir)
     people_path = config_dir / "people.yaml"

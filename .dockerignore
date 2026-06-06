@@ -1,0 +1,11 @@
+.git
+.github
+.venv
+.svelte-kit
+build
+node_modules
+data
+gchat.duckdb
+*.tmp
+__pycache__
+*.pyc
