@@ -120,6 +120,15 @@
             themes: Array<{ id: number; name: string }>;
             platforms: string[];
         };
+        runtimeState: {
+            db_path: string;
+            db_exists: boolean;
+            db_mtime_ns: number | null;
+            config_dir: string;
+            cached_signature: unknown;
+            current_signature: unknown;
+            up_to_date: boolean;
+        };
         filters: {
             from: string;
             to: string;
@@ -130,6 +139,25 @@
     };
 
     const weekdayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    const YEAR_START = 2014;
+    const currentYear = new Date().getFullYear();
+    const yearOptions = Array.from(
+        { length: currentYear - YEAR_START + 1 },
+        (_, index) => currentYear - index,
+    );
+    const yearRange = (year: number): { from: string; to: string } => ({
+        from: `${year}-01-01`,
+        to: `${year}-12-31`,
+    });
+    const selectedYearFromRange = (from: string, to: string): number | null => {
+        if (!from || !to) return null;
+        const fromMatch = /^(\d{4})-01-01$/.exec(from);
+        const toMatch = /^(\d{4})-12-31$/.exec(to);
+        if (!fromMatch || !toMatch) return null;
+        const fromYear = Number(fromMatch[1]);
+        const toYear = Number(toMatch[1]);
+        return fromYear === toYear ? fromYear : null;
+    };
 
     let fromDate = data.filters.from;
     let toDate = data.filters.to;
@@ -142,6 +170,7 @@
     let selectedPlatforms = data.filters.platforms
         ? data.filters.platforms.split(",")
         : [];
+    let selectedYear: number | null = selectedYearFromRange(fromDate, toDate);
     let activeTab:
         | "overview"
         | "language"
@@ -228,6 +257,14 @@
         source_name: string;
         reaction_count: number;
         reaction_summary: string | null;
+        reaction_details: Array<{
+            name: string;
+            count: number;
+            emoji_id: string | null;
+            image_url: string | null;
+            code: string | null;
+            is_animated: boolean;
+        }>;
     }> = [];
     let reactionAuthors: Array<{
         id: number;
@@ -238,6 +275,23 @@
     let peopleFilterOptions: PeopleFilterOption[] = [];
     const toMediaUrl = (value: string | null): string | null =>
         value && value.startsWith("/api/") ? apiUrl(value) : value;
+    const toReactionImageUrl = (
+        sourceName: string,
+        imageUrl: string | null,
+    ): string | null => {
+        const resolved = toMediaUrl(imageUrl);
+        if (resolved) return resolved;
+        const preview = (imageUrl ?? "").trim();
+        if (!preview || !sourceName.startsWith("Discord: ")) return null;
+        const sourceFolder = sourceName.replace(/^Discord:\s*/, "");
+        return apiUrl(
+            `/api/media?${new URLSearchParams({
+                platform: "discord",
+                source: sourceFolder,
+                path: preview,
+            }).toString()}`,
+        );
+    };
     const toDisplayAttachmentUrl = (
         attachmentUrl: string | null,
         attachmentPreview: string | null,
@@ -262,8 +316,71 @@
         }
         return null;
     };
+    const YOUTUBE_EMBED_BASE = "https://www.youtube-nocookie.com/embed";
+    const YOUTUBE_URL_PATTERN =
+        /(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/i;
+    const YOUTUBE_ONLY_PATTERN =
+        /^\s*(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)[^\s]+\s*$/i;
+    const youtubeEmbedUrl = (content: string | null): string | null => {
+        const text = (content ?? "").trim();
+        if (!text) return null;
+        const match = text.match(YOUTUBE_URL_PATTERN);
+        if (!match) return null;
+        return `${YOUTUBE_EMBED_BASE}/${match[1]}?rel=0`;
+    };
+    const isYoutubeOnlyContent = (content: string | null): boolean => {
+        const text = (content ?? "").trim();
+        return Boolean(text) && YOUTUBE_ONLY_PATTERN.test(text);
+    };
+    const formatRuntimeMtime = (mtimeNs: number | null): string => {
+        if (mtimeNs == null) return "missing";
+        return new Date(mtimeNs / 1_000_000).toLocaleString();
+    };
+    const formatDuration = (seconds: number): string => {
+        if (!Number.isFinite(seconds) || seconds <= 0) return "0m";
+        const total = Math.floor(seconds);
+        const days = Math.floor(total / 86_400);
+        const hours = Math.floor((total % 86_400) / 3_600);
+        const minutes = Math.floor((total % 3_600) / 60);
+        if (days > 0) return `${days}d ${hours}h`;
+        if (hours > 0) return `${hours}h ${minutes}m`;
+        return `${minutes}m`;
+    };
+    const formatMostActiveYear = (bucket: string | null): string => {
+        if (!bucket) return "N/A";
+        return new Date(bucket).toLocaleDateString("en-US", { year: "numeric" });
+    };
+    const formatMostActiveMonth = (bucket: string | null): string => {
+        if (!bucket) return "N/A";
+        return new Date(bucket).toLocaleDateString("en-US", {
+            month: "long",
+            year: "numeric",
+        });
+    };
+    const formatMostActiveDay = (bucket: string | null): string => {
+        if (!bucket) return "N/A";
+        return new Date(bucket).toLocaleDateString("en-US", {
+            month: "long",
+            day: "numeric",
+            year: "numeric",
+        });
+    };
+    const formatMostActiveHour = (bucket: string | null): string => {
+        if (!bucket) return "N/A";
+        return new Date(bucket).toLocaleString("en-US", {
+            month: "long",
+            day: "numeric",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true,
+        });
+    };
+    const selectedCountLabel = (count: number, total: number): string =>
+        count === 0 ? `All ${total}` : `${count} selected`;
     let loadedInteractionsFilterKey: string | null = null;
     let nicknamePeople: NicknamePersonGroup[] = [];
+    let runtimeState = data.runtimeState;
 
     function messageCountLabel(metric: CountMetric): string {
         return metric === "words" ? "words" : "messages";
@@ -485,6 +602,14 @@
                         source_name: string;
                         reaction_count: number;
                         reaction_summary: string | null;
+                        reaction_details: Array<{
+                            name: string;
+                            count: number;
+                            emoji_id: string | null;
+                            image_url: string | null;
+                            code: string | null;
+                            is_animated: boolean;
+                        }>;
                     }>;
                 }>(`/api/top-reacted-messages?${reactedParams.toString()}`),
                 fetchJson<{
@@ -711,6 +836,7 @@
 
     $: fromDate = data.filters.from;
     $: toDate = data.filters.to;
+    $: selectedYear = selectedYearFromRange(fromDate, toDate);
     $: selectedPeople = data.filters.people
         ? data.filters.people.split(",").map(Number)
         : [];
@@ -754,6 +880,7 @@
     }
     $: overviewMetricLabel = messageCountLabel(messageMetric);
     $: overviewMetricTitle = messageCountTitle(messageMetric);
+    $: runtimeState = data.runtimeState;
 
     $: normalizedWordSearch = wordSearch.trim().toLowerCase();
     $: filteredWords = normalizedWordSearch
@@ -798,7 +925,22 @@
         updateFilters();
     }
 
-    function handleDateChange() {
+    function selectYear(year: number | null) {
+        if (year === null) {
+            fromDate = "";
+            toDate = "";
+            selectedYear = null;
+            updateFilters();
+            return;
+        }
+        if (selectedYear === year) {
+            selectYear(null);
+            return;
+        }
+        const range = yearRange(year);
+        fromDate = range.from;
+        toDate = range.to;
+        selectedYear = year;
         updateFilters();
     }
 
@@ -911,44 +1053,7 @@
                 a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
             );
     })();
-    $: dayStart = data.overview.date_range.start
-        ? new Date(data.overview.date_range.start)
-        : null;
-    $: dayEnd = data.overview.date_range.end
-        ? new Date(data.overview.date_range.end)
-        : null;
-    $: totalDays =
-        dayStart && dayEnd
-            ? Math.max(
-                  1,
-                  Math.ceil(
-                      (dayEnd.getTime() - dayStart.getTime()) /
-                          (1000 * 60 * 60 * 24),
-                  ),
-              )
-            : 1;
-    $: avgMessagesPerDay = Math.round(
-        overviewData.overview.total_messages / totalDays,
-    );
-
-    $: mostActiveMonth = overviewData.messagesByMonth.points.reduce(
-        (best, current) =>
-            current.message_count > best.message_count ? current : best,
-        overviewData.messagesByMonth.points[0] ?? {
-            month: "",
-            message_count: 0,
-        },
-    );
-    $: mostActiveDay = overviewData.calendar.points.reduce(
-        (best, current) =>
-            current.message_count > best.message_count ? current : best,
-        overviewData.calendar.points[0] ?? { day: "", message_count: 0 },
-    );
-    $: mostActiveHour = overviewData.messagesByHour.points.reduce(
-        (best, current) =>
-            current.message_count > best.message_count ? current : best,
-        overviewData.messagesByHour.points[0] ?? { hour: 0, message_count: 0 },
-    );
+    $: messageStats = overviewData.overview.message_stats;
     $: normalizedDomainSearch = domainSearch.trim().toLowerCase();
     $: filteredDomains = normalizedDomainSearch
         ? linkedDomains.filter((item) =>
@@ -999,29 +1104,41 @@
     </header>
 
     <section class="filters">
-        <div class="filter-group">
+        <div class="filter-group filter-card">
             <fieldset class="date-range-fieldset">
-            <legend>Date Range</legend>
-            <div class="date-inputs">
-                <input
-                    type="date"
-                    bind:value={fromDate}
-                    on:change={handleDateChange}
-                    placeholder="From"
-                />
-                <input
-                    type="date"
-                    bind:value={toDate}
-                    on:change={handleDateChange}
-                    placeholder="To"
-                />
-            </div>
+                <legend>
+                    <span>Year</span>
+                    <small>{selectedYear ?? "All years"}</small>
+                </legend>
+                <div class="year-list">
+                    <button
+                        type="button"
+                        class="year-chip"
+                        class:selected={selectedYear === null}
+                        on:click={() => selectYear(null)}
+                    >
+                        All
+                    </button>
+                    {#each yearOptions as year}
+                        <button
+                            type="button"
+                            class="year-chip"
+                            class:selected={selectedYear === year}
+                            on:click={() => selectYear(year)}
+                        >
+                            {year}
+                        </button>
+                    {/each}
+                </div>
             </fieldset>
         </div>
 
-        <div class="filter-group">
+        <div class="filter-group filter-card">
             <fieldset class="date-range-fieldset">
-            <legend>Platforms</legend>
+                <legend>
+                    <span>Platforms</span>
+                    <small>{selectedCountLabel(selectedPlatforms.length, data.metadata.platforms.length)}</small>
+                </legend>
             <div class="dropdown-list">
                 {#each data.metadata.platforms as platform}
                     <label class="checkbox-label">
@@ -1030,16 +1147,19 @@
                             checked={selectedPlatforms.includes(platform)}
                             on:change={() => togglePlatform(platform)}
                         />
-                        {platform}
+                        <span>{platform}</span>
                     </label>
                 {/each}
             </div>
             </fieldset>
         </div>
 
-        <div class="filter-group">
+        <div class="filter-group filter-card">
             <fieldset class="date-range-fieldset">
-            <legend>People</legend>
+                <legend>
+                    <span>People</span>
+                    <small>{selectedCountLabel(selectedPeople.length, peopleFilterOptions.length)}</small>
+                </legend>
             <div class="dropdown-list">
                 {#each peopleFilterOptions as person}
                     <label class="checkbox-label">
@@ -1050,16 +1170,19 @@
                             )}
                             on:change={() => togglePerson(person.ids)}
                         />
-                        {person.name}
+                        <span>{person.name}</span>
                     </label>
                 {/each}
             </div>
             </fieldset>
         </div>
 
-        <div class="filter-group">
+        <div class="filter-group filter-card">
             <fieldset class="date-range-fieldset">
-            <legend>Themes (group chat collections)</legend>
+                <legend>
+                    <span>Themes</span>
+                    <small>{selectedCountLabel(selectedThemes.length, data.metadata.themes.length)}</small>
+                </legend>
             <div class="themes-scroll">
                 {#each data.metadata.themes as theme}
                     <label class="checkbox-label">
@@ -1068,7 +1191,7 @@
                             checked={selectedThemes.includes(theme.id)}
                             on:change={() => toggleTheme(theme.id)}
                         />
-                        {theme.name}
+                        <span>{theme.name}</span>
                     </label>
                 {/each}
             </div>
@@ -1199,57 +1322,89 @@
             </div>
 
             <div class="panel stats-panel">
-                <h2>{overviewMetricTitle} statistics</h2>
+                <h2>{messageMetric === "messages" ? "Message statistics" : `${overviewMetricTitle} statistics`}</h2>
                 <div class="stats-list">
                     <div>
                         <span>Total {overviewMetricLabel} sent</span><strong
                             >{overviewData.overview.total_messages.toLocaleString()}</strong
                         >
                     </div>
-                    <div>
-                        <span>Average {overviewMetricLabel} per day</span
-                        ><strong>{avgMessagesPerDay.toLocaleString()}</strong>
-                    </div>
-                    <div>
-                        <span>Date range start</span><strong
-                            >{overviewData.overview.date_range.start
-                                ? overviewData.overview.date_range.start.split(
-                                      "T",
-                                  )[0]
-                                : "N/A"}</strong
-                        >
-                    </div>
-                    <div>
-                        <span>Date range end</span><strong
-                            >{overviewData.overview.date_range.end
-                                ? overviewData.overview.date_range.end.split(
-                                      "T",
-                                  )[0]
-                                : "N/A"}</strong
-                        >
-                    </div>
-                    <div>
-                        <span>Most active month</span><strong
-                            >{mostActiveMonth.month
-                                ? new Date(
-                                      mostActiveMonth.month,
-                                  ).toLocaleDateString("en-US", {
-                                      month: "long",
-                                      year: "numeric",
-                                  })
-                                : "N/A"}</strong
-                        >
-                    </div>
-                    <div>
-                        <span>Most active day</span><strong
-                            >{mostActiveDay.day || "N/A"}</strong
-                        >
-                    </div>
-                    <div>
-                        <span>Most active hour</span><strong
-                            >{`${mostActiveHour.hour}:00`}</strong
-                        >
-                    </div>
+                    {#if messageMetric === "messages"}
+                        <div>
+                            <span>✏️ with text</span><strong>{messageStats.with_text.toLocaleString()}</strong>
+                        </div>
+                        <div>
+                            <span>🔗 with links</span><strong>{messageStats.with_links.toLocaleString()}</strong>
+                        </div>
+                        <div>
+                            <span>📷 with images</span><strong>{messageStats.with_images.toLocaleString()}</strong>
+                        </div>
+                        <div>
+                            <span>👾 with GIFs</span><strong>{messageStats.with_gifs.toLocaleString()}</strong>
+                        </div>
+                        <div>
+                            <span>📹 with videos</span><strong>{messageStats.with_videos.toLocaleString()}</strong>
+                        </div>
+                        <div>
+                            <span>🎉 with stickers</span><strong>{messageStats.with_stickers.toLocaleString()}</strong>
+                        </div>
+                        <div>
+                            <span>🎵 with audio files</span><strong>{messageStats.with_audio_files.toLocaleString()}</strong>
+                        </div>
+                        <div>
+                            <span>📄 with documents</span><strong>{messageStats.with_documents.toLocaleString()}</strong>
+                        </div>
+                        <div>
+                            <span>📁 with other files</span><strong>{messageStats.with_other_files.toLocaleString()}</strong>
+                        </div>
+                        <div>
+                            <span>Edited messages</span><strong>{messageStats.edited_messages.toLocaleString()}</strong>
+                        </div>
+                        <div>
+                            <span>Average messages per day</span><strong>{messageStats.average_per_day.toFixed(2)}</strong>
+                        </div>
+                        <div>
+                            <span>Longest period without messages</span><strong>{formatDuration(messageStats.longest_period_without_messages_seconds)}</strong>
+                        </div>
+                        <div>
+                            <span>Longest active conversation</span><strong>{formatDuration(messageStats.longest_active_conversation_seconds)}</strong>
+                        </div>
+                        <div>
+                            <span>Most active year</span><strong>{formatMostActiveYear(messageStats.most_active_year.bucket)}</strong>
+                        </div>
+                        <div>
+                            <span>Most active month</span><strong>{formatMostActiveMonth(messageStats.most_active_month.bucket)}</strong>
+                        </div>
+                        <div>
+                            <span>Most active day</span><strong>{formatMostActiveDay(messageStats.most_active_day.bucket)}</strong>
+                        </div>
+                        <div>
+                            <span>Most active hour</span><strong>{formatMostActiveHour(messageStats.most_active_hour.bucket)}</strong>
+                        </div>
+                    {:else}
+                        <div>
+                            <span>Average {overviewMetricLabel} per day</span
+                            ><strong>{overviewData.overview.message_stats.average_per_day.toFixed(2)}</strong>
+                        </div>
+                        <div>
+                            <span>Date range start</span><strong
+                                >{overviewData.overview.date_range.start
+                                    ? overviewData.overview.date_range.start.split(
+                                          "T",
+                                      )[0]
+                                    : "N/A"}</strong
+                            >
+                        </div>
+                        <div>
+                            <span>Date range end</span><strong
+                                >{overviewData.overview.date_range.end
+                                    ? overviewData.overview.date_range.end.split(
+                                          "T",
+                                      )[0]
+                                    : "N/A"}</strong
+                            >
+                        </div>
+                    {/if}
                 </div>
             </div>
         </section>
@@ -1470,7 +1625,20 @@
                                                 : "N/A"}</time
                                         >
                                     </div>
-                                    <p>{message.content}</p>
+                                    {#if youtubeEmbedUrl(message.content)}
+                                        <div class="youtube-embed">
+                                                <iframe
+                                                    src={youtubeEmbedUrl(message.content)!}
+                                                    title="YouTube video"
+                                                    loading="lazy"
+                                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                                    allowfullscreen
+                                                ></iframe>
+                                        </div>
+                                    {/if}
+                                    {#if message.content && !isYoutubeOnlyContent(message.content)}
+                                        <p>{message.content}</p>
+                                    {/if}
                                 </div>
                             {/each}
                         </div>
@@ -1620,7 +1788,7 @@
                                         : "N/A"}</time
                                 >
                             </div>
-                            {#if message.reaction_summary}
+                            {#if message.reaction_summary && !message.reaction_details.length}
                                 <p class="reaction-summary">
                                     {message.reaction_summary}
                                 </p>
@@ -1631,6 +1799,40 @@
                                 >
                                 <span>{message.channel_name}</span>
                             </div>
+                            {#if message.reaction_details.length}
+                                <div class="reaction-pills">
+                                    {#each message.reaction_details as reaction}
+                                        <span class="reaction-pill">
+                                            {#if reaction.image_url}
+                                                <img
+                                                src={toReactionImageUrl(
+                                                    message.source_name,
+                                                    reaction.image_url,
+                                                )}
+                                                alt={reaction.name}
+                                                loading="lazy"
+                                            />
+                                            {/if}
+                                            <span>{reaction.name}</span>
+                                            <strong>×{reaction.count}</strong>
+                                        </span>
+                                    {/each}
+                                </div>
+                            {/if}
+                            {#if youtubeEmbedUrl(message.content)}
+                                <div class="youtube-embed">
+                                    <iframe
+                                        src={youtubeEmbedUrl(message.content)!}
+                                        title="YouTube video"
+                                        loading="lazy"
+                                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                        allowfullscreen
+                                    ></iframe>
+                                </div>
+                            {/if}
+                            {#if message.content && !isYoutubeOnlyContent(message.content)}
+                                <p>{message.content}</p>
+                            {/if}
                             {#if message.attachment_display_url && attachmentKind(message.attachment_display_url) === "image"}
                                 <img
                                     class="reaction-attachment-image"
@@ -1643,7 +1845,13 @@
                                     loading="lazy"
                                 />
                             {:else if message.attachment_display_url && attachmentKind(message.attachment_display_url) === "video"}
-                                <p>
+                                <!-- svelte-ignore a11y_media_has_caption -->
+                                <video
+                                    class="reaction-attachment-video"
+                                    src={message.attachment_display_url}
+                                    controls
+                                    preload="metadata"
+                                >
                                     <a
                                         href={message.attachment_display_url}
                                         target="_blank"
@@ -1654,7 +1862,7 @@
                                                 "attachment",
                                         )}</a
                                     >
-                                </p>
+                                </video>
                             {:else if message.attachment_display_url && attachmentKind(message.attachment_display_url) === "audio"}
                                 <audio
                                     class="reaction-attachment-audio"
@@ -1681,8 +1889,6 @@
                                         message.attachment_preview,
                                     )}
                                 </p>
-                            {:else}
-                                <p>{message.content}</p>
                             {/if}
                         </article>
                     {/each}
@@ -1816,7 +2022,23 @@
             {/each}
         {/if}
     </section>
+
 </main>
+
+<footer class="runtime-footer">
+    <div class="runtime-footer-inner">
+        <strong>Runtime</strong>
+        <span
+            class:runtime-ok={runtimeState.up_to_date}
+            class:runtime-stale={!runtimeState.up_to_date}
+        >
+            {runtimeState.up_to_date ? "Up to date" : "Needs refresh"}
+        </span>
+        <span class="runtime-footer-mtime">
+            DB updated {formatRuntimeMtime(runtimeState.db_mtime_ns)}
+        </span>
+    </div>
+</footer>
 
 <style>
     :global(body) {
@@ -1868,12 +2090,13 @@
     .filters {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 24px;
-        background: #111827;
+        gap: 16px;
+        background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(15, 23, 42, 0.96));
         border: 1px solid #1f2937;
-        border-radius: 18px;
+        border-radius: 20px;
         padding: 18px;
         margin-bottom: 24px;
+        box-shadow: 0 12px 30px rgba(2, 6, 23, 0.25);
     }
 
     .tabs {
@@ -1906,6 +2129,10 @@
         display: flex;
         flex-direction: column;
         gap: 8px;
+        padding: 12px;
+        border-radius: 16px;
+        background: rgba(15, 23, 42, 0.78);
+        border: 1px solid #1f2937;
     }
 
     .filter-group label:first-child {
@@ -1921,25 +2148,27 @@
     }
 
     .date-range-fieldset legend {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        width: 100%;
         font-size: 0.85rem;
         color: #cbd5e1;
         font-weight: 600;
         padding: 0;
-        margin-bottom: 8px;
+        margin-bottom: 10px;
     }
 
-    .date-inputs {
-        display: flex;
-        gap: 8px;
+    .date-range-fieldset legend small {
+        color: #94a3b8;
+        font-size: 0.72rem;
+        font-weight: 500;
+        white-space: nowrap;
     }
 
-    .date-inputs input {
-        flex: 1;
-    }
-
-    input[type="date"],
     input[type="checkbox"] {
-        border-radius: 10px;
+        border-radius: 12px;
         border: 1px solid #334155;
         background: #0b1220;
         color: #e2e8f0;
@@ -1949,34 +2178,96 @@
     input[type="checkbox"] {
         width: auto;
         padding: 0;
-        margin-right: 8px;
+        margin-right: 10px;
     }
 
     .dropdown-list {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        max-height: 200px;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 8px;
+        max-height: 220px;
+        overflow-y: auto;
+    }
+
+    .year-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
+        gap: 8px;
+        max-height: 220px;
         overflow-y: auto;
     }
 
     .themes-scroll {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        max-height: 200px;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 8px;
+        max-height: 240px;
         overflow-y: auto;
-        border: 1px solid #334155;
-        border-radius: 10px;
-        padding: 8px;
+        border: 0;
+        border-radius: 0;
+        padding: 0;
     }
 
     .checkbox-label {
         display: flex;
         align-items: center;
+        gap: 8px;
         font-size: 0.85rem;
         cursor: pointer;
-        padding: 4px;
+        padding: 10px 12px;
+        border-radius: 999px;
+        background: rgba(11, 18, 32, 0.88);
+        border: 1px solid #1f2937;
+        transition:
+            background 120ms ease,
+            border-color 120ms ease,
+            transform 120ms ease;
+        min-width: 0;
+    }
+
+    .checkbox-label:hover {
+        background: rgba(15, 23, 42, 0.98);
+        border-color: #475569;
+        transform: translateY(-1px);
+    }
+
+    .checkbox-label input {
+        margin-right: 0;
+        flex: 0 0 auto;
+        accent-color: #60a5fa;
+    }
+
+    .checkbox-label span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .year-chip {
+        border: 1px solid #1f2937;
+        border-radius: 999px;
+        background: rgba(11, 18, 32, 0.88);
+        color: #e2e8f0;
+        padding: 8px 10px;
+        font: inherit;
+        font-size: 0.85rem;
+        cursor: pointer;
+        transition:
+            background 120ms ease,
+            border-color 120ms ease,
+            transform 120ms ease;
+    }
+
+    .year-chip:hover {
+        background: rgba(15, 23, 42, 0.98);
+        border-color: #475569;
+        transform: translateY(-1px);
+    }
+
+    .year-chip.selected {
+        background: #1d4ed8;
+        border-color: #2563eb;
+        color: #fff;
     }
 
     .overview-top {
@@ -1990,6 +2281,7 @@
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 16px;
+        margin-top: 24px;
     }
 
     .examples-toggle {
@@ -2036,7 +2328,7 @@
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 16px;
-        margin-top: 16px;
+        margin-top: 24px;
     }
 
     .history {
@@ -2050,6 +2342,37 @@
         border: 1px solid #1f2937;
         border-radius: 18px;
         padding: 18px;
+    }
+
+    .runtime-footer {
+        margin-top: 24px;
+        padding: 12px 0 0;
+        border-top: 1px solid rgba(51, 65, 85, 0.55);
+    }
+
+    .runtime-footer-inner {
+        max-width: 1200px;
+        margin: 0 auto;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 10px 14px;
+        padding: 0;
+        color: #cbd5e1;
+    }
+
+    .runtime-footer-mtime {
+        color: #cbd5e1;
+        font-size: 0.85rem;
+    }
+
+    .runtime-ok {
+        color: #86efac;
+    }
+
+    .runtime-stale {
+        color: #fca5a5;
     }
 
     .timeline-panel {
@@ -2418,6 +2741,32 @@
         word-break: break-word;
     }
 
+    .reaction-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin: 6px 0;
+    }
+
+    .reaction-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.95);
+        border: 1px solid #1f2937;
+        font-size: 0.76rem;
+        color: #e2e8f0;
+    }
+
+    .reaction-pill img {
+        width: 16px;
+        height: 16px;
+        object-fit: contain;
+        flex: 0 0 auto;
+    }
+
     .reaction-summary {
         margin-top: 0;
         margin-bottom: 8px;
@@ -2429,6 +2778,15 @@
         margin-top: 8px;
         max-width: min(100%, 520px);
         max-height: 320px;
+        border-radius: 10px;
+        border: 1px solid #1f2937;
+        background: #020617;
+    }
+
+    .reaction-attachment-video {
+        margin-top: 8px;
+        width: min(100%, 520px);
+        max-height: 360px;
         border-radius: 10px;
         border: 1px solid #1f2937;
         background: #020617;
@@ -2518,6 +2876,22 @@
         gap: 8px;
         margin-bottom: 8px;
         font-size: 0.85rem;
+    }
+
+    .youtube-embed {
+        margin-top: 10px;
+        aspect-ratio: 16 / 9;
+        width: min(100%, 520px);
+        border-radius: 14px;
+        overflow: hidden;
+        border: 1px solid #1f2937;
+        background: #020617;
+    }
+
+    .youtube-embed iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
     }
 
     .mini-bar-track {

@@ -40,6 +40,8 @@ class MessageSeed:
     attachment_preview: str | None = None
     reaction_count: int = 0
     reaction_summary: str | None = None
+    reaction_details_json: str | None = None
+    is_edited: bool = False
 
 
 @dataclass(frozen=True)

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-import math
 import re
 from datetime import datetime, timezone
-
 
 _SPACE_RE = re.compile(r"\s+")
 
@@ -68,4 +66,3 @@ def parse_iso_datetime(value: str) -> datetime:
 def hash_message(parts: list[str]) -> str:
     digest = hashlib.sha1("\x1f".join(parts).encode("utf-8")).hexdigest()
     return digest
-

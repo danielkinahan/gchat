@@ -8,8 +8,12 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
-from .models import MessageSeed, NameChangeSeed, PersonSeed, SourceSeed, ChannelSeed
+from bs4 import BeautifulSoup
+
+from .models import ChannelSeed, MessageSeed, NameChangeSeed, PersonSeed, SourceSeed
+from .reconciliation import ReconciliationConfig
 from .util import to_utc_naive
 
 _GROUP_NAME_PATTERNS = (
@@ -19,6 +23,22 @@ _GROUP_NAME_PATTERNS = (
     ),
     re.compile(
         r"^(?P<actor>.+?) changed the group name to (?P<name>.+?)(?:[.!?])?(?:\n.*)?$",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) changed the group title to (?P<name>.+?)(?:[.!?])?(?:\n.*)?$",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) updated the group name to (?P<name>.+?)(?:[.!?])?(?:\n.*)?$",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) updated the group title to (?P<name>.+?)(?:[.!?])?(?:\n.*)?$",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) renamed the group to (?P<name>.+?)(?:[.!?])?(?:\n.*)?$",
         re.IGNORECASE | re.DOTALL,
     ),
 )
@@ -120,16 +140,41 @@ def _extract_message_content(chat_item: dict) -> str:
     return ""
 
 
-def _extract_group_name_from_text(content: str) -> str | None:
+def _strip_surrounding_quotes(value: str) -> str:
+    pairs = {
+        '"': '"',
+        "'": "'",
+        "“": "”",
+        "‘": "’",
+    }
+    stripped = value.strip()
+    while (
+        len(stripped) >= 2
+        and stripped[0] in pairs
+        and stripped[-1] == pairs[stripped[0]]
+    ):
+        stripped = stripped[1:-1].strip()
+    return stripped
+
+
+def _extract_group_name_change_from_text(content: str) -> tuple[str | None, str] | None:
     text = " ".join(content.split())
     for pattern in _GROUP_NAME_PATTERNS:
         match = pattern.match(text)
         if not match:
             continue
-        group_name = match.group("name").strip().rstrip(".!?").strip()
+        actor = match.group("actor").strip() or None
+        group_name = _strip_surrounding_quotes(
+            match.group("name").strip().rstrip(".!?").strip()
+        )
         if group_name:
-            return group_name
+            return actor, group_name
     return None
+
+
+def _extract_group_name_from_text(content: str) -> str | None:
+    change = _extract_group_name_change_from_text(content)
+    return change[1] if change is not None else None
 
 
 def _extract_attachment_count(chat_item: dict) -> int:
@@ -149,7 +194,10 @@ def _extract_attachment_preview(chat_item: dict) -> str | None:
         for attachment in attachments:
             if not isinstance(attachment, dict):
                 continue
-            pointer = attachment.get("pointer") if isinstance(attachment.get("pointer"), dict) else {}
+            raw_pointer = attachment.get("pointer")
+            pointer: dict[str, object] = (
+                raw_pointer if isinstance(raw_pointer, dict) else {}
+            )
             for value in (
                 pointer.get("fileName"),
                 attachment.get("fileName"),
@@ -170,7 +218,11 @@ def _extract_reaction_count(chat_item: dict) -> int:
         if isinstance(value, list):
             return len(value)
         if isinstance(value, dict):
-            nested = value.get("reactions") or value.get("reactionList") or value.get("reactionData")
+            nested = (
+                value.get("reactions")
+                or value.get("reactionList")
+                or value.get("reactionData")
+            )
             if isinstance(nested, list):
                 return len(nested)
             if isinstance(nested, dict):
@@ -231,11 +283,15 @@ def _extract_reaction_summary(chat_item: dict) -> str | None:
 
 
 def _message_id(chat_item: dict) -> str:
-    payload = json.dumps(chat_item, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    payload = json.dumps(
+        chat_item, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
-def normalize_backup(path: Path, include_signal_identities: set[str] | None = None) -> SignalExport:
+def normalize_backup(
+    path: Path, include_signal_identities: set[str] | None = None
+) -> SignalExport:
     root = path / "main.jsonl" if path.is_dir() else path
     source = _backup_source(path if path.is_dir() else path.parent)
 
@@ -270,10 +326,18 @@ def normalize_backup(path: Path, include_signal_identities: set[str] | None = No
                 group_recipient_ids.add(recipient_id)
                 snapshot = (recipient.get("group") or {}).get("snapshot") or {}
                 title = snapshot.get("title") or {}
-                group_titles[chat_id] = str(title.get("title") or f"Signal group {chat_id}")
+                group_titles[chat_id] = str(
+                    title.get("title") or f"Signal group {chat_id}"
+                )
 
-    group_chat_ids = {chat_id for chat_id, chat in chats.items() if str(chat.get("recipientId") or "") in group_recipient_ids}
-    group_chat_participants: dict[str, set[str]] = {chat_id: set() for chat_id in group_chat_ids}
+    group_chat_ids = {
+        chat_id
+        for chat_id, chat in chats.items()
+        if str(chat.get("recipientId") or "") in group_recipient_ids
+    }
+    group_chat_participants: dict[str, set[str]] = {
+        chat_id: set() for chat_id in group_chat_ids
+    }
 
     for chat_id in group_chat_ids:
         recipient_id = str(chats[chat_id].get("recipientId") or "")
@@ -292,7 +356,9 @@ def normalize_backup(path: Path, include_signal_identities: set[str] | None = No
                 if mapped:
                     mapped_recipient = recipients.get(mapped)
                     if mapped_recipient is not None:
-                        group_chat_participants[chat_id].add(_recipient_primary_id(mapped_recipient, account))
+                        group_chat_participants[chat_id].add(
+                            _recipient_primary_id(mapped_recipient, account)
+                        )
 
     for record in _jsonl_records(root):
         if "chatItem" not in record:
@@ -312,7 +378,14 @@ def normalize_backup(path: Path, include_signal_identities: set[str] | None = No
         allowed_group_chat_ids = {
             chat_id
             for chat_id, participant_ids in group_chat_participants.items()
-            if len({participant_id.casefold() for participant_id in participant_ids if participant_id.casefold() in configured_ids}) >= 2
+            if len(
+                {
+                    participant_id.casefold()
+                    for participant_id in participant_ids
+                    if participant_id.casefold() in configured_ids
+                }
+            )
+            >= 2
         }
 
     relevant_recipient_ids: set[str] = set()
@@ -375,7 +448,9 @@ def normalize_backup(path: Path, include_signal_identities: set[str] | None = No
                             entity_raw_id=raw_id,
                             previous_name=str(previous_name) if previous_name else None,
                             new_name=str(new_name),
-                            ts=to_utc_naive(datetime.fromtimestamp(int(item["dateSent"]) / 1000.0)),
+                            ts=to_utc_naive(
+                                datetime.fromtimestamp(int(item["dateSent"]) / 1000.0)
+                            ),
                             kind="nickname-change",
                             payload_json=json.dumps(item, ensure_ascii=False),
                         )
@@ -391,7 +466,9 @@ def normalize_backup(path: Path, include_signal_identities: set[str] | None = No
                 old_title = str(title_update.get("oldGroupName") or "").strip() or None
                 group_title_updates.setdefault(chat_id, []).append(
                     (
-                        to_utc_naive(datetime.fromtimestamp(int(item["dateSent"]) / 1000.0)),
+                        to_utc_naive(
+                            datetime.fromtimestamp(int(item["dateSent"]) / 1000.0)
+                        ),
                         old_title,
                         new_title,
                         item,
@@ -403,7 +480,9 @@ def normalize_backup(path: Path, include_signal_identities: set[str] | None = No
         if text_title:
             group_title_updates.setdefault(chat_id, []).append(
                 (
-                    to_utc_naive(datetime.fromtimestamp(int(item["dateSent"]) / 1000.0)),
+                    to_utc_naive(
+                        datetime.fromtimestamp(int(item["dateSent"]) / 1000.0)
+                    ),
                     None,
                     text_title,
                     item,
@@ -472,12 +551,16 @@ def normalize_backup(path: Path, include_signal_identities: set[str] | None = No
             continue
         raw_id = _recipient_primary_id(recipient, account)
         display_name = _recipient_display_name(recipient, account)
-        people[raw_id] = PersonSeed(platform="signal", raw_id=raw_id, display_name=display_name)
+        people[raw_id] = PersonSeed(
+            platform="signal", raw_id=raw_id, display_name=display_name
+        )
 
     for stable_id in sorted(relevant_stable_ids):
         if stable_id in people:
             continue
-        people[stable_id] = PersonSeed(platform="signal", raw_id=stable_id, display_name=stable_id)
+        people[stable_id] = PersonSeed(
+            platform="signal", raw_id=stable_id, display_name=stable_id
+        )
 
     messages: list[MessageSeed] = []
     for record in _jsonl_records(root):
@@ -492,8 +575,12 @@ def normalize_backup(path: Path, include_signal_identities: set[str] | None = No
         raw_id = _recipient_primary_id(author, account) if author else author_id
         person = people.get(raw_id)
         if person is None:
-            display_name = _recipient_display_name(author, account) if author else raw_id
-            person = PersonSeed(platform="signal", raw_id=raw_id, display_name=display_name)
+            display_name = (
+                _recipient_display_name(author, account) if author else raw_id
+            )
+            person = PersonSeed(
+                platform="signal", raw_id=raw_id, display_name=display_name
+            )
             people[raw_id] = person
         timestamp = to_utc_naive(datetime.fromtimestamp(int(item["dateSent"]) / 1000.0))
         messages.append(
@@ -522,7 +609,9 @@ def normalize_backup(path: Path, include_signal_identities: set[str] | None = No
     )
 
 
-def normalize_database(path: Path, include_signal_identities: set[str] | None = None) -> SignalExport:
+def normalize_database(
+    path: Path, include_signal_identities: set[str] | None = None
+) -> SignalExport:
     con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
         con.row_factory = sqlite3.Row
@@ -581,7 +670,11 @@ def normalize_database(path: Path, include_signal_identities: set[str] | None = 
                     raw_id = str(value)
                     people_by_key.setdefault(
                         raw_id,
-                        PersonSeed(platform="signal", raw_id=raw_id, display_name=_display_name(row)),
+                        PersonSeed(
+                            platform="signal",
+                            raw_id=raw_id,
+                            display_name=_display_name(row),
+                        ),
                     )
             for member in parsed:
                 if isinstance(member, dict):
@@ -591,7 +684,15 @@ def normalize_database(path: Path, include_signal_identities: set[str] | None = 
                             raw_id = str(value)
                             people_by_key.setdefault(
                                 raw_id,
-                                PersonSeed(platform="signal", raw_id=raw_id, display_name=str(member.get("name") or member.get("profileName") or raw_id)),
+                                PersonSeed(
+                                    platform="signal",
+                                    raw_id=raw_id,
+                                    display_name=str(
+                                        member.get("name")
+                                        or member.get("profileName")
+                                        or raw_id
+                                    ),
+                                ),
                             )
                             break
 
@@ -608,11 +709,15 @@ def normalize_database(path: Path, include_signal_identities: set[str] | None = 
                 change = payload.get("profileChange") or {}
                 if change.get("type") == "name":
                     changed_id = str(payload.get("changedId") or conversation_id)
-                    new_name = str(change.get("newName") or change.get("oldName") or changed_id)
+                    new_name = str(
+                        change.get("newName") or change.get("oldName") or changed_id
+                    )
                     previous_name = change.get("oldName")
                     people_by_key.setdefault(
                         changed_id,
-                        PersonSeed(platform="signal", raw_id=changed_id, display_name=new_name),
+                        PersonSeed(
+                            platform="signal", raw_id=changed_id, display_name=new_name
+                        ),
                     )
                     name_changes.append(
                         NameChangeSeed(
@@ -649,7 +754,9 @@ def normalize_database(path: Path, include_signal_identities: set[str] | None = 
                                 platform="signal",
                                 entity_kind="channel",
                                 entity_raw_id=channel_id,
-                                previous_name=str(detail.get("oldTitle")) if detail.get("oldTitle") else None,
+                                previous_name=str(detail.get("oldTitle"))
+                                if detail.get("oldTitle")
+                                else None,
                                 new_name=new_title,
                                 ts=ts,
                                 kind="channel-title-change",
@@ -658,7 +765,9 @@ def normalize_database(path: Path, include_signal_identities: set[str] | None = 
                         )
 
         reaction_counts = dict(
-            con.execute("SELECT messageId, COUNT(*) FROM reactions GROUP BY messageId").fetchall()
+            con.execute(
+                "SELECT messageId, COUNT(*) FROM reactions GROUP BY messageId"
+            ).fetchall()
         )
         reaction_summaries: dict[str, str] = {}
         try:
@@ -703,13 +812,17 @@ def normalize_database(path: Path, include_signal_identities: set[str] | None = 
                     f"{emoji}×{count}" for emoji, count in counts.most_common()
                 )
         attachment_counts = dict(
-            con.execute("SELECT messageId, COUNT(*) FROM message_attachments GROUP BY messageId").fetchall()
+            con.execute(
+                "SELECT messageId, COUNT(*) FROM message_attachments GROUP BY messageId"
+            ).fetchall()
         )
         attachment_previews: dict[str, str] = {}
         try:
             attachment_cols = {
                 str(row["name"])
-                for row in con.execute("PRAGMA table_info(message_attachments)").fetchall()
+                for row in con.execute(
+                    "PRAGMA table_info(message_attachments)"
+                ).fetchall()
             }
         except sqlite3.Error:
             attachment_cols = set()
@@ -768,7 +881,9 @@ def normalize_database(path: Path, include_signal_identities: set[str] | None = 
                 PersonSeed(platform="signal", raw_id=raw_id, display_name=raw_id),
             )
             body = str(row["body"] or "")
-            timestamp = to_utc_naive(datetime.fromtimestamp(int(row["timestamp"]) / 1000.0))
+            timestamp = to_utc_naive(
+                datetime.fromtimestamp(int(row["timestamp"]) / 1000.0)
+            )
             messages.append(
                 MessageSeed(
                     id=str(row["id"]),
@@ -797,7 +912,395 @@ def normalize_database(path: Path, include_signal_identities: set[str] | None = 
         con.close()
 
 
-def normalize(path: Path, include_signal_identities: set[str] | None = None) -> SignalExport:
-    if path.is_dir() and (path / "main.jsonl").exists():
-        return normalize_backup(path, include_signal_identities=include_signal_identities)
-    return normalize_database(path, include_signal_identities=include_signal_identities)
+def _looks_like_html_export(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    if any(path.glob("*.html")) and (path / "media").is_dir():
+        return True
+    for child in path.iterdir():
+        if child.is_dir() and any(child.glob("*.html")):
+            return True
+    return False
+
+
+def _parse_html_timestamp(value: str) -> datetime | None:
+    text = " ".join(value.split())
+    for fmt in ("%b %d, %Y %H:%M:%S", "%b %d, %Y %H:%M"):
+        try:
+            return to_utc_naive(datetime.strptime(text, fmt))
+        except ValueError:
+            continue
+    return None
+
+
+def _channel_raw_id_from_dir(name: str) -> str:
+    match = re.search(r"\(_id(?P<id>\d+)\)\s*$", name)
+    if match:
+        return match.group("id")
+    return name
+
+
+def _channel_name_from_dir(name: str) -> str:
+    return re.sub(r"\s*\(_id\d+\)\s*$", "", name).strip() or name
+
+
+def _message_attachment_paths(message_div, chat_dir_name: str) -> list[str]:
+    attachments: list[str] = []
+    for tag in message_div.find_all(["img", "source", "a"]):
+        path: str | None = None
+        if tag.name in {"img", "source"}:
+            path = tag.get("src")
+        elif tag.name == "a":
+            path = tag.get("href")
+        if not isinstance(path, str) or not path.startswith("media/"):
+            continue
+        relative = f"{chat_dir_name}/{path}"
+        if relative not in attachments:
+            attachments.append(relative)
+    return attachments
+
+
+def _message_reactions(message_div) -> tuple[int, str | None, str | None]:
+    counts: Counter[str] = Counter()
+    for reaction in message_div.select("div.msg-reactions div.msg-reaction"):
+        emoji = reaction.select_one("span.msg-emoji")
+        value = emoji.get_text(strip=True) if emoji is not None else ""
+        if not value:
+            continue
+        reaction_count = 1
+        reaction_count_node = reaction.select_one("span.reaction-count")
+        if reaction_count_node is not None:
+            parsed = reaction_count_node.get_text(strip=True)
+            if parsed.isdigit():
+                reaction_count = max(int(parsed), 1)
+        counts[value] += reaction_count
+    if not counts:
+        return 0, None, None
+    summary = " ".join(f"{emoji}×{count}" for emoji, count in counts.most_common())
+    details = json.dumps(
+        [{"name": emoji, "count": count} for emoji, count in counts.most_common()],
+        ensure_ascii=False,
+    )
+    return sum(counts.values()), summary, details
+
+
+def _notify(status: Callable[[str], None] | None, message: str) -> None:
+    if status is not None:
+        status(message)
+
+
+def _html_person_raw_id(display_name: str) -> str:
+    normalized = " ".join(display_name.strip().split())
+    if normalized.casefold() == "you":
+        return "self"
+    return f"name:{normalized.casefold()}"
+
+
+def _html_person(display_name: str, people: dict[str, PersonSeed]) -> PersonSeed:
+    raw_id = _html_person_raw_id(display_name)
+    canonical_display_name = "You" if raw_id == "self" else display_name
+    return people.setdefault(
+        raw_id,
+        PersonSeed(
+            platform="signal", raw_id=raw_id, display_name=canonical_display_name
+        ),
+    )
+
+
+def _extract_html_chat_members(soup: BeautifulSoup) -> list[str]:
+    details = soup.select_one(".thread-subtitle .groupdetails .columnview")
+    if details is not None:
+        columns = details.select("span.column-right-align, span.column-left-align")
+        for index in range(0, len(columns) - 1, 2):
+            label = columns[index].get_text(" ", strip=True).casefold().rstrip(":")
+            if label != "members":
+                continue
+            raw_members = columns[index + 1].get_text(" ", strip=True)
+            cleaned = re.sub(r"\s*\(admin\)\s*", "", raw_members, flags=re.IGNORECASE)
+            members = [
+                re.sub(r"\s+", " ", part).strip()
+                for part in re.split(r"\s*,\s*", cleaned)
+                if part.strip()
+            ]
+            if members:
+                return members
+    return []
+
+
+def _signal_html_participant_names(soup: BeautifulSoup) -> set[str]:
+    names = {name for name in _extract_html_chat_members(soup) if name}
+    for member in soup.select("div.membername"):
+        display_name = member.get_text(" ", strip=True)
+        if display_name:
+            names.add(display_name)
+    return names
+
+
+def _matched_configured_signal_people(
+    participant_names: set[str],
+    reconciliation: ReconciliationConfig | None,
+    include_signal_identities: set[str] | None,
+) -> set[str]:
+    if not participant_names:
+        return set()
+
+    matched: set[str] = set()
+    if reconciliation is not None:
+        for name in participant_names:
+            canonical_name, color_hint = reconciliation.people.resolve(
+                "signal", _html_person_raw_id(name), name
+            )
+            if color_hint:
+                matched.add(canonical_name)
+        return matched
+
+    if include_signal_identities is None:
+        return set()
+
+    configured = {identity.casefold() for identity in include_signal_identities}
+    for name in participant_names:
+        normalized_name = " ".join(name.strip().casefold().split())
+        raw_id = _html_person_raw_id(name).casefold()
+        if normalized_name in configured or raw_id in configured:
+            matched.add(normalized_name)
+    return matched
+
+
+def _extract_status_message_text(message_div) -> str:
+    status_pre = message_div.select_one("div.status-text pre")
+    if status_pre is not None:
+        return status_pre.get_text(" ", strip=True)
+    for pre in message_div.find_all("pre"):
+        if (
+            pre.find_parent(class_="footer") is not None
+            or pre.find_parent(class_="footer-status") is not None
+        ):
+            continue
+        text = pre.get_text(" ", strip=True)
+        if text:
+            return text
+    return ""
+
+
+def normalize_html_export(
+    path: Path,
+    include_signal_identities: set[str] | None = None,
+    status: Callable[[str], None] | None = None,
+    reconciliation: ReconciliationConfig | None = None,
+    filter_to_configured_people: bool = False,
+) -> SignalExport:
+    source = SourceSeed(platform="signal", name=f"Signal: {path.name}")
+    channels: dict[str, ChannelSeed] = {}
+    people: dict[str, PersonSeed] = {}
+    messages: list[MessageSeed] = []
+    name_changes: list[NameChangeSeed] = []
+
+    if any(path.glob("*.html")) and (path / "media").is_dir():
+        chat_dirs = [path]
+    else:
+        chat_dirs = sorted(
+            [
+                child
+                for child in path.iterdir()
+                if child.is_dir() and any(child.glob("*.html"))
+            ],
+            key=lambda child: child.name.casefold(),
+        )
+
+    total_chats = len(chat_dirs)
+    _notify(status, f"Signal HTML export: found {total_chats} chats in {path.name}")
+    for index, chat_dir in enumerate(chat_dirs, start=1):
+        _notify(
+            status,
+            f"Signal HTML export: parsing chat {index}/{total_chats} ({chat_dir.name})",
+        )
+        html_files = sorted(chat_dir.glob("*.html"))
+        if not html_files:
+            continue
+        html_file = html_files[0]
+        soup = BeautifulSoup(
+            html_file.read_text(encoding="utf-8", errors="ignore"), "html.parser"
+        )
+
+        participant_names = _signal_html_participant_names(soup)
+        if filter_to_configured_people:
+            matched_people = _matched_configured_signal_people(
+                participant_names,
+                reconciliation,
+                include_signal_identities,
+            )
+            if len(matched_people) < 2:
+                _notify(
+                    status,
+                    f"Signal HTML export: skipping chat {chat_dir.name} (matched {len(matched_people)} configured people)",
+                )
+                continue
+
+        channel_raw_id = _channel_raw_id_from_dir(chat_dir.name)
+        title = (
+            soup.title.get_text(strip=True) if soup.title else ""
+        ) or _channel_name_from_dir(chat_dir.name)
+        channels[channel_raw_id] = ChannelSeed(
+            source_name=source.name,
+            raw_id=channel_raw_id,
+            name=title,
+            theme_name=title,
+        )
+
+        group_title_updates: list[
+            tuple[datetime, str | None, str | None, str, dict[str, str]]
+        ] = []
+
+        for message_index, message_div in enumerate(soup.select("div.msg"), start=1):
+            classes = set(message_div.get("class") or [])
+            if "msg-date-change" in classes:
+                continue
+
+            timestamp_node = message_div.select_one(
+                "div.footer span.msg-data"
+            ) or message_div.select_one("div.footer-status span.msg-data")
+            if timestamp_node is None:
+                continue
+            timestamp = _parse_html_timestamp(timestamp_node.get_text(" ", strip=True))
+            if timestamp is None:
+                continue
+
+            if "msg-status" in classes:
+                status_text = _extract_status_message_text(message_div)
+                group_name_change = _extract_group_name_change_from_text(status_text)
+                if group_name_change is not None:
+                    actor_name, new_title = group_name_change
+                    actor_raw_id = (
+                        _html_person_raw_id(actor_name) if actor_name else None
+                    )
+                    if actor_name:
+                        _html_person(actor_name, people)
+                    group_title_updates.append(
+                        (
+                            timestamp,
+                            actor_name,
+                            actor_raw_id,
+                            new_title,
+                            {
+                                "actor_name": actor_name or "",
+                                "actor_raw_id": actor_raw_id or "",
+                                "text": status_text,
+                            },
+                        )
+                    )
+                continue
+
+            if "msg-outgoing" in classes:
+                person = _html_person("You", people)
+            else:
+                member = message_div.select_one("div.membername")
+                display_name = (
+                    member.get_text(" ", strip=True)
+                    if member is not None
+                    else "Unknown"
+                )
+                person = _html_person(display_name, people)
+
+            body_parts: list[str] = []
+            for pre in message_div.find_all("pre"):
+                if pre.find_parent(class_="msg-quote") is not None:
+                    continue
+                text = pre.get_text("\n", strip=True)
+                if text:
+                    body_parts.append(text)
+            content = "\n\n".join(body_parts)
+
+            attachments = _message_attachment_paths(message_div, chat_dir.name)
+            attachment_preview = attachments[0] if attachments else None
+            reaction_count, reaction_summary, reaction_details_json = (
+                _message_reactions(message_div)
+            )
+
+            digest_input = "|".join(
+                [
+                    channel_raw_id,
+                    timestamp.isoformat(),
+                    person.raw_id,
+                    content,
+                    str(message_index),
+                    attachment_preview or "",
+                ]
+            )
+            message_id = hashlib.sha1(digest_input.encode("utf-8")).hexdigest()
+            messages.append(
+                MessageSeed(
+                    id=message_id,
+                    source_name=source.name,
+                    channel_raw_id=channel_raw_id,
+                    channel_name=title,
+                    theme_name=title,
+                    person=person,
+                    ts=timestamp,
+                    content=content,
+                    attachment_count=len(attachments),
+                    attachment_preview=attachment_preview,
+                    reaction_count=reaction_count,
+                    reaction_summary=reaction_summary,
+                    reaction_details_json=reaction_details_json,
+                )
+            )
+
+        group_title_updates.sort(key=lambda entry: (entry[0], entry[3].casefold()))
+        previous_title: str | None = None
+        for (
+            timestamp,
+            actor_name,
+            actor_raw_id,
+            new_title,
+            payload,
+        ) in group_title_updates:
+            if previous_title == new_title:
+                continue
+            name_changes.append(
+                NameChangeSeed(
+                    source_name=source.name,
+                    platform="signal",
+                    entity_kind="channel",
+                    entity_raw_id=channel_raw_id,
+                    previous_name=previous_title,
+                    new_name=new_title,
+                    ts=timestamp,
+                    kind="channel-title-change",
+                    payload_json=json.dumps(payload, ensure_ascii=False),
+                )
+            )
+            previous_title = new_title
+
+        _notify(status, f"Signal HTML export: parsed {len(messages)} messages so far")
+
+    _notify(
+        status,
+        f"Signal HTML export complete: {len(channels)} chats, {len(messages)} messages",
+    )
+    return SignalExport(
+        source=source,
+        channels=list(channels.values()),
+        messages=messages,
+        people=list(people.values()),
+        name_changes=name_changes,
+    )
+
+
+def normalize(
+    path: Path,
+    include_signal_identities: set[str] | None = None,
+    status: Callable[[str], None] | None = None,
+    reconciliation: ReconciliationConfig | None = None,
+    filter_to_configured_people: bool = False,
+) -> SignalExport:
+    if not _looks_like_html_export(path):
+        raise ValueError(
+            "Signal input must be an HTML export directory (expected data/signal_decrypted)."
+        )
+    return normalize_html_export(
+        path,
+        include_signal_identities=include_signal_identities,
+        status=status,
+        reconciliation=reconciliation,
+        filter_to_configured_people=filter_to_configured_people,
+    )

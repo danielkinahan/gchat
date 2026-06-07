@@ -21,8 +21,6 @@ jobs:
             image_suffix: web
           - dockerfile: Containerfile.scheduler
             image_suffix: scheduler
-          - dockerfile: Containerfile.discord-exporter
-            image_suffix: discord-exporter-scheduler
 
     steps:
       - name: Check out repository

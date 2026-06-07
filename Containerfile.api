@@ -17,4 +17,4 @@ RUN pip install .
 
 EXPOSE 8000
 
-CMD ["gchat-api", "--db", "/db/gchat.duckdb", "--data-dir", "/data", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["gchat-api", "--db", "/data/gchat-db/gchat.duckdb", "--data-dir", "/data", "--host", "0.0.0.0", "--port", "8000"]

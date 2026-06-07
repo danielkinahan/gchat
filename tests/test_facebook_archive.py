@@ -287,6 +287,58 @@ class FacebookArchiveTests(unittest.TestCase):
 
             self.assertEqual(config.themes.channel_to_theme, {})
 
+    def test_load_reconciliation_matches_signal_name_aliases(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_dir = root / "config"
+            config_dir.mkdir()
+            (config_dir / "people.yaml").write_text(
+                """
+people:
+  - name: Alex
+    color: "#76f774"
+    identities:
+      - platform: signal
+        id: "Alex"
+  - name: Daniel
+    color: "#D91111"
+    identities:
+      - platform: signal
+        id: "self"
+  - name: Theo
+    color: "#FFFFFF"
+    identities:
+      - platform: facebook
+        id: "Theo Mohamed"
+  - name: Caelan
+    color: "#C89EC8"
+    identities:
+      - platform: facebook
+        id: "Caelan Rae-Oulette"
+""",
+                encoding="utf-8",
+            )
+            (config_dir / "themes.yaml").write_text("themes: []\n", encoding="utf-8")
+
+            config = load_reconciliation(root)
+
+            self.assertEqual(
+                config.people.resolve("signal", "name:alex", "Alex"),
+                ("Alex", "#76f774"),
+            )
+            self.assertEqual(
+                config.people.resolve("signal", "self", "You"),
+                ("Daniel", "#D91111"),
+            )
+            self.assertEqual(
+                config.people.resolve("signal", "name:theo mohamed", "Theo Mohamed"),
+                ("Theo", "#FFFFFF"),
+            )
+            self.assertEqual(
+                config.people.resolve("signal", "name:caelan rae", "Caelan Rae"),
+                ("Caelan", "#C89EC8"),
+            )
+
     def test_build_parser_defaults_to_repo_root_paths(self) -> None:
         from gchat.facebook_archive import DEFAULT_DEST_DIR, DEFAULT_SOURCE_DIR, PROJECT_ROOT, build_parser
 

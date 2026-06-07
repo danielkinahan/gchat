@@ -17,6 +17,7 @@ export const load = async ({ url, fetch }) => {
     messagesByHour,
     metadata,
     nameHistory,
+    runtimeState,
   ] = await Promise.all([
     fetchJson<Overview>(`/api/overview${query}`, fetch),
     fetchJson<{ granularity: string; points: TimePoint[] }>(
@@ -78,6 +79,15 @@ export const load = async ({ url, fetch }) => {
         }>;
       }>;
     }>(`/api/name-history${query}`, fetch),
+    fetchJson<{
+      db_path: string;
+      db_exists: boolean;
+      db_mtime_ns: number | null;
+      config_dir: string;
+      cached_signature: unknown;
+      current_signature: unknown;
+      up_to_date: boolean;
+    }>(`/api/runtime-state`, fetch),
   ]);
 
   return {
@@ -92,6 +102,7 @@ export const load = async ({ url, fetch }) => {
     messagesByHour,
     metadata,
     nameHistory,
+    runtimeState,
     filters: {
       from: url.searchParams.get("from") ?? "",
       to: url.searchParams.get("to") ?? "",

@@ -8,7 +8,7 @@ WORKDIR /app
 
 # Install build tools and dependencies
 RUN pacman -Syu --noconfirm && \
-    pacman -S --noconfirm base-devel python python-pip git curl ca-certificates cmake openssl
+    pacman -S --needed --noconfirm git base-devel sudo
 
 # Create non-root builder user (required for AUR)
 RUN useradd -m builder && \
@@ -18,26 +18,13 @@ RUN useradd -m builder && \
 USER builder
 WORKDIR /tmp
 
-RUN git clone https://aur.archlinux.org/discord-chat-exporter-bin.git && \
-    cd discord-chat-exporter-bin && \
-    git checkout e4498d8 && \
+RUN git clone https://aur.archlinux.org/yay-bin.git && \
+    cd yay-bin && \
     makepkg -si --noconfirm
 
-# Build signalbackup-tools from source
-RUN git clone https://github.com/bepaald/signalbackup-tools.git && \
-    cd signalbackup-tools && \
-    cmake . && \
-    make
+RUN yay -S --noconfirm discord-chat-exporter-cli-bin signalbackup-tools-git supercronic-bin
 
 USER root
-
-# Install signalbackup-tools binary
-RUN cp /tmp/signalbackup-tools/signalbackup-tools /usr/local/bin/ && \
-    chmod +x /usr/local/bin/signalbackup-tools
-
-# Install supercronic
-RUN curl -fsSL -o /usr/local/bin/supercronic https://github.com/aptible/supercronic/releases/download/v0.2.33/supercronic-linux-amd64 && \
-    chmod +x /usr/local/bin/supercronic
 
 WORKDIR /app
 

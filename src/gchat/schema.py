@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS messages (
   attachment_preview TEXT,
   reaction_count INTEGER DEFAULT 0,
   reaction_summary TEXT,
+  reaction_details_json TEXT,
+  is_edited BOOLEAN DEFAULT FALSE,
   lang TEXT,
   sentiment REAL
 );

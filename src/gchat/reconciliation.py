@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import re
 
 import yaml
 
@@ -10,9 +11,78 @@ import yaml
 @dataclass(frozen=True)
 class PeopleConfig:
     identity_to_person: dict[tuple[str, str], tuple[str, str]]
+    normalized_identity_to_person: dict[tuple[str, str], tuple[str, str]]
+    normalized_identity_any_platform_to_person: dict[str, tuple[str, str]]
+    normalized_person_name_to_person: dict[str, tuple[str, str]]
+    normalized_identity_token_candidates: list[tuple[frozenset[str], tuple[str, str]]]
+    normalized_person_name_token_candidates: list[tuple[frozenset[str], tuple[str, str]]]
 
     def resolve(self, platform: str, raw_id: str, fallback_name: str) -> tuple[str, str]:
-        return self.identity_to_person.get((platform, raw_id), (fallback_name, ""))
+        def _token_set(value: str) -> frozenset[str]:
+            return frozenset(re.findall(r"[a-z0-9]+", value.casefold()))
+
+        def _unique_match(tokens: frozenset[str], candidates: list[tuple[frozenset[str], tuple[str, str]]]) -> tuple[str, str] | None:
+            if not tokens:
+                return None
+            matches: set[tuple[str, str]] = set()
+            for candidate_tokens, person in candidates:
+                if not candidate_tokens:
+                    continue
+                if tokens.issubset(candidate_tokens) or candidate_tokens.issubset(tokens):
+                    matches.add(person)
+            if len(matches) == 1:
+                return next(iter(matches))
+            return None
+
+        exact = self.identity_to_person.get((platform, raw_id))
+        if exact is not None:
+            return exact
+
+        normalized_raw_id = " ".join(raw_id.strip().casefold().split())
+        normalized_match = self.normalized_identity_to_person.get((platform, normalized_raw_id))
+        if normalized_match is not None:
+            return normalized_match
+
+        if platform == "signal" and normalized_raw_id.startswith("name:"):
+            name_key = normalized_raw_id.removeprefix("name:").strip()
+            alias_match = self.normalized_identity_to_person.get((platform, name_key))
+            if alias_match is not None:
+                return alias_match
+            cross_platform_alias = self.normalized_identity_any_platform_to_person.get(name_key)
+            if cross_platform_alias is not None:
+                return cross_platform_alias
+            fuzzy_alias_match = _unique_match(
+                _token_set(name_key),
+                self.normalized_identity_token_candidates,
+            )
+            if fuzzy_alias_match is not None:
+                return fuzzy_alias_match
+
+        normalized_fallback = " ".join(fallback_name.strip().casefold().split())
+        fallback_identity_match = self.normalized_identity_to_person.get((platform, normalized_fallback))
+        if fallback_identity_match is not None:
+            return fallback_identity_match
+        cross_platform_fallback_match = self.normalized_identity_any_platform_to_person.get(normalized_fallback)
+        if cross_platform_fallback_match is not None:
+            return cross_platform_fallback_match
+
+        fallback_name_match = self.normalized_person_name_to_person.get(normalized_fallback)
+        if fallback_name_match is not None:
+            return fallback_name_match
+        fuzzy_fallback_match = _unique_match(
+            _token_set(normalized_fallback),
+            self.normalized_identity_token_candidates,
+        )
+        if fuzzy_fallback_match is not None:
+            return fuzzy_fallback_match
+        fuzzy_name_match = _unique_match(
+            _token_set(normalized_fallback),
+            self.normalized_person_name_token_candidates,
+        )
+        if fuzzy_name_match is not None:
+            return fuzzy_name_match
+
+        return (fallback_name, "")
 
 
 @dataclass(frozen=True)
@@ -102,15 +172,42 @@ def load_reconciliation(base_dir: Path | None = None, config_dir: Path | None = 
         themes_path = config_dir / "themes.example.yaml"
 
     identity_to_person: dict[tuple[str, str], tuple[str, str]] = {}
+    normalized_identity_to_person: dict[tuple[str, str], tuple[str, str]] = {}
+    normalized_identity_any_platform_candidates: dict[str, set[tuple[str, str]]] = {}
+    person_name_candidates: dict[str, set[tuple[str, str]]] = {}
+    normalized_identity_token_candidates: list[tuple[frozenset[str], tuple[str, str]]] = []
+    normalized_person_name_token_candidates: list[tuple[frozenset[str], tuple[str, str]]] = []
     if people_path.exists():
         people_data = _load_yaml(people_path)
         for person in people_data.get("people", []):
             name = str(person["name"])
             color = str(person.get("color") or "")
+            normalized_name = " ".join(name.strip().casefold().split())
+            resolved_person = (name, color or name)
+            person_name_candidates.setdefault(normalized_name, set()).add(resolved_person)
+            normalized_person_name_token_candidates.append(
+                (frozenset(re.findall(r"[a-z0-9]+", normalized_name)), resolved_person)
+            )
             for identity in person.get("identities", []):
                 platform = str(identity["platform"]).lower()
                 raw_id = str(identity.get("id") or identity.get("username") or identity.get("name"))
-                identity_to_person[(platform, raw_id)] = (name, color or name)
+                identity_to_person[(platform, raw_id)] = resolved_person
+                normalized_raw_id = " ".join(raw_id.strip().casefold().split())
+                normalized_identity_to_person[(platform, normalized_raw_id)] = resolved_person
+                normalized_identity_any_platform_candidates.setdefault(normalized_raw_id, set()).add(resolved_person)
+                normalized_identity_token_candidates.append(
+                    (frozenset(re.findall(r"[a-z0-9]+", normalized_raw_id)), resolved_person)
+                )
+    normalized_identity_any_platform_to_person = {
+        key: next(iter(candidates))
+        for key, candidates in normalized_identity_any_platform_candidates.items()
+        if len(candidates) == 1
+    }
+    normalized_person_name_to_person = {
+        key: next(iter(candidates))
+        for key, candidates in person_name_candidates.items()
+        if len(candidates) == 1
+    }
 
     channel_to_theme: dict[tuple[str, str], str] = {}
     normalized_source_channel_to_theme: dict[tuple[str, str], str] = {}
@@ -151,7 +248,14 @@ def load_reconciliation(base_dir: Path | None = None, config_dir: Path | None = 
     }
 
     return ReconciliationConfig(
-        people=PeopleConfig(identity_to_person=identity_to_person),
+        people=PeopleConfig(
+            identity_to_person=identity_to_person,
+            normalized_identity_to_person=normalized_identity_to_person,
+            normalized_identity_any_platform_to_person=normalized_identity_any_platform_to_person,
+            normalized_person_name_to_person=normalized_person_name_to_person,
+            normalized_identity_token_candidates=normalized_identity_token_candidates,
+            normalized_person_name_token_candidates=normalized_person_name_token_candidates,
+        ),
         themes=ThemesConfig(
             channel_to_theme=channel_to_theme,
             normalized_source_channel_to_theme=normalized_source_channel_to_theme,

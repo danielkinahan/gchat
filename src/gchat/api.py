@@ -2,42 +2,130 @@ from __future__ import annotations
 
 import json
 import os
-import hashlib
-from base64 import b64encode
+import threading
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode, urlparse, unquote
+from urllib.parse import unquote, urlencode, urlparse
 
 import duckdb
-import yaml
 import uvicorn
+import yaml
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from .discovery import _signal_root
 from .reconciliation import load_reconciliation
 
 COMMON_STOP_WORDS = {
-    "the", "and", "for", "that", "you", "with", "this", "have", "are", "was",
-    "but", "not", "all", "can", "your", "just", "its", "its", "from", "they",
-    "what", "when", "where", "will", "would", "there", "their", "about", "out",
-    "get", "got", "into", "too", "very", "how", "why", "who", "him", "her",
-    "his", "she", "himself", "herself", "them", "then", "than", "our", "ours",
-    "were", "had", "has", "did", "does", "dont", "cant", "im", "ive", "id",
-    "ill", "youre", "youve", "theyre", "weve", "isnt", "wasnt", "wont", "aint",
-    "lol", "lmao", "yeah", "yep", "nah", "ok", "okay", "bro", "dude", "tho",
-    "though", "like", "https", "http", "www", "com", "org", "net", "gg",
-    "jpg", "jpeg", "png", "gif", "webp", "mp4", "mov", "sticker", "video",
-    "image", "images", "reply", "forwarded", "message", "messages",
+    "the",
+    "and",
+    "for",
+    "that",
+    "you",
+    "with",
+    "this",
+    "have",
+    "are",
+    "was",
+    "but",
+    "not",
+    "all",
+    "can",
+    "your",
+    "just",
+    "its",
+    "its",
+    "from",
+    "they",
+    "what",
+    "when",
+    "where",
+    "will",
+    "would",
+    "there",
+    "their",
+    "about",
+    "out",
+    "get",
+    "got",
+    "into",
+    "too",
+    "very",
+    "how",
+    "why",
+    "who",
+    "him",
+    "her",
+    "his",
+    "she",
+    "himself",
+    "herself",
+    "them",
+    "then",
+    "than",
+    "our",
+    "ours",
+    "were",
+    "had",
+    "has",
+    "did",
+    "does",
+    "dont",
+    "cant",
+    "im",
+    "ive",
+    "id",
+    "ill",
+    "youre",
+    "youve",
+    "theyre",
+    "weve",
+    "isnt",
+    "wasnt",
+    "wont",
+    "aint",
+    "lol",
+    "lmao",
+    "yeah",
+    "yep",
+    "nah",
+    "ok",
+    "okay",
+    "bro",
+    "dude",
+    "tho",
+    "though",
+    "like",
+    "https",
+    "http",
+    "www",
+    "com",
+    "org",
+    "net",
+    "gg",
+    "jpg",
+    "jpeg",
+    "png",
+    "gif",
+    "webp",
+    "mp4",
+    "mov",
+    "sticker",
+    "video",
+    "image",
+    "images",
+    "reply",
+    "forwarded",
+    "message",
+    "messages",
 }
 _THEME_CHANNEL_IDS: dict[str, list[int]] = {}
 
 
 def _default_db_path() -> Path:
-    return Path(os.environ.get("GCHAT_DB_PATH", "gchat.duckdb"))
+    return Path(os.environ.get("GCHAT_DB_PATH", "data/gchat-db/gchat.duckdb"))
 
 
 def _default_data_dir() -> Path:
@@ -64,7 +152,9 @@ def _load_fb_chat_names() -> dict[str, str]:
     return {}
 
 
-def _get_display_name(channel_name: str, source_name: str, fb_chat_names: dict[str, str]) -> str:
+def _get_display_name(
+    channel_name: str, source_name: str, fb_chat_names: dict[str, str]
+) -> str:
     """Get display name for a channel, using Facebook original names when available."""
     if source_name.startswith("Facebook: "):
         # Try to find the original name using channel name as folder key
@@ -75,12 +165,10 @@ def _get_display_name(channel_name: str, source_name: str, fb_chat_names: dict[s
 
 
 def _canonical_link_domain_expr(column: str) -> str:
-    return (
-        f"""CASE
+    return f"""CASE
             WHEN lower({column}) IN ('youtu.be', 'youtube.com', 'www.youtube.com', 'm.youtube.com') THEN 'youtube.com'
             ELSE lower({column})
         END"""
-    )
 
 
 def _count_metric(metric: str) -> str:
@@ -98,7 +186,9 @@ def _word_count_expr() -> str:
     return "COALESCE(array_length(regexp_extract_all(replace(lower(coalesce(m.content, '')), chr(39), ''), '[a-z]{3,}')), 0)"
 
 
-def _message_preview(content: str | None, attachment_count: int, attachment_preview: str | None = None) -> str:
+def _message_preview(
+    content: str | None, attachment_count: int, attachment_preview: str | None = None
+) -> str:
     text = (content or "").strip()
     if text:
         return text
@@ -109,6 +199,54 @@ def _message_preview(content: str | None, attachment_count: int, attachment_prev
         unit = "attachment" if attachment_count == 1 else "attachments"
         return f"[{attachment_count} {unit}]"
     return "[no text]"
+
+
+def _parse_json_array(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, str) or not value.strip():
+        return []
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, dict)]
+
+
+def _normalize_reaction_details(
+    value: object,
+    source_name: str,
+    data_dir: Path,
+    signal_filename_index: dict[str, dict[str, str]] | None,
+) -> list[dict[str, Any]]:
+    details = _parse_json_array(value)
+    if not details:
+        return []
+    normalized: list[dict[str, Any]] = []
+    for detail in details:
+        emoji_id = str(detail.get("emoji_id") or "").strip() or None
+        image_url = str(detail.get("image_url") or "").strip()
+        # Discord unicode emoji should render with system glyphs, not duplicated image + glyph.
+        if source_name.startswith("Discord: ") and emoji_id is None:
+            image_url = ""
+        resolved_image_url = (
+            _resolve_local_attachment_url(
+                image_url, source_name, data_dir, signal_filename_index
+            )
+            if image_url
+            else None
+        )
+        normalized.append(
+            {
+                "name": str(detail.get("name") or "").strip(),
+                "count": int(detail.get("count") or 0),
+                "emoji_id": emoji_id,
+                "image_url": resolved_image_url or image_url or None,
+                "code": str(detail.get("code") or "").strip() or None,
+                "is_animated": bool(detail.get("is_animated")),
+            }
+        )
+    return normalized
 
 
 def _normalized_history_name(value: str | None) -> str:
@@ -125,7 +263,9 @@ def _format_history_actor_name(
     actor_nickname: str | None = None,
     you_fallback_name: str | None = None,
 ) -> str | None:
-    def _replace_you_placeholder(value: str, canonical_name: str | None, fallback_name: str | None) -> str:
+    def _replace_you_placeholder(
+        value: str, canonical_name: str | None, fallback_name: str | None
+    ) -> str:
         replacement_name = canonical_name
         if _normalized_history_name(replacement_name) == "you":
             replacement_name = None
@@ -139,16 +279,22 @@ def _format_history_actor_name(
             return " ".join(replaced.split())
         return value
 
-    resolved = identity_to_display_name.get((platform, actor_raw_id)) if actor_raw_id else None
+    resolved = (
+        identity_to_display_name.get((platform, actor_raw_id)) if actor_raw_id else None
+    )
     if _normalized_history_name(resolved) == "you":
         resolved = you_fallback_name or None
     display_actor = actor_nickname or resolved or actor_name
     if display_actor:
-        display_actor = _replace_you_placeholder(display_actor, resolved, you_fallback_name)
+        display_actor = _replace_you_placeholder(
+            display_actor, resolved, you_fallback_name
+        )
     if display_actor and resolved:
         if f"({resolved})".casefold() in display_actor.casefold():
             return display_actor
-        if _normalized_history_name(display_actor) == _normalized_history_name(resolved):
+        if _normalized_history_name(display_actor) == _normalized_history_name(
+            resolved
+        ):
             return display_actor
         return f"{display_actor} ({resolved})"
     if display_actor:
@@ -176,7 +322,9 @@ def _csv_ints(value: str | None, field: str) -> list[int]:
         try:
             items.append(int(item))
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid {field} filter: {item!r}") from exc
+            raise HTTPException(
+                status_code=400, detail=f"Invalid {field} filter: {item!r}"
+            ) from exc
     return items
 
 
@@ -265,9 +413,15 @@ def _filters_clause(
             clauses.append(f"c.theme_id IN ({placeholders})")
             params.extend(filters.themes)
         else:
-            selected_theme_names = {theme_id_to_name.get(theme_id) for theme_id in filters.themes}
+            selected_theme_names = {
+                theme_id_to_name.get(theme_id) for theme_id in filters.themes
+            }
             selected_theme_names.discard(None)
-            channel_index = theme_to_channel_ids if theme_to_channel_ids is not None else _THEME_CHANNEL_IDS
+            channel_index = (
+                theme_to_channel_ids
+                if theme_to_channel_ids is not None
+                else _THEME_CHANNEL_IDS
+            )
             if not selected_theme_names:
                 clauses.append("1 = 0")
             elif channel_index:
@@ -290,7 +444,10 @@ def _filters_clause(
                 fallback_terms: list[str] = []
                 fallback_params: list[Any] = []
 
-                for (source_name, channel_name), theme_name in reconciliation.themes.channel_to_theme.items():
+                for (
+                    source_name,
+                    channel_name,
+                ), theme_name in reconciliation.themes.channel_to_theme.items():
                     if theme_name not in selected_theme_names:
                         continue
                     exact_terms.append("(s.name = ? AND c.name = ?)")
@@ -372,8 +529,27 @@ def _messages_has_column(db_path: Path, column_name: str) -> bool:
     return any(str(row[1]) == column_name for row in rows)
 
 
+def _path_signature(path: Path) -> tuple[int, int] | None:
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+def _config_signature(
+    config_dir: Path,
+) -> tuple[tuple[str, tuple[int, int] | None], ...]:
+    return tuple(
+        (name, _path_signature(config_dir / name))
+        for name in ("people.yaml", "themes.yaml", "fb_chat_names.json")
+    )
+
+
 def _safe_child_path(root: Path, rel_path: str) -> Path | None:
-    cleaned_parts = [part for part in Path(rel_path).parts if part not in {"", ".", ".."}]
+    cleaned_parts = [
+        part for part in Path(rel_path).parts if part not in {"", ".", ".."}
+    ]
     if not cleaned_parts:
         return None
     target = (root / Path(*cleaned_parts)).resolve()
@@ -391,7 +567,9 @@ def _media_url(platform: str, source: str, rel_path: str) -> str:
 def _normalize_facebook_preview_path(preview: str, source_folder: str) -> str:
     local_preview = preview
     parsed = urlparse(preview)
-    if parsed.scheme in {"http", "https"} and parsed.netloc.startswith(("localhost:", "127.0.0.1:")):
+    if parsed.scheme in {"http", "https"} and parsed.netloc.startswith(
+        ("localhost:", "127.0.0.1:")
+    ):
         local_preview = parsed.path or ""
     local_preview = unquote(local_preview).strip()
     if local_preview.startswith("/"):
@@ -399,20 +577,28 @@ def _normalize_facebook_preview_path(preview: str, source_folder: str) -> str:
 
     inbox_prefix = "messages/inbox/"
     if local_preview.startswith(inbox_prefix):
-        remainder = local_preview[len(inbox_prefix):]
+        remainder = local_preview[len(inbox_prefix) :]
         source_prefix = f"{source_folder}/"
         if remainder.startswith(source_prefix):
-            return remainder[len(source_prefix):]
+            return remainder[len(source_prefix) :]
+    archived_prefix = "messages/archived_threads/"
+    if local_preview.startswith(archived_prefix):
+        remainder = local_preview[len(archived_prefix) :]
+        source_prefix = f"{source_folder}/"
+        if remainder.startswith(source_prefix):
+            return remainder[len(source_prefix) :]
     source_prefix = f"{source_folder}/"
     if local_preview.startswith(source_prefix):
-        return local_preview[len(source_prefix):]
+        return local_preview[len(source_prefix) :]
     return local_preview
 
 
 def _normalize_local_preview_path(preview: str) -> str:
     parsed = urlparse(preview)
     local_preview = preview
-    if parsed.scheme in {"http", "https"} and parsed.netloc.startswith(("localhost:", "127.0.0.1:")):
+    if parsed.scheme in {"http", "https"} and parsed.netloc.startswith(
+        ("localhost:", "127.0.0.1:")
+    ):
         local_preview = parsed.path or ""
     local_preview = unquote(local_preview).strip()
     if local_preview.startswith("/"):
@@ -421,96 +607,26 @@ def _normalize_local_preview_path(preview: str) -> str:
 
 
 def _build_signal_filename_index(data_dir: Path) -> dict[str, dict[str, str]]:
-    signal_root = _signal_root(data_dir)
-    if not signal_root:
+    decrypted_root = data_dir / "signal_decrypted"
+    if not decrypted_root.exists() or not decrypted_root.is_dir():
         return {}
 
     index: dict[str, dict[str, str]] = {}
-    mime_extensions = {
-        "image/jpeg": ".jpg",
-        "image/jpg": ".jpg",
-        "image/png": ".png",
-        "image/webp": ".webp",
-        "image/gif": ".gif",
-        "video/mp4": ".mp4",
-        "audio/mpeg": ".mp3",
-        "audio/mp4": ".m4a",
-        "audio/x-m4a": ".m4a",
-        "audio/ogg": ".ogg",
-    }
-
-    for source_dir in signal_root.iterdir():
+    for source_dir in decrypted_root.iterdir():
         if not source_dir.is_dir():
             continue
-        main_jsonl = source_dir / "main.jsonl"
-        files_root = source_dir / "files"
-        if not main_jsonl.exists() or not files_root.exists():
+        media_root = source_dir / "media"
+        if not media_root.exists() or not media_root.is_dir():
             continue
-
-        files_by_key: dict[tuple[int, str], list[str]] = {}
-        files_by_plaintext_hash: dict[str, list[str]] = {}
-        for file_path in files_root.rglob("*"):
+        source_map: dict[str, str] = {}
+        for file_path in media_root.rglob("*"):
             if not file_path.is_file():
                 continue
-            relative = file_path.relative_to(source_dir).as_posix()
-            ext = file_path.suffix.casefold()
-            if ext:
-                key = (file_path.stat().st_size, ext)
-                files_by_key.setdefault(key, []).append(relative)
-            try:
-                digest = b64encode(hashlib.sha256(file_path.read_bytes()).digest()).decode("ascii")
-            except OSError:
-                continue
-            files_by_plaintext_hash.setdefault(digest, []).append(relative)
-
-        source_map: dict[str, str] = {}
-        with main_jsonl.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                chat_item = record.get("chatItem")
-                if not isinstance(chat_item, dict):
-                    continue
-                attachments = (chat_item.get("standardMessage") or {}).get("attachments") or []
-                if not isinstance(attachments, list):
-                    continue
-                for attachment in attachments:
-                    if not isinstance(attachment, dict):
-                        continue
-                    pointer = attachment.get("pointer") if isinstance(attachment.get("pointer"), dict) else {}
-                    file_name = str(pointer.get("fileName") or attachment.get("fileName") or "").strip()
-                    normalized_file_name = Path(file_name).name.casefold()
-                    if not normalized_file_name or normalized_file_name in source_map:
-                        continue
-                    locator = pointer.get("locatorInfo") if isinstance(pointer.get("locatorInfo"), dict) else {}
-                    size = locator.get("size")
-                    content_type = str(pointer.get("contentType") or attachment.get("contentType") or "").casefold()
-                    ext_candidates = [Path(file_name).suffix.casefold(), mime_extensions.get(content_type, "")]
-                    ext_candidates = [ext for ext in ext_candidates if ext]
-                    resolved_candidate: str | None = None
-                    if isinstance(size, int):
-                        for ext in dict.fromkeys(ext_candidates):
-                            candidates = files_by_key.get((size, ext), [])
-                            if len(candidates) == 1:
-                                resolved_candidate = candidates[0]
-                                break
-                    if not resolved_candidate:
-                        plaintext_hash = str(locator.get("plaintextHash") or "").strip()
-                        if plaintext_hash:
-                            hash_candidates = files_by_plaintext_hash.get(plaintext_hash, [])
-                            if ext_candidates and len(hash_candidates) > 1:
-                                ext_set = set(ext_candidates)
-                                hash_candidates = [
-                                    candidate
-                                    for candidate in hash_candidates
-                                    if Path(candidate).suffix.casefold() in ext_set
-                                ]
-                            if len(hash_candidates) == 1:
-                                resolved_candidate = hash_candidates[0]
-                    if resolved_candidate:
-                        source_map[normalized_file_name] = resolved_candidate
+            normalized_file_name = file_path.name.casefold()
+            source_map.setdefault(
+                normalized_file_name,
+                file_path.relative_to(source_dir).as_posix(),
+            )
         if source_map:
             index[source_dir.name] = source_map
 
@@ -518,19 +634,13 @@ def _build_signal_filename_index(data_dir: Path) -> dict[str, dict[str, str]]:
 
 
 def _signal_source_root(data_dir: Path, source_folder: str) -> Path | None:
-    direct_root = (data_dir / source_folder).resolve()
-    if direct_root.exists() and direct_root.is_dir():
-        return direct_root
-
-    signal_root = _signal_root(data_dir)
-    if signal_root:
-        nested_root = (signal_root / source_folder).resolve()
-        if nested_root.exists() and nested_root.is_dir():
-            return nested_root
-
-    fallback_root = (data_dir / "signal" / source_folder).resolve()
-    if fallback_root.exists() and fallback_root.is_dir():
-        return fallback_root
+    if source_folder == "signal_decrypted":
+        root = (data_dir / "signal_decrypted").resolve()
+        if root.exists() and root.is_dir():
+            return root
+    decrypted_root = (data_dir / "signal_decrypted" / source_folder).resolve()
+    if decrypted_root.exists() and decrypted_root.is_dir():
+        return decrypted_root
 
     return None
 
@@ -572,12 +682,10 @@ def _resolve_local_attachment_url(
         if direct and direct.exists() and direct.is_file():
             relative = direct.relative_to(source_root).as_posix()
             return _media_url("signal", source_folder, relative)
-        fallback = _safe_child_path(source_root / "files", Path(normalized_preview).name)
-        if fallback and fallback.exists() and fallback.is_file():
-            relative = fallback.relative_to(source_root).as_posix()
-            return _media_url("signal", source_folder, relative)
         if signal_filename_index:
-            mapped_rel_path = signal_filename_index.get(source_folder, {}).get(Path(normalized_preview).name.casefold())
+            mapped_rel_path = signal_filename_index.get(source_folder, {}).get(
+                Path(normalized_preview).name.casefold()
+            )
             if mapped_rel_path:
                 mapped = _safe_child_path(source_root, mapped_rel_path)
                 if mapped and mapped.exists() and mapped.is_file():
@@ -587,15 +695,54 @@ def _resolve_local_attachment_url(
     if source_name.startswith("Discord: "):
         source_folder = source_name.removeprefix("Discord: ").strip()
         source_root = (data_dir / "discord").resolve()
+        discord_media_root = (data_dir / "discord-media").resolve()
+
+        parsed = urlparse(preview)
         normalized_preview = _normalize_local_preview_path(preview)
+
+        # Handle absolute local file paths (e.g. file:///data/discord/media/... or /data/discord-media/...).
+        absolute_candidate: Path | None = None
+        if parsed.scheme == "file" and parsed.path:
+            absolute_candidate = Path(unquote(parsed.path)).resolve()
+        elif preview.startswith("/"):
+            absolute_candidate = Path(unquote(preview)).resolve()
+
+        if (
+            absolute_candidate is not None
+            and absolute_candidate.exists()
+            and absolute_candidate.is_file()
+        ):
+            try:
+                relative = absolute_candidate.relative_to(source_root).as_posix()
+                return _media_url("discord", source_folder, relative)
+            except ValueError:
+                try:
+                    relative = absolute_candidate.relative_to(
+                        discord_media_root
+                    ).as_posix()
+                    return _media_url("discord", source_folder, relative)
+                except ValueError:
+                    pass
+
         direct = _safe_child_path(source_root, normalized_preview)
         if direct and direct.exists() and direct.is_file():
             relative = direct.relative_to(source_root).as_posix()
             return _media_url("discord", source_folder, relative)
-        fallback = _safe_child_path(source_root / "assets", Path(normalized_preview).name)
-        if fallback and fallback.exists() and fallback.is_file():
-            relative = fallback.relative_to(source_root).as_posix()
-            return _media_url("discord", source_folder, relative)
+
+        basename = Path(normalized_preview).name
+        fallback_candidates = [
+            _safe_child_path(source_root / "assets", basename),
+            _safe_child_path(source_root / "media", basename),
+            _safe_child_path(discord_media_root, basename),
+        ]
+        for fallback in fallback_candidates:
+            if fallback and fallback.exists() and fallback.is_file():
+                if str(fallback).startswith(str(discord_media_root)):
+                    relative = fallback.relative_to(discord_media_root).as_posix()
+                    return _media_url("discord", source_folder, relative)
+                relative = fallback.relative_to(source_root).as_posix()
+                return _media_url("discord", source_folder, relative)
+
         return None
 
     return None
@@ -605,21 +752,98 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     global _THEME_CHANNEL_IDS
 
     app = FastAPI(title="gchat API", version="0.1.0")
-    app.state.db_path = db_path or _default_db_path()
-    app.state.data_dir = (data_dir or _default_data_dir()).resolve()
+    configured_db_path = db_path or _default_db_path()
+    if not configured_db_path.is_absolute():
+        configured_db_path = (_project_root() / configured_db_path).resolve()
+    app.state.db_path = configured_db_path
+    configured_data_dir = data_dir or _default_data_dir()
+    if not configured_data_dir.is_absolute():
+        configured_data_dir = (_project_root() / configured_data_dir).resolve()
+    app.state.data_dir = configured_data_dir
+    app.state.config_dir = _default_config_dir()
     app.state.fb_chat_names = _load_fb_chat_names()
-    app.state.reconciliation = load_reconciliation()
+    app.state.reconciliation = load_reconciliation(config_dir=app.state.config_dir)
     app.state.configured_people_names = _load_configured_people_names()
     app.state.primary_person_name = _load_primary_person_name()
     configured_theme_names = _load_configured_theme_names()
     if not configured_theme_names:
         configured_theme_names = _load_db_theme_names(app.state.db_path)
-    app.state.theme_id_to_name = {i + 1: name for i, name in enumerate(configured_theme_names)}
-    app.state.theme_to_channel_ids = _load_theme_channel_ids(app.state.db_path, app.state.reconciliation)
-    app.state.has_attachment_preview = _messages_has_column(app.state.db_path, "attachment_preview")
-    app.state.has_reaction_summary = _messages_has_column(app.state.db_path, "reaction_summary")
+    app.state.theme_id_to_name = {
+        i + 1: name for i, name in enumerate(configured_theme_names)
+    }
+    app.state.theme_to_channel_ids = _load_theme_channel_ids(
+        app.state.db_path, app.state.reconciliation
+    )
+    app.state.has_attachment_preview = _messages_has_column(
+        app.state.db_path, "attachment_preview"
+    )
+    app.state.has_reaction_summary = _messages_has_column(
+        app.state.db_path, "reaction_summary"
+    )
+    app.state.has_reaction_details_json = _messages_has_column(
+        app.state.db_path, "reaction_details_json"
+    )
+    app.state.has_is_edited = _messages_has_column(app.state.db_path, "is_edited")
     app.state.signal_filename_index = _build_signal_filename_index(app.state.data_dir)
+    app.state._runtime_signature = (
+        _path_signature(app.state.db_path),
+        _config_signature(app.state.config_dir),
+    )
+    app.state._runtime_lock = threading.Lock()
     _THEME_CHANNEL_IDS = app.state.theme_to_channel_ids
+
+    def _refresh_runtime_state() -> None:
+        current_signature = (
+            _path_signature(app.state.db_path),
+            _config_signature(app.state.config_dir),
+        )
+        if current_signature == app.state._runtime_signature:
+            return
+        with app.state._runtime_lock:
+            current_signature = (
+                _path_signature(app.state.db_path),
+                _config_signature(app.state.config_dir),
+            )
+            if current_signature == app.state._runtime_signature:
+                return
+            app.state.fb_chat_names = _load_fb_chat_names()
+            app.state.reconciliation = load_reconciliation(
+                config_dir=app.state.config_dir
+            )
+            app.state.configured_people_names = _load_configured_people_names()
+            app.state.primary_person_name = _load_primary_person_name()
+            configured_theme_names = _load_configured_theme_names()
+            if not configured_theme_names:
+                configured_theme_names = _load_db_theme_names(app.state.db_path)
+            app.state.theme_id_to_name = {
+                i + 1: name for i, name in enumerate(configured_theme_names)
+            }
+            app.state.theme_to_channel_ids = _load_theme_channel_ids(
+                app.state.db_path, app.state.reconciliation
+            )
+            app.state.has_attachment_preview = _messages_has_column(
+                app.state.db_path, "attachment_preview"
+            )
+            app.state.has_reaction_summary = _messages_has_column(
+                app.state.db_path, "reaction_summary"
+            )
+            app.state.has_reaction_details_json = _messages_has_column(
+                app.state.db_path, "reaction_details_json"
+            )
+            app.state.has_is_edited = _messages_has_column(
+                app.state.db_path, "is_edited"
+            )
+            app.state.signal_filename_index = _build_signal_filename_index(
+                app.state.data_dir
+            )
+            app.state._runtime_signature = current_signature
+            global _THEME_CHANNEL_IDS
+            _THEME_CHANNEL_IDS = app.state.theme_to_channel_ids
+
+    @app.middleware("http")
+    async def refresh_runtime_state(request, call_next):  # type: ignore[no-untyped-def]
+        _refresh_runtime_state()
+        return await call_next(request)
 
     app.add_middleware(
         CORSMiddleware,
@@ -633,19 +857,44 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/api/runtime-state")
+    def runtime_state() -> dict[str, Any]:
+        current_signature = (
+            _path_signature(app.state.db_path),
+            _config_signature(app.state.config_dir),
+        )
+        db_mtime_ns = current_signature[0][0] if current_signature[0] else None
+        return {
+            "db_path": str(app.state.db_path),
+            "db_exists": app.state.db_path.exists(),
+            "db_mtime_ns": db_mtime_ns,
+            "config_dir": str(app.state.config_dir),
+            "cached_signature": app.state._runtime_signature,
+            "current_signature": current_signature,
+            "up_to_date": current_signature == app.state._runtime_signature,
+        }
+
     @app.get("/api/media")
     def media_file(platform: str, source: str, path: str) -> FileResponse:
         if platform not in {"facebook", "signal", "discord"}:
             raise HTTPException(status_code=404, detail="Unsupported media platform")
+
+        target: Path | None = None
         if platform == "facebook":
             source_root = (app.state.data_dir / "facebook" / source).resolve()
+            target = _safe_child_path(source_root, path)
         elif platform == "signal":
             source_root = _signal_source_root(app.state.data_dir, source)
             if source_root is None:
                 raise HTTPException(status_code=404, detail="Media source not found")
+            target = _safe_child_path(source_root, path)
         else:
             source_root = (app.state.data_dir / "discord").resolve()
-        target = _safe_child_path(source_root, path)
+            target = _safe_child_path(source_root, path)
+            if target is None or not target.exists() or not target.is_file():
+                discord_media_root = (app.state.data_dir / "discord-media").resolve()
+                target = _safe_child_path(discord_media_root, path)
+
         if target is None or not target.exists() or not target.is_file():
             raise HTTPException(status_code=404, detail="Media file not found")
         return FileResponse(target)
@@ -660,9 +909,22 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         metric: str = Query(default="messages", pattern="^(messages|words)$"),
     ) -> dict[str, Any]:
         metric = _count_metric(metric)
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         params: list[Any] = []
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
+        edited_expr = (
+            "COALESCE(CAST(m.is_edited AS INTEGER), 0)"
+            if app.state.has_is_edited
+            else "0"
+        )
         with _connect(app.state.db_path) as con:
             if metric == "words":
                 total = con.execute(
@@ -718,14 +980,211 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     """,
                     params,
                 ).fetchall()
+            message_stats_row = con.execute(
+                f"""
+                WITH filtered AS (
+                    SELECT
+                        m.ts,
+                        TRIM(COALESCE(m.content, '')) AS content,
+                        COALESCE(m.attachment_count, 0) AS attachment_count,
+                        LOWER(regexp_replace(split_part(COALESCE(m.attachment_preview, ''), '?', 1), '#.*$', '')) AS preview_path,
+                        {edited_expr} AS is_edited
+                    FROM messages m
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    WHERE {where}
+                )
+                SELECT
+                    COUNT(*) AS total_messages,
+                    SUM(CASE WHEN content <> '' THEN 1 ELSE 0 END) AS with_text,
+                    SUM(CASE WHEN regexp_matches(content, '(https?://|www\\.)') THEN 1 ELSE 0 END) AS with_links,
+                    SUM(CASE WHEN attachment_count > 0 AND regexp_matches(preview_path, '\\.(jpg|jpeg|png|webp|bmp|heic|heif|avif)$') THEN 1 ELSE 0 END) AS with_images,
+                    SUM(CASE WHEN attachment_count > 0 AND regexp_matches(preview_path, '\\.gif$') THEN 1 ELSE 0 END) AS with_gifs,
+                    SUM(CASE WHEN attachment_count > 0 AND regexp_matches(preview_path, '\\.(mp4|mov|webm|mkv|avi|wmv|m4v)$') THEN 1 ELSE 0 END) AS with_videos,
+                    SUM(CASE WHEN attachment_count > 0 AND preview_path LIKE '%sticker%' THEN 1 ELSE 0 END) AS with_stickers,
+                    SUM(CASE WHEN attachment_count > 0 AND regexp_matches(preview_path, '\\.(mp3|wav|m4a|aac|ogg|opus|flac|amr|aif|aiff|mpga)$') THEN 1 ELSE 0 END) AS with_audio_files,
+                    SUM(CASE WHEN attachment_count > 0 AND regexp_matches(preview_path, '\\.(pdf|doc|docx|txt|rtf|odt|xls|xlsx|ods|ppt|pptx|csv)$') THEN 1 ELSE 0 END) AS with_documents,
+                    SUM(
+                        CASE
+                            WHEN attachment_count > 0
+                                 AND NOT regexp_matches(preview_path, '\\.(jpg|jpeg|png|webp|bmp|heic|heif|avif|gif|mp4|mov|webm|mkv|avi|wmv|m4v|mp3|wav|m4a|aac|ogg|opus|flac|amr|aif|aiff|mpga|pdf|doc|docx|txt|rtf|odt|xls|xlsx|ods|ppt|pptx|csv)$')
+                                 AND preview_path NOT LIKE '%sticker%'
+                            THEN 1
+                            ELSE 0
+                        END
+                    ) AS with_other_files,
+                    SUM(is_edited) AS edited_messages
+                FROM filtered
+                """,
+                params,
+            ).fetchone()
+            longest_gap_row = con.execute(
+                f"""
+                WITH filtered AS (
+                    SELECT m.ts
+                    FROM messages m
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    WHERE {where}
+                ),
+                ordered AS (
+                    SELECT ts, LAG(ts) OVER (ORDER BY ts) AS prev_ts
+                    FROM filtered
+                )
+                SELECT COALESCE(MAX(date_diff('second', prev_ts, ts)), 0)
+                FROM ordered
+                WHERE prev_ts IS NOT NULL
+                """,
+                params,
+            ).fetchone()
+            longest_active_row = con.execute(
+                f"""
+                WITH filtered AS (
+                    SELECT m.ts
+                    FROM messages m
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    WHERE {where}
+                ),
+                ordered AS (
+                    SELECT ts, LAG(ts) OVER (ORDER BY ts) AS prev_ts
+                    FROM filtered
+                ),
+                grouped AS (
+                    SELECT
+                        ts,
+                        SUM(
+                            CASE
+                                WHEN prev_ts IS NULL OR date_diff('minute', prev_ts, ts) > 15 THEN 1
+                                ELSE 0
+                            END
+                        ) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS session_id
+                    FROM ordered
+                ),
+                sessions AS (
+                    SELECT
+                        session_id,
+                        MIN(ts) AS start_ts,
+                        MAX(ts) AS end_ts
+                    FROM grouped
+                    GROUP BY session_id
+                )
+                SELECT COALESCE(MAX(date_diff('second', start_ts, end_ts)), 0)
+                FROM sessions
+                """,
+                params,
+            ).fetchone()
+            most_active_year = con.execute(
+                f"""
+                SELECT date_trunc('year', m.ts) AS bucket, COUNT(*) AS count
+                FROM messages m
+                JOIN channels c ON c.id = m.channel_id
+                JOIN sources s ON c.source_id = s.id
+                WHERE {where}
+                GROUP BY bucket
+                ORDER BY count DESC, bucket ASC
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+            most_active_month = con.execute(
+                f"""
+                SELECT date_trunc('month', m.ts) AS bucket, COUNT(*) AS count
+                FROM messages m
+                JOIN channels c ON c.id = m.channel_id
+                JOIN sources s ON c.source_id = s.id
+                WHERE {where}
+                GROUP BY bucket
+                ORDER BY count DESC, bucket ASC
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+            most_active_day = con.execute(
+                f"""
+                SELECT date_trunc('day', m.ts) AS bucket, COUNT(*) AS count
+                FROM messages m
+                JOIN channels c ON c.id = m.channel_id
+                JOIN sources s ON c.source_id = s.id
+                WHERE {where}
+                GROUP BY bucket
+                ORDER BY count DESC, bucket ASC
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+            most_active_hour = con.execute(
+                f"""
+                SELECT date_trunc('hour', m.ts) AS bucket, COUNT(*) AS count
+                FROM messages m
+                JOIN channels c ON c.id = m.channel_id
+                JOIN sources s ON c.source_id = s.id
+                WHERE {where}
+                GROUP BY bucket
+                ORDER BY count DESC, bucket ASC
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+        total_messages = int(total[0] or 0)
+        start_ts = total[1]
+        end_ts = total[2]
+        total_days = 1
+        if start_ts and end_ts:
+            total_days = max((end_ts.date() - start_ts.date()).days + 1, 1)
+        average_per_day = float(total_messages / total_days) if total_messages else 0.0
         return {
-            "total_messages": int(total[0] or 0),
+            "total_messages": total_messages,
             "date_range": {
-                "start": total[1].isoformat() if total[1] else None,
-                "end": total[2].isoformat() if total[2] else None,
+                "start": start_ts.isoformat() if start_ts else None,
+                "end": end_ts.isoformat() if end_ts else None,
+            },
+            "message_stats": {
+                "with_text": int(message_stats_row[1] or 0),
+                "with_links": int(message_stats_row[2] or 0),
+                "with_images": int(message_stats_row[3] or 0),
+                "with_gifs": int(message_stats_row[4] or 0),
+                "with_videos": int(message_stats_row[5] or 0),
+                "with_stickers": int(message_stats_row[6] or 0),
+                "with_audio_files": int(message_stats_row[7] or 0),
+                "with_documents": int(message_stats_row[8] or 0),
+                "with_other_files": int(message_stats_row[9] or 0),
+                "edited_messages": int(message_stats_row[10] or 0),
+                "average_per_day": average_per_day,
+                "longest_period_without_messages_seconds": int(longest_gap_row[0] or 0),
+                "longest_active_conversation_seconds": int(longest_active_row[0] or 0),
+                "most_active_year": {
+                    "bucket": most_active_year[0].isoformat()
+                    if most_active_year
+                    else None,
+                    "count": int(most_active_year[1]) if most_active_year else 0,
+                },
+                "most_active_month": {
+                    "bucket": most_active_month[0].isoformat()
+                    if most_active_month
+                    else None,
+                    "count": int(most_active_month[1]) if most_active_month else 0,
+                },
+                "most_active_day": {
+                    "bucket": most_active_day[0].isoformat()
+                    if most_active_day
+                    else None,
+                    "count": int(most_active_day[1]) if most_active_day else 0,
+                },
+                "most_active_hour": {
+                    "bucket": most_active_hour[0].isoformat()
+                    if most_active_hour
+                    else None,
+                    "count": int(most_active_hour[1]) if most_active_hour else 0,
+                },
             },
             "people": [
-                {"id": int(row[0]), "display_name": row[1], "color": row[2], "message_count": int(row[3])}
+                {
+                    "id": int(row[0]),
+                    "display_name": row[1],
+                    "color": row[2],
+                    "message_count": int(row[3]),
+                }
                 for row in people_rows
             ],
         }
@@ -741,9 +1200,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         metric: str = Query(default="messages", pattern="^(messages|words)$"),
     ) -> dict[str, Any]:
         metric = _count_metric(metric)
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         params: list[Any] = [granularity]
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
         with _connect(app.state.db_path) as con:
             if metric == "words":
                 rows = con.execute(
@@ -776,7 +1243,10 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 ).fetchall()
         return {
             "granularity": granularity,
-            "points": [{"bucket": row[0].isoformat(), "message_count": int(row[1])} for row in rows],
+            "points": [
+                {"bucket": row[0].isoformat(), "message_count": int(row[1])}
+                for row in rows
+            ],
         }
 
     @app.get("/api/calendar")
@@ -789,9 +1259,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         metric: str = Query(default="messages", pattern="^(messages|words)$"),
     ) -> dict[str, Any]:
         metric = _count_metric(metric)
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         params: list[Any] = []
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
         with _connect(app.state.db_path) as con:
             if metric == "words":
                 rows = con.execute(
@@ -822,7 +1300,12 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     """,
                     params,
                 ).fetchall()
-        return {"points": [{"day": row[0].isoformat(), "message_count": int(row[1])} for row in rows]}
+        return {
+            "points": [
+                {"day": row[0].isoformat(), "message_count": int(row[1])}
+                for row in rows
+            ]
+        }
 
     @app.get("/api/activity-heatmap")
     def activity_heatmap(
@@ -834,9 +1317,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         metric: str = Query(default="messages", pattern="^(messages|words)$"),
     ) -> dict[str, Any]:
         metric = _count_metric(metric)
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         params: list[Any] = []
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
         with _connect(app.state.db_path) as con:
             if metric == "words":
                 rows = con.execute(
@@ -869,7 +1360,11 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 ).fetchall()
         return {
             "points": [
-                {"weekday": int(row[0]), "hour": int(row[1]), "message_count": int(row[2])}
+                {
+                    "weekday": int(row[0]),
+                    "hour": int(row[1]),
+                    "message_count": int(row[2]),
+                }
                 for row in rows
             ]
         }
@@ -885,9 +1380,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         metric: str = Query(default="messages", pattern="^(messages|words)$"),
     ) -> dict[str, Any]:
         metric = _count_metric(metric)
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         params: list[Any] = []
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
         params.append(limit)
         with _connect(app.state.db_path) as con:
             if metric == "words":
@@ -925,11 +1428,15 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 ).fetchall()
         return {
             "items": [
-                {"id": int(row[0]), "display_name": row[1], "color": row[2], "message_count": int(row[3])}
+                {
+                    "id": int(row[0]),
+                    "display_name": row[1],
+                    "color": row[2],
+                    "message_count": int(row[3]),
+                }
                 for row in rows
             ]
         }
-
 
     @app.get("/api/metadata")
     def metadata() -> dict[str, Any]:
@@ -943,7 +1450,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             ).fetchall()
 
         if app.state.configured_people_names:
-            people = [row for row in people if row[1] in app.state.configured_people_names]
+            people = [
+                row for row in people if row[1] in app.state.configured_people_names
+            ]
 
         return {
             "people": [{"id": int(row[0]), "name": row[1]} for row in people],
@@ -984,7 +1493,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     c.platform_channel_id
                 FROM channels c
                 JOIN sources s ON s.id = c.source_id
-                WHERE {' AND '.join(channel_where)}
+                WHERE {" AND ".join(channel_where)}
                 ORDER BY s.platform, s.name, c.name
                 """,
                 channel_params,
@@ -997,7 +1506,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 channel_change_params.append(datetime.combine(start, time.min))
             if end is not None:
                 channel_change_where.append("d.ts < ?")
-                channel_change_params.append(datetime.combine(end + timedelta(days=1), time.min))
+                channel_change_params.append(
+                    datetime.combine(end + timedelta(days=1), time.min)
+                )
             if platforms_filter:
                 placeholders = ", ".join("?" for _ in platforms_filter)
                 channel_change_where.append(f"s.platform IN ({placeholders})")
@@ -1023,7 +1534,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 FROM deduped d
                 JOIN channels c ON c.id = d.channel_id
                 JOIN sources s ON s.id = d.source_id
-                WHERE {' AND '.join(channel_change_where)}
+                WHERE {" AND ".join(channel_change_where)}
                 ORDER BY d.channel_id, d.ts, d.previous_name, d.new_name
                 """,
                 channel_change_params,
@@ -1036,7 +1547,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 person_change_params.append(datetime.combine(start, time.min))
             if end is not None:
                 person_change_where.append("d.ts < ?")
-                person_change_params.append(datetime.combine(end + timedelta(days=1), time.min))
+                person_change_params.append(
+                    datetime.combine(end + timedelta(days=1), time.min)
+                )
             if people_filter:
                 placeholders = ", ".join("?" for _ in people_filter)
                 person_change_where.append(f"d.person_id IN ({placeholders})")
@@ -1064,7 +1577,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 FROM deduped d
                 JOIN people p ON p.id = d.person_id
                 JOIN sources s ON s.id = d.source_id
-                WHERE {' AND '.join(person_change_where)}
+                WHERE {" AND ".join(person_change_where)}
                 ORDER BY d.source_id, d.chat_id, p.display_name, d.ts, d.previous_name, d.new_name
                 """,
                 person_change_params,
@@ -1084,7 +1597,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 SELECT d.person_id, d.source_id, s.platform, d.chat_id, d.new_name, d.ts
                 FROM deduped d
                 JOIN sources s ON s.id = d.source_id
-                WHERE {' AND '.join(["1 = 1"] + ([f"s.platform IN ({', '.join('?' for _ in platforms_filter)})"] if platforms_filter else []))}
+                WHERE {" AND ".join(["1 = 1"] + ([f"s.platform IN ({', '.join('?' for _ in platforms_filter)})"] if platforms_filter else []))}
                 ORDER BY d.source_id, d.chat_id, d.person_id, d.ts
                 """,
                 platforms_filter if platforms_filter else [],
@@ -1106,7 +1619,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     continue
                 candidate_name = str(display_name)
                 if _normalized_history_name(candidate_name) not in {"", "you"}:
-                    preferred_name_by_person_id.setdefault(int(person_id), candidate_name)
+                    preferred_name_by_person_id.setdefault(
+                        int(person_id), candidate_name
+                    )
                     continue
                 candidate_id = str(platform_user_id)
                 if _normalized_history_name(candidate_id) not in {"", "you"}:
@@ -1115,7 +1630,10 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 (str(platform), str(platform_user_id)): str(display_name)
                 for platform, platform_user_id, _, display_name in identity_rows
             }
-            for (platform, raw_id), (configured_name, _color) in app.state.reconciliation.people.identity_to_person.items():
+            for (platform, raw_id), (
+                configured_name,
+                _color,
+            ) in app.state.reconciliation.people.identity_to_person.items():
                 key = (str(platform), str(raw_id))
                 existing = identity_to_display_name.get(key)
                 if existing is None or _normalized_history_name(existing) == "you":
@@ -1132,8 +1650,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 for platform, platform_user_id, person_id, _ in identity_rows
             }
 
-            nickname_timeline: dict[tuple[str, int, str, int], list[tuple[datetime | None, str]]] = {}
-            for person_id, source_id, platform, chat_id, new_name, ts in nickname_timeline_rows:
+            nickname_timeline: dict[
+                tuple[str, int, str, int], list[tuple[datetime | None, str]]
+            ] = {}
+            for (
+                person_id,
+                source_id,
+                platform,
+                chat_id,
+                new_name,
+                ts,
+            ) in nickname_timeline_rows:
                 if not chat_id:
                     continue
                 key = (str(platform), int(source_id), str(chat_id), int(person_id))
@@ -1145,7 +1672,10 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 preferred = preferred_name_by_person_id.get(person_id)
                 if preferred:
                     return preferred
-                if _normalized_history_name(fallback_display_name) == "you" and app.state.primary_person_name:
+                if (
+                    _normalized_history_name(fallback_display_name) == "you"
+                    and app.state.primary_person_name
+                ):
                     return app.state.primary_person_name
                 return fallback_display_name
 
@@ -1161,17 +1691,31 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 person_id = identity_to_person_id.get((platform, actor_raw_id))
                 if person_id is None:
                     return None
-                events = nickname_timeline.get((platform, source_id, str(chat_id), person_id), [])
+                events = nickname_timeline.get(
+                    (platform, source_id, str(chat_id), person_id), []
+                )
                 nickname: str | None = None
                 for event_ts, event_new_name in events:
                     if event_ts is None or event_ts > ts:
                         break
                     normalized = _normalized_history_name(event_new_name)
-                    nickname = None if normalized in {"", "(cleared)"} else event_new_name
+                    nickname = (
+                        None if normalized in {"", "(cleared)"} else event_new_name
+                    )
                 return nickname
 
             channel_history_by_id: dict[int, list[dict[str, Any]]] = {}
-            for channel_id, source_id, platform, platform_chat_id, previous_name, new_name, ts, actor_name, actor_raw_id in channel_change_rows:
+            for (
+                channel_id,
+                source_id,
+                platform,
+                platform_chat_id,
+                previous_name,
+                new_name,
+                ts,
+                actor_name,
+                actor_raw_id,
+            ) in channel_change_rows:
                 historical_actor_nickname = actor_nickname_at(
                     str(platform),
                     int(source_id),
@@ -1196,7 +1740,18 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 )
 
             participants_by_chat: dict[tuple[int, str], dict[int, dict[str, Any]]] = {}
-            for person_id, source_id, platform, chat_id, display_name, actor_name, actor_raw_id, previous_name, new_name, ts in person_change_rows:
+            for (
+                person_id,
+                source_id,
+                platform,
+                chat_id,
+                display_name,
+                actor_name,
+                actor_raw_id,
+                previous_name,
+                new_name,
+                ts,
+            ) in person_change_rows:
                 if not chat_id:
                     continue
                 chat_key = (int(source_id), str(chat_id))
@@ -1204,7 +1759,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     int(person_id),
                     {
                         "id": int(person_id),
-                        "display_name": person_display_name(int(person_id), str(display_name)),
+                        "display_name": person_display_name(
+                            int(person_id), str(display_name)
+                        ),
                         "history": [],
                     },
                 )
@@ -1225,7 +1782,8 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                                 ts,
                             ),
                             you_fallback_name=app.state.primary_person_name,
-                        ) or display_name,
+                        )
+                        or display_name,
                         "ts": ts.isoformat() if ts else None,
                     }
                 )
@@ -1243,12 +1801,23 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     WHERE s.platform = 'signal'
                       AND p.display_name IN ({})
                     GROUP BY c.id
-                    """.format(", ".join("?" for _ in app.state.configured_people_names)),
+                    """.format(
+                        ", ".join("?" for _ in app.state.configured_people_names)
+                    ),
                     sorted(app.state.configured_people_names),
                 ).fetchall()
-                signal_chat_ids = {int(row[0]) for row in signal_chat_rows if int(row[1]) >= 2}
+                signal_chat_ids = {
+                    int(row[0]) for row in signal_chat_rows if int(row[1]) >= 2
+                }
 
-            for channel_id, source_id, platform, source_name, current_name, platform_channel_id in channel_rows:
+            for (
+                channel_id,
+                source_id,
+                platform,
+                source_name,
+                current_name,
+                platform_channel_id,
+            ) in channel_rows:
                 chat_key = (int(source_id), str(platform_channel_id))
                 raw_previous_names = channel_history_by_id.get(int(channel_id), [])
                 if not raw_previous_names:
@@ -1281,7 +1850,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                         "id": int(channel_id),
                         "platform": platform,
                         "source_name": source_name,
-                        "current_name": _get_display_name(current_name, source_name, app.state.fb_chat_names),
+                        "current_name": _get_display_name(
+                            current_name, source_name, app.state.fb_chat_names
+                        ),
                         "platform_channel_id": platform_channel_id,
                         "previous_names": previous_names,
                         "participants": participants,
@@ -1302,9 +1873,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     ) -> dict[str, Any]:
         """Top chats (channels) by message count."""
         metric = _count_metric(metric)
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         params: list[Any] = []
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
         params.append(limit)
         with _connect(app.state.db_path) as con:
             if metric == "words":
@@ -1348,7 +1927,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     "id": int(row[0]),
                     "name": _get_display_name(row[1], row[3], app.state.fb_chat_names),
                     "theme_name": row[2],
-                    "message_count": int(row[4])
+                    "message_count": int(row[4]),
                 }
                 for row in rows
             ]
@@ -1366,13 +1945,21 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     ) -> dict[str, Any]:
         """Top configured themes by message count."""
         metric = _count_metric(metric)
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         configured_themes = app.state.reconciliation.themes.configured_theme_names
         if not configured_themes:
             return {"items": []}
 
         params: list[Any] = []
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
 
         with _connect(app.state.db_path) as con:
             if metric == "words":
@@ -1407,11 +1994,15 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
 
             theme_counts = {}
             for source_name, channel_name, count in rows:
-                theme_name = app.state.reconciliation.themes.resolve(source_name, channel_name)
+                theme_name = app.state.reconciliation.themes.resolve(
+                    source_name, channel_name
+                )
                 if theme_name in configured_themes:
                     theme_counts[theme_name] = theme_counts.get(theme_name, 0) + count
 
-        theme_list = sorted(theme_counts.items(), key=lambda x: x[1], reverse=True)[:limit]
+        theme_list = sorted(theme_counts.items(), key=lambda x: x[1], reverse=True)[
+            :limit
+        ]
 
         return {
             "items": [
@@ -1432,9 +2023,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         platforms: str | None = None,
     ) -> dict[str, Any]:
         """Most used words under current filters."""
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         params: list[Any] = []
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
 
         stop_words = sorted(COMMON_STOP_WORDS)
         stop_placeholders = ", ".join("?" for _ in stop_words)
@@ -1475,9 +2074,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 """,
                 params,
             ).fetchall()
-        return {
-            "items": [{"word": row[0], "count": int(row[1])} for row in rows]
-        }
+        return {"items": [{"word": row[0], "count": int(row[1])} for row in rows]}
 
     @app.get("/api/word-breakdown")
     def word_breakdown(
@@ -1492,11 +2089,21 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         """Who and which chats used a selected word the most."""
         normalized = "".join(ch for ch in word.casefold() if "a" <= ch <= "z")
         if len(normalized) < 3:
-            raise HTTPException(status_code=400, detail="Word must contain at least 3 letters")
+            raise HTTPException(
+                status_code=400, detail="Word must contain at least 3 letters"
+            )
 
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         params: list[Any] = []
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
 
         with _connect(app.state.db_path) as con:
             people_rows = con.execute(
@@ -1594,11 +2201,21 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         """A few example messages containing a selected word."""
         normalized = "".join(ch for ch in word.casefold() if "a" <= ch <= "z")
         if len(normalized) < 3:
-            raise HTTPException(status_code=400, detail="Word must contain at least 3 letters")
+            raise HTTPException(
+                status_code=400, detail="Word must contain at least 3 letters"
+            )
 
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         params: list[Any] = []
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
 
         with _connect(app.state.db_path) as con:
             rows = con.execute(
@@ -1643,7 +2260,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     "content": row[2],
                     "person_name": row[3],
                     "person_color": row[4],
-                    "channel_name": _get_display_name(row[5], row[6], app.state.fb_chat_names),
+                    "channel_name": _get_display_name(
+                        row[5], row[6], app.state.fb_chat_names
+                    ),
                     "source_name": row[6],
                 }
                 for row in rows
@@ -1660,9 +2279,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         platforms: str | None = None,
     ) -> dict[str, Any]:
         """Most linked domains by total link count."""
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         params: list[Any] = []
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
 
         with _connect(app.state.db_path) as con:
             rows = con.execute(
@@ -1688,12 +2315,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 [*params, limit],
             ).fetchall()
 
-        return {
-            "items": [
-                {"domain": row[0], "count": int(row[1])}
-                for row in rows
-            ]
-        }
+        return {"items": [{"domain": row[0], "count": int(row[1])} for row in rows]}
 
     @app.get("/api/links-by-author")
     def links_by_author(
@@ -1705,9 +2327,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         platforms: str | None = None,
     ) -> dict[str, Any]:
         """Authors ranked by total links sent."""
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         params: list[Any] = []
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
 
         with _connect(app.state.db_path) as con:
             rows = con.execute(
@@ -1737,7 +2367,12 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
 
         return {
             "items": [
-                {"id": int(row[0]), "display_name": row[1], "color": row[2], "count": int(row[3])}
+                {
+                    "id": int(row[0]),
+                    "display_name": row[1],
+                    "color": row[2],
+                    "count": int(row[3]),
+                }
                 for row in rows
             ]
         }
@@ -1752,9 +2387,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         platforms: str | None = None,
     ) -> dict[str, Any]:
         """Most mentioned names in messages."""
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         params: list[Any] = []
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
 
         with _connect(app.state.db_path) as con:
             rows = con.execute(
@@ -1781,10 +2424,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             ).fetchall()
 
         return {
-            "items": [
-                {"mention": f"@{row[0]}", "count": int(row[1])}
-                for row in rows
-            ]
+            "items": [{"mention": f"@{row[0]}", "count": int(row[1])} for row in rows]
         }
 
     @app.get("/api/top-reacted-messages")
@@ -1797,11 +2437,28 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         platforms: str | None = None,
     ) -> dict[str, Any]:
         """Messages with the most total reactions."""
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         params: list[Any] = []
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
-        attachment_preview_select = "m.attachment_preview" if app.state.has_attachment_preview else "NULL::TEXT"
-        reaction_summary_select = "m.reaction_summary" if app.state.has_reaction_summary else "NULL::TEXT"
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
+        attachment_preview_select = (
+            "m.attachment_preview" if app.state.has_attachment_preview else "NULL::TEXT"
+        )
+        reaction_summary_select = (
+            "m.reaction_summary" if app.state.has_reaction_summary else "NULL::TEXT"
+        )
+        reaction_details_select = (
+            "m.reaction_details_json"
+            if app.state.has_reaction_details_json
+            else "NULL::TEXT"
+        )
 
         with _connect(app.state.db_path) as con:
             rows = con.execute(
@@ -1817,7 +2474,8 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     c.name,
                     s.name,
                     m.reaction_count,
-                    {reaction_summary_select} AS reaction_summary
+                    {reaction_summary_select} AS reaction_summary,
+                    {reaction_details_select} AS reaction_details_json
                 FROM messages m
                 JOIN people p ON p.id = m.person_id
                 JOIN channels c ON c.id = m.channel_id
@@ -1834,7 +2492,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 {
                     "id": row[0],
                     "ts": row[1].isoformat() if row[1] else None,
-                    "content": _message_preview(row[2], int(row[3] or 0), row[4]),
+                    "content": str(row[2] or "").strip(),
                     "attachment_preview": row[4],
                     "attachment_url": _resolve_local_attachment_url(
                         row[4],
@@ -1844,10 +2502,18 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     ),
                     "person_name": row[5],
                     "person_color": row[6],
-                    "channel_name": _get_display_name(row[7], row[8], app.state.fb_chat_names),
+                    "channel_name": _get_display_name(
+                        row[7], row[8], app.state.fb_chat_names
+                    ),
                     "source_name": row[8],
                     "reaction_count": int(row[9]),
                     "reaction_summary": row[10],
+                    "reaction_details": _normalize_reaction_details(
+                        row[11],
+                        row[8],
+                        app.state.data_dir,
+                        app.state.signal_filename_index,
+                    ),
                 }
                 for row in rows
             ]
@@ -1863,9 +2529,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         platforms: str | None = None,
     ) -> dict[str, Any]:
         """Authors ranked by reactions received on their messages."""
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         params: list[Any] = []
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
 
         with _connect(app.state.db_path) as con:
             rows = con.execute(
@@ -1886,7 +2560,12 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
 
         return {
             "items": [
-                {"id": int(row[0]), "display_name": row[1], "color": row[2], "count": int(row[3])}
+                {
+                    "id": int(row[0]),
+                    "display_name": row[1],
+                    "color": row[2],
+                    "count": int(row[3]),
+                }
                 for row in rows
             ]
         }
@@ -1902,9 +2581,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     ) -> dict[str, Any]:
         """Messages per month over all time."""
         metric = _count_metric(metric)
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         params: list[Any] = []
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
         with _connect(app.state.db_path) as con:
             if metric == "words":
                 rows = con.execute(
@@ -1937,7 +2624,10 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 ).fetchall()
         return {
             "points": [
-                {"month": row[0].isoformat() if row[0] else None, "message_count": int(row[1])}
+                {
+                    "month": row[0].isoformat() if row[0] else None,
+                    "message_count": int(row[1]),
+                }
                 for row in rows
             ]
         }
@@ -1953,9 +2643,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     ) -> dict[str, Any]:
         """Messages by hour of day (0-23)."""
         metric = _count_metric(metric)
-        filters = QueryFilters(start=start, end=end, people=_csv_ints(people, "people"), themes=_csv_ints(themes, "themes"), platforms=_csv_strings(platforms))
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
         params: list[Any] = []
-        where = _filters_clause(filters, params, app.state.reconciliation, app.state.theme_id_to_name)
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
         with _connect(app.state.db_path) as con:
             if metric == "words":
                 rows = con.execute(
@@ -1988,8 +2686,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 ).fetchall()
         return {
             "points": [
-                {"hour": int(row[0]), "message_count": int(row[1])}
-                for row in rows
+                {"hour": int(row[0]), "message_count": int(row[1])} for row in rows
             ]
         }
 
@@ -2003,7 +2700,19 @@ def run_server(
     port: int = 8000,
     reload: bool = False,
 ) -> None:
-    uvicorn.run(create_app(db_path, data_dir=data_dir), host=host, port=port, reload=reload)
+    uvicorn.run(
+        create_app(db_path, data_dir=data_dir), host=host, port=port, reload=reload
+    )
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _resolve_cli_path(path: Path | None) -> Path | None:
+    if path is None or path.is_absolute():
+        return path
+    return (_project_root() / path).resolve()
 
 
 def main() -> None:
@@ -2016,4 +2725,10 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--reload", action="store_true")
     args = parser.parse_args()
-    run_server(args.db, data_dir=args.data_dir, host=args.host, port=args.port, reload=args.reload)
+    run_server(
+        _resolve_cli_path(args.db),
+        data_dir=_resolve_cli_path(args.data_dir),
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+    )

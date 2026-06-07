@@ -1,12 +1,26 @@
 #!/bin/sh
 set -eu
 
-EXPORT_CRON="${DISCORD_EXPORT_CRON:-0 2 * * 0}"
+DB_CRON="${DB_REBUILD_CRON:-0 3 */14 * *}"
+EXPORT_CRON="${EXPORT_CRON:-0 2 * * 0}"
+OFFLINE_MODE="${SCHEDULER_OFFLINE:-false}"
+
+echo "scheduler: running initial full export + database rebuild"
+sh /app/scripts/scheduler/rebuild-db.sh
 
 cat > /tmp/crontab <<EOF
-# Export Discord data
-$EXPORT_CRON sh /app/scripts/discord-exporter-scheduler/run-export.sh
+# Full refresh + rebuild
+$DB_CRON sh /app/scripts/scheduler/rebuild-db.sh
 EOF
 
-echo "discord-exporter-scheduler: export cron: $EXPORT_CRON"
-exec /usr/local/bin/supercronic -passthrough-logs /tmp/crontab
+if [ "$OFFLINE_MODE" = "true" ]; then
+    echo "scheduler: offline mode enabled; Export cron disabled"
+else
+    cat >> /tmp/crontab <<EOF
+
+# Extra full refresh + rebuild (typically for Discord cadence)
+$EXPORT_CRON sh /app/scripts/scheduler/rebuild-db.sh
+EOF
+fi
+
+exec /usr/sbin/supercronic -passthrough-logs /tmp/crontab

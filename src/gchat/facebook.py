@@ -41,26 +41,33 @@ def _content(node) -> tuple[str, int, str | None]:
         reaction_list.decompose()
 
     text = _text(node)
-    if text:
-        return text, 0, None
+    attachments = []
+    for attachment in node.find_all(["video", "audio", "img", "a"], recursive=True):
+        if attachment.name in {"img", "a"}:
+            parent = attachment.parent
+            while parent is not None and getattr(parent, "name", None):
+                if parent.name in {"video", "audio"}:
+                    break
+                parent = parent.parent
+            else:
+                parent = None
+            if parent is not None:
+                continue
+        attachments.append(attachment)
 
-    attachments = node.find_all(["img", "a"], recursive=True)
     if attachments:
         labels: list[str] = []
         preview: str | None = None
         for attachment in attachments:
-            if attachment.name == "img":
-                labels.append(attachment.get("alt") or "sticker")
-                if preview is None:
-                    src = attachment.get("src")
-                    if isinstance(src, str) and src.strip():
-                        preview = src.strip()
-            else:
-                href = attachment.get("href") or ""
-                labels.append(Path(href).name if href else "attachment")
-                if preview is None and href:
-                    preview = str(href).strip()
-        return fix_facebook_mojibake(normalize_whitespace(" ".join(labels))), len(attachments), preview
+            attachment_preview = _attachment_preview(attachment)
+            if preview is None and attachment_preview:
+                preview = attachment_preview
+            labels.append(_attachment_label(attachment, attachment_preview))
+        if not text or _is_attachment_only_message(text) or _is_attachment_label_text(text, labels):
+            return "", len(attachments), preview
+        return text, len(attachments), preview
+    if text:
+        return text, 0, None
     return "", 0, None
 
 
@@ -76,6 +83,15 @@ _NAME_CHANGE_PATTERNS = (
 )
 
 
+_ATTACHMENT_ONLY_PATTERNS = (
+    re.compile(
+        r"^.+ sent an attachment\.?(?:\s+https?://\S+)?$",
+        re.IGNORECASE,
+    ),
+    re.compile(r"^click for (video|audio):?$", re.IGNORECASE),
+)
+
+
 def _extract_group_name_change(content: str) -> tuple[str, str | None] | None:
     text = normalize_whitespace(content)
     for pattern in _NAME_CHANGE_PATTERNS:
@@ -86,6 +102,35 @@ def _extract_group_name_change(content: str) -> tuple[str, str | None] | None:
                 match.group("actor").strip() if match.group("actor") else None,
             )
     return None
+
+
+def _is_attachment_only_message(text: str) -> bool:
+    normalized = normalize_whitespace(text)
+    return any(pattern.match(normalized) for pattern in _ATTACHMENT_ONLY_PATTERNS)
+
+
+def _attachment_preview(attachment) -> str | None:
+    for attr in ("src", "data-src", "href"):
+        value = attachment.get(attr)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _attachment_label(attachment, preview: str | None) -> str:
+    if preview:
+        return Path(preview).name or preview
+    if attachment.name in {"video", "audio"}:
+        return attachment.name
+    return attachment.get("alt") or "attachment"
+
+
+def _is_attachment_label_text(text: str, labels: list[str]) -> bool:
+    normalized_text = normalize_whitespace(text).casefold()
+    if not normalized_text:
+        return False
+    normalized_labels = [normalize_whitespace(label).casefold() for label in labels if label]
+    return normalized_text in normalized_labels or normalized_text == normalize_whitespace(" ".join(labels)).casefold()
 
 
 _NICKNAME_SET_PATTERNS = (
