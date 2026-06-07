@@ -2,7 +2,7 @@
 set -eu
 
 DATA_DIR="${DATA_DIR:-/data}"
-SIGNAL_DIR="${DATA_DIR}/signal"
+SIGNAL_DIR="${SIGNAL_DIR:-$DATA_DIR/signal/}"
 FINAL_DIR="$DATA_DIR/signal_decrypted"
 TMP_DIR="${FINAL_DIR}.tmp"
 
