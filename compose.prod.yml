@@ -5,6 +5,8 @@ services:
     volumes:
       - ./data:/data:ro
       - ./config:/config:ro
+    networks:
+      - gchat
     restart: always
 
   web:
@@ -15,17 +17,35 @@ services:
     env_file: .env
     networks:
       - caddy
+      - gchat
     restart: always
 
   scheduler:
     image: ghcr.io/danielkinahan/gchat-scheduler:latest
     container_name: gchat-scheduler
     env_file: .env
+    networks:
+      - gchat
     volumes:
       - ./data:/data
       - ./config:/config:ro
+
+  signal:
+    image: lscr.io/linuxserver/signal:latest
+    container_name: signal
+    environment:
+      - HARDEN_DESKTOP=true
+      - HARDEN_OPENBOX=true
+    volumes:
+      - ./data/signal:/config
+    ports:
+      - 3001:3001
+    shm_size: "1gb"
+    restart: always
 
 networks:
   caddy:
     external: true
     name: caddy
+  gchat:
+    name: gchat
