@@ -201,6 +201,7 @@
     let wordSearch = "";
     let wordsRequestId = 0;
     let topWords: Array<{ word: string; count: number }> = [];
+    let loadedWordsFilterKey: string | null = null;
     let selectedWord = "";
     let wordBreakdown: {
         word: string;
@@ -219,6 +220,7 @@
     } = { word: "", people: [], chats: [] };
     let showWordExamples = false;
     let isLoadingExamples = false;
+    let isAppendingExamples = false;
     let wordExamples: Array<{
         id: string;
         ts: string | null;
@@ -348,7 +350,9 @@
     };
     const formatMostActiveYear = (bucket: string | null): string => {
         if (!bucket) return "N/A";
-        return new Date(bucket).toLocaleDateString("en-US", { year: "numeric" });
+        return new Date(bucket).toLocaleDateString("en-US", {
+            year: "numeric",
+        });
     };
     const formatMostActiveMonth = (bucket: string | null): string => {
         if (!bucket) return "N/A";
@@ -446,11 +450,16 @@
 
     async function loadTopWords(searchQuery = "") {
         const requestId = ++wordsRequestId;
+        const filterKey = currentFilterParams().toString();
+        // If we're already loading or we've already loaded for this filter set,
+        // skip unless the user provided an explicit search query (server-side q).
+        const q = searchQuery.trim().toLowerCase();
+        if (isLoadingWords || (loadedWordsFilterKey === filterKey && !q))
+            return;
         isLoadingWords = true;
         languageError = "";
         try {
             const params = currentFilterParams();
-            const q = searchQuery.trim().toLowerCase();
             if (q) {
                 params.set("q", q);
                 params.set("limit", "200");
@@ -478,6 +487,7 @@
                 err instanceof Error ? err.message : "Failed to load words";
         } finally {
             if (requestId === wordsRequestId) {
+                loadedWordsFilterKey = filterKey;
                 isLoadingWords = false;
             }
         }
@@ -743,7 +753,7 @@
     async function loadWordExamples(offset = 0, append = false) {
         if (!selectedWord) return;
         if (append) {
-            isLoadingExamples = true;
+            isAppendingExamples = true;
         } else if (showWordExamples) {
             showWordExamples = false;
             return;
@@ -785,6 +795,7 @@
             showWordExamples = false;
         } finally {
             isLoadingExamples = false;
+            isAppendingExamples = false;
         }
     }
 
@@ -797,7 +808,42 @@
     }
 
     async function showMoreWordExamples() {
+        // Preserve the user's scroll position when appending more messages.
+        // Record the current window scroll and document height, then adjust
+        // by the delta after loading so the viewport doesn't jump.
+        const oldScroll = typeof window !== "undefined" ? window.scrollY : 0;
+        const oldHeight =
+            typeof document !== "undefined"
+                ? document.documentElement.scrollHeight
+                : 0;
         await loadWordExamples(wordExamples.length, true);
+        const newHeight =
+            typeof document !== "undefined"
+                ? document.documentElement.scrollHeight
+                : 0;
+        const delta = newHeight - oldHeight;
+        if (typeof window !== "undefined" && delta !== 0) {
+            window.scrollTo({ top: oldScroll + delta });
+        }
+    }
+
+    async function openInContext(messageId: string) {
+        if (!messageId) return;
+        try {
+            const res = await fetchJson<{ url: string; fragment?: string }>(
+                `/api/message-context?message_id=${encodeURIComponent(messageId)}`,
+            );
+            if (res?.url) {
+                const full =
+                    apiUrl(res.url) + (res.fragment ? `#${res.fragment}` : "");
+                window.open(full, "_blank", "noopener");
+            } else {
+                languageError = "No context URL returned for message";
+            }
+        } catch (err) {
+            languageError =
+                err instanceof Error ? err.message : "Failed to fetch context";
+        }
     }
 
     async function openLinksTab() {
@@ -895,6 +941,15 @@
         !filteredWords.some((item) => item.word === selectedWord)
     ) {
         void selectWord(filteredWords[0].word);
+    }
+
+    // When filters change, ensure the language tab reloads its top-words data.
+    $: if (
+        activeTab === "language" &&
+        !isLoadingWords &&
+        loadedWordsFilterKey !== filterSignature
+    ) {
+        void loadTopWords(wordSearch);
     }
 
     function togglePerson(ids: number[]) {
@@ -1050,7 +1105,9 @@
         return [...grouped.values()]
             .map((option) => ({ ...option, ids: [...new Set(option.ids)] }))
             .sort((a, b) =>
-                a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+                a.name.localeCompare(b.name, undefined, {
+                    sensitivity: "base",
+                }),
             );
     })();
     $: messageStats = overviewData.overview.message_stats;
@@ -1137,20 +1194,25 @@
             <fieldset class="date-range-fieldset">
                 <legend>
                     <span>Platforms</span>
-                    <small>{selectedCountLabel(selectedPlatforms.length, data.metadata.platforms.length)}</small>
+                    <small
+                        >{selectedCountLabel(
+                            selectedPlatforms.length,
+                            data.metadata.platforms.length,
+                        )}</small
+                    >
                 </legend>
-            <div class="dropdown-list">
-                {#each data.metadata.platforms as platform}
-                    <label class="checkbox-label">
-                        <input
-                            type="checkbox"
-                            checked={selectedPlatforms.includes(platform)}
-                            on:change={() => togglePlatform(platform)}
-                        />
-                        <span>{platform}</span>
-                    </label>
-                {/each}
-            </div>
+                <div class="dropdown-list">
+                    {#each data.metadata.platforms as platform}
+                        <label class="checkbox-label">
+                            <input
+                                type="checkbox"
+                                checked={selectedPlatforms.includes(platform)}
+                                on:change={() => togglePlatform(platform)}
+                            />
+                            <span>{platform}</span>
+                        </label>
+                    {/each}
+                </div>
             </fieldset>
         </div>
 
@@ -1158,22 +1220,27 @@
             <fieldset class="date-range-fieldset">
                 <legend>
                     <span>People</span>
-                    <small>{selectedCountLabel(selectedPeople.length, peopleFilterOptions.length)}</small>
+                    <small
+                        >{selectedCountLabel(
+                            selectedPeople.length,
+                            peopleFilterOptions.length,
+                        )}</small
+                    >
                 </legend>
-            <div class="dropdown-list">
-                {#each peopleFilterOptions as person}
-                    <label class="checkbox-label">
-                        <input
-                            type="checkbox"
-                            checked={person.ids.some((id) =>
-                                selectedPeople.includes(id),
-                            )}
-                            on:change={() => togglePerson(person.ids)}
-                        />
-                        <span>{person.name}</span>
-                    </label>
-                {/each}
-            </div>
+                <div class="dropdown-list">
+                    {#each peopleFilterOptions as person}
+                        <label class="checkbox-label">
+                            <input
+                                type="checkbox"
+                                checked={person.ids.some((id) =>
+                                    selectedPeople.includes(id),
+                                )}
+                                on:change={() => togglePerson(person.ids)}
+                            />
+                            <span>{person.name}</span>
+                        </label>
+                    {/each}
+                </div>
             </fieldset>
         </div>
 
@@ -1181,20 +1248,25 @@
             <fieldset class="date-range-fieldset">
                 <legend>
                     <span>Themes</span>
-                    <small>{selectedCountLabel(selectedThemes.length, data.metadata.themes.length)}</small>
+                    <small
+                        >{selectedCountLabel(
+                            selectedThemes.length,
+                            data.metadata.themes.length,
+                        )}</small
+                    >
                 </legend>
-            <div class="themes-scroll">
-                {#each data.metadata.themes as theme}
-                    <label class="checkbox-label">
-                        <input
-                            type="checkbox"
-                            checked={selectedThemes.includes(theme.id)}
-                            on:change={() => toggleTheme(theme.id)}
-                        />
-                        <span>{theme.name}</span>
-                    </label>
-                {/each}
-            </div>
+                <div class="themes-scroll">
+                    {#each data.metadata.themes as theme}
+                        <label class="checkbox-label">
+                            <input
+                                type="checkbox"
+                                checked={selectedThemes.includes(theme.id)}
+                                on:change={() => toggleTheme(theme.id)}
+                            />
+                            <span>{theme.name}</span>
+                        </label>
+                    {/each}
+                </div>
             </fieldset>
         </div>
     </section>
@@ -1322,7 +1394,11 @@
             </div>
 
             <div class="panel stats-panel">
-                <h2>{messageMetric === "messages" ? "Message statistics" : `${overviewMetricTitle} statistics`}</h2>
+                <h2>
+                    {messageMetric === "messages"
+                        ? "Message statistics"
+                        : `${overviewMetricTitle} statistics`}
+                </h2>
                 <div class="stats-list">
                     <div>
                         <span>Total {overviewMetricLabel} sent</span><strong
@@ -1331,60 +1407,112 @@
                     </div>
                     {#if messageMetric === "messages"}
                         <div>
-                            <span>✏️ with text</span><strong>{messageStats.with_text.toLocaleString()}</strong>
+                            <span>✏️ with text</span><strong
+                                >{messageStats.with_text.toLocaleString()}</strong
+                            >
                         </div>
                         <div>
-                            <span>🔗 with links</span><strong>{messageStats.with_links.toLocaleString()}</strong>
+                            <span>🔗 with links</span><strong
+                                >{messageStats.with_links.toLocaleString()}</strong
+                            >
                         </div>
                         <div>
-                            <span>📷 with images</span><strong>{messageStats.with_images.toLocaleString()}</strong>
+                            <span>📷 with images</span><strong
+                                >{messageStats.with_images.toLocaleString()}</strong
+                            >
                         </div>
                         <div>
-                            <span>👾 with GIFs</span><strong>{messageStats.with_gifs.toLocaleString()}</strong>
+                            <span>👾 with GIFs</span><strong
+                                >{messageStats.with_gifs.toLocaleString()}</strong
+                            >
                         </div>
                         <div>
-                            <span>📹 with videos</span><strong>{messageStats.with_videos.toLocaleString()}</strong>
+                            <span>📹 with videos</span><strong
+                                >{messageStats.with_videos.toLocaleString()}</strong
+                            >
                         </div>
                         <div>
-                            <span>🎉 with stickers</span><strong>{messageStats.with_stickers.toLocaleString()}</strong>
+                            <span>🎉 with stickers</span><strong
+                                >{messageStats.with_stickers.toLocaleString()}</strong
+                            >
                         </div>
                         <div>
-                            <span>🎵 with audio files</span><strong>{messageStats.with_audio_files.toLocaleString()}</strong>
+                            <span>🎵 with audio files</span><strong
+                                >{messageStats.with_audio_files.toLocaleString()}</strong
+                            >
                         </div>
                         <div>
-                            <span>📄 with documents</span><strong>{messageStats.with_documents.toLocaleString()}</strong>
+                            <span>📄 with documents</span><strong
+                                >{messageStats.with_documents.toLocaleString()}</strong
+                            >
                         </div>
                         <div>
-                            <span>📁 with other files</span><strong>{messageStats.with_other_files.toLocaleString()}</strong>
+                            <span>📁 with other files</span><strong
+                                >{messageStats.with_other_files.toLocaleString()}</strong
+                            >
                         </div>
                         <div>
-                            <span>Edited messages</span><strong>{messageStats.edited_messages.toLocaleString()}</strong>
+                            <span>Edited messages</span><strong
+                                >{messageStats.edited_messages.toLocaleString()}</strong
+                            >
                         </div>
                         <div>
-                            <span>Average messages per day</span><strong>{messageStats.average_per_day.toFixed(2)}</strong>
+                            <span>Average messages per day</span><strong
+                                >{messageStats.average_per_day.toFixed(
+                                    2,
+                                )}</strong
+                            >
                         </div>
                         <div>
-                            <span>Longest period without messages</span><strong>{formatDuration(messageStats.longest_period_without_messages_seconds)}</strong>
+                            <span>Longest period without messages</span><strong
+                                >{formatDuration(
+                                    messageStats.longest_period_without_messages_seconds,
+                                )}</strong
+                            >
                         </div>
                         <div>
-                            <span>Longest active conversation</span><strong>{formatDuration(messageStats.longest_active_conversation_seconds)}</strong>
+                            <span>Longest active conversation</span><strong
+                                >{formatDuration(
+                                    messageStats.longest_active_conversation_seconds,
+                                )}</strong
+                            >
                         </div>
                         <div>
-                            <span>Most active year</span><strong>{formatMostActiveYear(messageStats.most_active_year.bucket)}</strong>
+                            <span>Most active year</span><strong
+                                >{formatMostActiveYear(
+                                    messageStats.most_active_year.bucket,
+                                )}</strong
+                            >
                         </div>
                         <div>
-                            <span>Most active month</span><strong>{formatMostActiveMonth(messageStats.most_active_month.bucket)}</strong>
+                            <span>Most active month</span><strong
+                                >{formatMostActiveMonth(
+                                    messageStats.most_active_month.bucket,
+                                )}</strong
+                            >
                         </div>
                         <div>
-                            <span>Most active day</span><strong>{formatMostActiveDay(messageStats.most_active_day.bucket)}</strong>
+                            <span>Most active day</span><strong
+                                >{formatMostActiveDay(
+                                    messageStats.most_active_day.bucket,
+                                )}</strong
+                            >
                         </div>
                         <div>
-                            <span>Most active hour</span><strong>{formatMostActiveHour(messageStats.most_active_hour.bucket)}</strong>
+                            <span>Most active hour</span><strong
+                                >{formatMostActiveHour(
+                                    messageStats.most_active_hour.bucket,
+                                )}</strong
+                            >
                         </div>
                     {:else}
                         <div>
                             <span>Average {overviewMetricLabel} per day</span
-                            ><strong>{overviewData.overview.message_stats.average_per_day.toFixed(2)}</strong>
+                            ><strong
+                                >{overviewData.overview.message_stats.average_per_day.toFixed(
+                                    2,
+                                )}</strong
+                            >
                         </div>
                         <div>
                             <span>Date range start</span><strong
@@ -1605,7 +1733,7 @@
                     </button>
                 {/if}
                 {#if showWordExamples}
-                    {#if isLoadingExamples}
+                    {#if isLoadingExamples && !isAppendingExamples}
                         <p class="muted">Loading examples...</p>
                     {:else if wordExamples.length > 0}
                         <div class="example-list">
@@ -1624,16 +1752,26 @@
                                                   ).toLocaleString()
                                                 : "N/A"}</time
                                         >
+                                        <button
+                                            type="button"
+                                            class="show-context"
+                                            on:click={() =>
+                                                openInContext(message.id)}
+                                        >
+                                            Show in context
+                                        </button>
                                     </div>
                                     {#if youtubeEmbedUrl(message.content)}
                                         <div class="youtube-embed">
-                                                <iframe
-                                                    src={youtubeEmbedUrl(message.content)!}
-                                                    title="YouTube video"
-                                                    loading="lazy"
-                                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                                    allowfullscreen
-                                                ></iframe>
+                                            <iframe
+                                                src={youtubeEmbedUrl(
+                                                    message.content,
+                                                )!}
+                                                title="YouTube video"
+                                                loading="lazy"
+                                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                                allowfullscreen
+                                            ></iframe>
                                         </div>
                                     {/if}
                                     {#if message.content && !isYoutubeOnlyContent(message.content)}
@@ -1647,8 +1785,11 @@
                                 type="button"
                                 class="examples-toggle"
                                 on:click={showMoreWordExamples}
+                                disabled={isAppendingExamples}
                             >
-                                Show 5 more messages
+                                {isAppendingExamples
+                                    ? "Loading..."
+                                    : "Show 5 more messages"}
                             </button>
                         {/if}
                     {:else}
@@ -1805,13 +1946,13 @@
                                         <span class="reaction-pill">
                                             {#if reaction.image_url}
                                                 <img
-                                                src={toReactionImageUrl(
-                                                    message.source_name,
-                                                    reaction.image_url,
-                                                )}
-                                                alt={reaction.name}
-                                                loading="lazy"
-                                            />
+                                                    src={toReactionImageUrl(
+                                                        message.source_name,
+                                                        reaction.image_url,
+                                                    )}
+                                                    alt={reaction.name}
+                                                    loading="lazy"
+                                                />
                                             {/if}
                                             <span>{reaction.name}</span>
                                             <strong>×{reaction.count}</strong>
@@ -2022,7 +2163,6 @@
             {/each}
         {/if}
     </section>
-
 </main>
 
 <footer class="runtime-footer">
@@ -2091,7 +2231,11 @@
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
         gap: 16px;
-        background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(15, 23, 42, 0.96));
+        background: linear-gradient(
+            180deg,
+            rgba(17, 24, 39, 0.96),
+            rgba(15, 23, 42, 0.96)
+        );
         border: 1px solid #1f2937;
         border-radius: 20px;
         padding: 18px;
@@ -2295,6 +2439,26 @@
         font-weight: 600;
     }
 
+    .show-context {
+        margin-left: 8px;
+        border: none;
+        background: transparent;
+        color: inherit;
+        padding: 4px 8px;
+        font-size: 0.85rem;
+        cursor: pointer;
+        border-radius: 6px;
+        transition:
+            background-color 120ms ease,
+            filter 120ms ease,
+            color 120ms ease;
+    }
+
+    .show-context:hover {
+        background: rgba(255, 255, 255, 0.04);
+        filter: brightness(1.12);
+    }
+
     .example-list {
         display: grid;
         gap: 12px;
@@ -2378,6 +2542,7 @@
     .timeline-panel {
         display: flex;
         flex-direction: column;
+        min-height: 0;
     }
 
     .timeline-plot {
@@ -2386,6 +2551,8 @@
         grid-template-columns: 52px minmax(0, 1fr);
         gap: 10px;
         align-items: stretch;
+        flex: 1 1 auto;
+        min-height: 0;
     }
 
     .timeline-axis {
@@ -2403,9 +2570,10 @@
     }
 
     .timeline-chart {
-        height: 250px;
         display: flex;
-        flex-wrap: nowrap;
+        flex-direction: row;
+        flex: 1 1 auto;
+        min-height: 0;
         gap: 3px;
         min-width: 0;
     }
