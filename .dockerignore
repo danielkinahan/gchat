@@ -9,3 +9,4 @@ gchat.duckdb
 *.tmp
 __pycache__
 *.pyc
+sample_data

@@ -899,6 +899,79 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             raise HTTPException(status_code=404, detail="Media file not found")
         return FileResponse(target)
 
+    @app.get("/api/message-context")
+    def message_context(message_id: str) -> dict[str, str | None]:
+        """Return a best-effort URL to view the message in its original HTML export.
+
+        Returns an object: { "url": "/api/media?...", "fragment": "chatlog__message-container-<id>" }
+        """
+        with _connect(app.state.db_path) as con:
+            row = con.execute(
+                """
+                SELECT m.id, c.platform_channel_id, s.platform, s.name
+                FROM messages m
+                JOIN channels c ON c.id = m.channel_id
+                JOIN sources s ON s.id = c.source_id
+                WHERE m.id = ?
+                """,
+                [message_id],
+            ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Message not found")
+        _msg_id, channel_raw_id, platform, source_name = row
+
+        # Discord: look for a file named <channel_raw_id>.html under data/discord/**
+        data_dir = app.state.data_dir
+        if platform == "discord":
+            discord_root = (data_dir / "discord").resolve()
+            if discord_root.exists():
+                for path in discord_root.rglob(f"{channel_raw_id}.html"):
+                    # build relative path from discord root
+                    rel = path.relative_to(discord_root).as_posix()
+                    source_folder = source_name.removeprefix("Discord: ").strip()
+                    return {
+                        "url": _media_url("discord", source_folder, rel),
+                        "fragment": f"chatlog__message-container-{message_id}",
+                    }
+            raise HTTPException(
+                status_code=404, detail="HTML export not found for message"
+            )
+
+        # Signal: look under data/signal_decrypted/<source_folder>/<channel_raw_id>.html
+        if platform == "signal":
+            signal_root = (data_dir / "signal_decrypted").resolve()
+            if signal_root.exists():
+                for source_dir in signal_root.iterdir():
+                    candidate = source_dir / f"{channel_raw_id}.html"
+                    if candidate.exists():
+                        rel = candidate.name
+                        return {
+                            "url": _media_url("signal", source_dir.name, rel),
+                            "fragment": f"chatlog__message-container-{message_id}",
+                        }
+            raise HTTPException(
+                status_code=404, detail="Signal HTML export not found for message"
+            )
+
+        # Facebook: try data/facebook/<channel_raw_id>/*html
+        if platform == "facebook":
+            fb_dir = (data_dir / "facebook" / channel_raw_id).resolve()
+            if fb_dir.exists() and fb_dir.is_dir():
+                for path in fb_dir.iterdir():
+                    if path.suffix == ".html":
+                        rel = path.name
+                        return {
+                            "url": _media_url("facebook", channel_raw_id, rel),
+                            "fragment": None,
+                        }
+            raise HTTPException(
+                status_code=404, detail="Facebook HTML export not found for message"
+            )
+
+        raise HTTPException(
+            status_code=404, detail="Unsupported platform for message context"
+        )
+
     @app.get("/api/overview")
     def overview(
         start: date | None = Query(default=None, alias="from"),

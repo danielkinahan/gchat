@@ -1939,6 +1939,13 @@
                                     >{message.person_name}</strong
                                 >
                                 <span>{message.channel_name}</span>
+                                <button
+                                    type="button"
+                                    class="show-context"
+                                    on:click={() => openInContext(message.id)}
+                                >
+                                    Show in context
+                                </button>
                             </div>
                             {#if message.reaction_details.length}
                                 <div class="reaction-pills">

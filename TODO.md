@@ -6,3 +6,4 @@
 6. Better display of chat and nickname changes
 7. Aggregate soundcloud links like youtube
 8. Add a way for the scheduler to restart the api to load the new db. Maybe a restart endpoint
+9. Add graph for platform usage over time

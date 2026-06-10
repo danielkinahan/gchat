@@ -1,0 +1,4161 @@
+<!-- Generated on 2026-06-07 20:15:57 by signalbackup-tools (20260603.173031). Input database version: 223. -->
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>montreal visit</title>
+    <style>
+      :root {
+        /* dark */
+        --body-bgc: #000000;
+        --body-c: #FFFFFF;
+        --messageheader-c: #FFFFFF;
+        --conversationbox-bc: #1B1C1F;
+        --conversationbox-c: #FFFFFF;
+        --msgincoming-b: #303133;
+        --msgoutgoing-c: #FFFFFF;
+        --spoilerout-b: rgba(255, 255, 255, 0.5);
+        --spoilerin-b: rgba(255, 255, 255, 0.5);
+        --deletedmsg-border: #FFFFFF;
+        --deletedmsg-c: #FFFFFF;
+        --nobgbubble-footer-c: #FFFFFF;
+        --nobgbubble-checkmarks-f: none;
+        --mentionin-bc: #5E5E5E;
+        --msgreaction-bc: #303133;
+        --msgreaction-border: #1B1C1F;
+        --msgreaction-c: #FFFFFF;
+        --msgreactioninfo-bc: #505050;
+        --msgreactioninfo-border: #FBFCFF;
+        --reactioncount-c: #FFFFFF;
+        --incominglinkpreview-bc: rgba(255, 255, 255, .16);
+        --outgoinglinkpreview-bc: rgba(255, 255, 255, .485);
+        --icon-f: none;
+        --menuitem-c: #FFFFFF;
+        --media-status-checkmarks-f: brightness(.25);
+        --nav-disabled-f: brightness(.15);
+        --shared-contact-incoming-f: brightness(.5);
+        --shared-contact-outgoing-f: brightness(1);
+        --poll-unfilled-in: #494A4C;
+        --poll-filled-in: #B6C5FA;
+        --poll-unfilled-out: #5279F6;
+        --poll-filled-out: #EEF2FE;
+        --poll-checkmark-in: brightness(0);
+        --labelbg-c: #1B1C1FAA;
+        --memc-1: #FF6F52;
+        --memc-2: #8BA1B6;
+        --memc-8: #F65AF6;
+        --memc-9: #00A7FA;
+        --memc-14: #0AB80A;
+        --memc-60: #315FF4;
+      }
+
+      body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        background-color: var(--body-bgc);
+      }
+
+      #theme-switch {
+        display: none;
+      }
+
+      #page {
+        background-color: var(--body-bgc);
+        margin: 0;
+        display: flex;
+        flex-direction: row;
+        transition: color .2s, background-color .2s;
+      }
+      .controls-wrapper {
+        display: flex;
+        justify-content: center;
+        flex-direction: row;
+        margin: 0 auto;
+        flex: 1 1 100%;
+      }
+
+      .conversation-wrapper {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: calc(50% + 60px);
+      }
+
+      #message-header {
+        text-align: center;
+        color: var(--messageheader-c);
+        font-family: Roboto, "Noto Sans", "Liberation Sans", OpenSans, sans-serif;
+        padding-top: 30px;
+        padding-bottom: 30px;
+        width: 90%;
+      }
+
+      .conversation-box {
+        display: flex;
+        flex-direction: column;
+        padding-left: 30px;
+        padding-right: 30px;
+        padding-bottom: 30px;
+        margin-bottom: 30px;
+        background-color: var(--conversationbox-bc);
+        color: var(--conversationbox-c);
+        font-family: Roboto, "Noto Sans", "Liberation Sans", OpenSans, sans-serif;
+        border-radius: 10px;
+        width: calc(100% - 60px);
+      }
+
+      .monospace
+      {
+        font-family: 'Roboto Mono', 'Noto Mono', "Liberation Mono", OpenMono,  monospace;
+      }
+
+      .spoiler {
+        transition: background .2s, filter .2s;
+      }
+
+      .msg-outgoing .spoiler {
+        filter: blur(5px) saturate(0%) contrast(0) brightness(2);
+        background: var(--spoilerout-b);
+      }
+
+      .msg-incoming .spoiler {
+        filter: blur(5px) saturate(0%) contrast(0);
+        background: var(--spoilerin-b);
+      }
+
+      .spoiler:hover,
+      .spoiler:active {
+        background: transparent;
+        filter: none;
+        transition: background .2s, filter .2s;
+      }
+
+      .incoming-group-msg {
+        display: flex;
+        flex-direction: row;
+      }
+
+      .msg-incoming {
+        align-self: flex-start;
+        background: var(--msgincoming-b);
+      }
+
+      .msg-sender-1 { background: var(--memc-1); }
+      .msg-name-1 { color: var(--memc-1); }
+      .msg-sender-2 { background: var(--memc-2); }
+      .msg-name-2 { color: var(--memc-2); }
+      .msg-sender-8 { background: var(--memc-8); }
+      .msg-name-8 { color: var(--memc-8); }
+      .msg-sender-9 { background: var(--memc-9); }
+      .msg-name-9 { color: var(--memc-9); }
+      .msg-sender-14 { background: var(--memc-14); }
+      .msg-name-14 { color: var(--memc-14); }
+      .msg-sender-60 { background: var(--memc-60); }
+      .msg-name-60 { color: var(--memc-60); }
+
+      .msg-outgoing {
+        align-self: flex-end;
+        background: #315FF4;
+        color: var(--msgoutgoing-c);
+      }
+
+      .deleted-msg {
+        background: rgba(0, 0, 0, 0);
+        border: 1px solid var(--deletedmsg-border);
+        color: var(--deletedmsg-c);
+      }
+
+      .scheduled-header {
+        font-style: italic;
+        font-size: smaller;
+        padding: 0 0 3px 3px;
+      }
+
+      .avatar {
+        font-weight: 500;
+        border-radius: 50% 50%;
+        aspect-ratio: 1 / 1;
+        text-align: center;
+        color: #FFFFFF;
+      }
+
+      .avatar-emoji-initial {
+        font-family: "Apple Color Emoji", "Noto Color Emoji", sans-serif;
+      }
+
+      .avatar-2 {
+        background-image: url("media/Avatar_2.jpg");
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: cover;
+        color: #FFFFFF;
+      }
+
+      .avatar-8 {
+        background-image: url("media/Avatar_8.jpg");
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: cover;
+        color: #FFFFFF;
+      }
+
+      .avatar-9 {
+        background-image: url("media/Avatar_9.jpg");
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: cover;
+        color: #FFFFFF;
+      }
+
+      .avatar-14 {
+        background-image: url("media/Avatar_14.jpg");
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: cover;
+        color: #FFFFFF;
+      }
+
+      .avatar-60 {
+        background-image: url("media/Avatar_60.jpg");
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: cover;
+        color: #FFFFFF;
+      }
+
+      .convo-avatar {
+        font-size: x-large;
+        margin: auto 15px 15px 0;
+        height: 37px;
+        line-height: 30px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        align-content: center;
+      }
+
+      .header-avatar {
+        font-size: 70px;
+        width: 120px;
+        line-height: 120px;
+        margin-left: auto;
+        margin-right: auto;
+        margin-bottom: 5px;
+        z-index: 1;
+        position: relative;
+        transition: z-index, transform .25s ease;
+        transition-delay: .25s, 0s;
+      }
+
+      .note-to-self-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80" fill="white"><path d="M58,7.5A6.51,6.51 0,0 1,64.5 14L64.5,66A6.51,6.51 0,0 1,58 72.5L22,72.5A6.51,6.51 0,0 1,15.5 66L15.5,14A6.51,6.51 0,0 1,22 7.5L58,7.5M58,6L22,6a8,8 0,0 0,-8 8L14,66a8,8 0,0 0,8 8L58,74a8,8 0,0 0,8 -8L66,14a8,8 0,0 0,-8 -8ZM60,24L20,24v1.5L60,25.5ZM60,34L20,34v1.5L60,35.5ZM60,44L20,44v1.5L60,45.5ZM50,54L20,54v1.5L50,55.5Z"/></svg>');
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: cover;
+        position: relative;
+        width: 86px;
+        height: 86px;
+        top: calc(50% - 86px / 2);
+        left: calc(50% - 86px / 2);
+      }
+
+      .group-avatar-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40" fill="white"><path d="M29,16.75a6.508,6.508 0,0 1,6.5 6.5L35.5,24L37,24v-0.75a8,8 0,0 0,-6.7 -7.885,6.5 6.5,0 1,0 -8.6,0 7.941,7.941 0,0 0,-2.711 0.971A6.5,6.5 0,1 0,9.7 25.365,8 8,0 0,0 3,33.25L3,34L4.5,34v-0.75a6.508,6.508 0,0 1,6.5 -6.5h6a6.508,6.508 0,0 1,6.5 6.5L23.5,34L25,34v-0.75a8,8 0,0 0,-6.7 -7.885,6.468 6.468,0 0,0 1.508,-7.771A6.453,6.453 0,0 1,23 16.75ZM14,25.5a5,5 0,1 1,5 -5A5,5 0,0 1,14 25.5ZM21,10.5a5,5 0,1 1,5 5A5,5 0,0 1,21 10.5Z"/></svg>');
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: cover;
+        position: relative;
+        width: 86px;
+        height: 86px;
+        top: calc(50% - 86px / 2);
+        left: calc(50% - 86px / 2);
+      }
+
+      .header-avatar:hover {
+        cursor: zoom-in;
+      }
+
+      #message-header input[type=checkbox] {
+        display: none;
+      }
+
+      #message-header input[type=checkbox]:checked ~ label > .avatar {
+        transform: translateY(240px) scale(5);
+        border-radius: 0;
+        position: relative;
+        z-index: 2;
+        cursor: zoom-out;
+        transition: transform .25s ease;
+      }
+      .msg {
+        max-width: 50%;
+        border-radius: .6em;
+        margin: 7px 0;
+        padding: 10px;
+        position: relative;
+      }
+
+      .msg pre {
+        font-family: Roboto, "Noto Sans", "Liberation Sans", OpenSans, sans-serif;
+        white-space: pre-wrap;
+        margin-top: 0;
+        margin-bottom: 5px;
+        overflow-wrap: anywhere;
+      }
+
+      .msg pre a {
+        color: inherit;
+        text-decoration: underline;
+      }
+
+      .styled-link:link,
+      .styled-link:visited,
+      .styled-link:hover,
+      .styled-link:active
+      {
+        color: #315FF4;
+        text-decoration: none;
+      }
+
+      .footer {
+        display: flex;
+        flex-direction: row;
+        justify-content: flex-end;
+        align-items: center;
+      }
+
+      .footer-status {
+        margin-bottom: 10px;
+      }
+
+      .msg-data,
+      .edited {
+        font-size: x-small;
+        opacity: 75%;
+        display: block;
+      }
+
+      .edited {
+        margin-right: 5px;
+        position: relative;
+      }
+
+      .edited pre {
+        display: inline;
+      }
+
+      .edited-info-header {
+        font-style: italic;
+      }
+
+      .history-header {
+        display: flex;
+        align-items: center;
+        text-align: center;
+        font-style: italic;
+        margin-top: 0;
+        margin-bottom: 0;
+        color: var(--conversationbox-c);
+      }
+      .history-header::before,
+      .history-header::after {
+        content: '';
+        flex: 1;
+        border-bottom: 1px solid var(--conversationbox-c);
+      }
+      .history-header:not(:empty)::before {
+        margin-right: .25em;
+      }
+      .history-header:not(:empty)::after {
+        margin-left: .25em;
+      }
+
+      .footer-icons {
+        margin-left: 5px;
+      }
+
+      .checkmarks-sent {
+        height: 14px;
+        width: 14px;
+        background-image: url('data:image/svg+xml;,<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="white" stroke="white" stroke-width="0.5"><path d="M12,2.5A9.5,9.5 0,1 1,2.5 12,9.511 9.511,0 0,1 12,2.5M12,1A11,11 0,1 0,23 12,11 11,0 0,0 12,1ZM17.834,9.4L16.773,8.338l-6.541,6.541 -3,-3 -1.061,1.06L10.232,17Z"/></svg>');
+      }
+
+      .checkmarks-received {
+        height: 12px;
+        width: 19px;
+        background-image: url('data:image/svg+xml;,<svg xmlns="http://www.w3.org/2000/svg" width="19" height="11.9999" viewBox="0 0 34.833624 22" fill="white" stroke="white" stroke-width="0.5"><path d="M 11.000092 0 A 11 11 0 1 0 15.268357 21.069186 A 12.375103 12.375103 0 0 1 13.4923 19.744305 A 9.5 9.5 0 0 1 1.500338 11.000092 A 9.511 9.511 0 0 1 11.000092 1.500338 A 9.5 9.5 0 0 1 12.729598 2.1054863 A 12.375103 12.375103 0 0 1 14.473428 0.56934069 A 11 11 0 0 0 11.000092 0 z M 6.2305207 10.878346 L 5.1706161 11.938251 L 9.2311968 15.998831 L 10.212325 15.017703 A 12.375103 12.375103 0 0 1 9.7253416 13.384877 L 9.2311968 13.879022 L 6.2305207 10.878346 z"/><path d="M 22.183427,1.5 A 9.5,9.5 0 1 1 12.683423,11 9.511,9.511 0 0 1 22.183427,1.5 m 0,-1.5 a 11,11 0 1 0 11,11 11,11 0 0 0 -11,-11 z m 5.834,8.3999998 -1.061,-1.062 -6.541,6.5410002 -3.000002,-3 -1.061001,1.06 4.061003,4.061 z"/></svg>');
+      }
+
+      .checkmarks-read {
+        height: 12px;
+        width: 19px;
+        background-image: url('data:image/svg+xml;,<svg xmlns="http://www.w3.org/2000/svg" width="19" height="12" viewBox="0 0 34.833627 22.000184" fill="white" stroke="none"><path d="M 11.000092 0 A 11 11 0 1 0 16.181451 20.693208 A 12.375104 12.375104 0 0 1 11.74131 13.492301 L 9.2311973 15.998832 L 5.1670356 11.934671 L 6.2269403 10.874766 L 9.2276165 13.875442 L 11.512141 11.590918 A 12.375104 12.375104 0 0 1 11.45843 11.000092 A 12.375104 12.375104 0 0 1 16.188612 1.3033964 A 11 11 0 0 0 11.000092 0 z"/><path d="m 23.833441,0 a 11,11 0 1 0 11,11 11,11 0 0 0 -11,-11 z m -1.768001,16 -4.066003,-4.066 1.061001,-1.06 3.000002,3 6.541001,-6.541 1.066,1.067 z"/></svg>');
+      }
+
+      .is-expiring {
+        height: 12px;
+        width: 12px;
+        background-image: url('data:image/svg+xml;,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 12 12" fill="white" stroke="none"><path d="M6.75,6a0.75,0.75 0,0 1,-1.5 0c0,-0.414 0.475,-3.581 0.5,-3.75S5.862,2 6,2s0.226,0.087 0.25,0.25S6.75,5.589 6.75,6ZM12,6a6,6 0,1 0,-6 6A6.006,6.006 0,0 0,12 6ZM11,6A5,5 0,1 1,6 1,5.006 5.006,0 0,1 11,6Z"/></svg>');
+      }
+
+      .insecure {
+        height: 14px;
+        width: 14px;
+        background-image: url('data:image/svg+xml;,<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M22.5 6.5a4.95 4.95 0 0 0-5-5 4.95 4.95 0 0 0-5 5v3h-9c-1.1 0-2 .9-2 2v9c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2v-9c0-1.1-.9-2-2-2h-1v-3c0-1.7 1.3-3 3-3s3 1.3 3 3v3h2zm-12 10.2V19h-2v-2.3c-.6-.4-1-1-1-1.7 0-1.1.9-2 2-2s2 .9 2 2c0 .7-.4 1.4-1 1.7z"/></svg>');
+      }
+
+      .msg-incoming .is-expiring {
+        filter: var(--icon-f);
+      }
+
+      .msg-viewonce .viewonce {
+        display: flex;
+        align-items: center;
+        margin-bottom: 5px;
+      }
+
+      .msg-viewonce .viewonce > pre {
+        margin-bottom: 0;
+      }
+
+      .msg-viewonce .unviewed_viewonce_icon,
+      .msg-viewonce .viewonce_icon {
+        aspect-ratio: 1/1;
+        display: inline-block;
+        position: relative;
+        margin-right: 10px;
+      }
+
+      .msg-viewonce .viewonce_icon {
+        width: 50px;
+      }
+
+      .msg-viewonce .unviewed_viewonce_icon {
+        width: 20px;
+      }
+
+      .msg-viewonce.msg-incoming .unviewed_viewonce_icon,
+      .msg-viewonce.msg-outgoing .viewonce_icon {
+        background-image: url('data:image/svg+xml;,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white" stroke="none"><path d="M13.25 7.75v7.87a.88.88 0 1 1-1.75 0V9.5h-1.25a.74.74 0 0 1-.12-1.5h0A2.34 2.34 0 0 0 12 7.22.73.73 0 0 1 12.5 7a.76.76 0 0 1 .75.75zM12 1a11 11 0 1 0 7.31 19.21l-.19 1.09v.7a.88.88 0 0 0 1.76 0v-4a.89.89 0 0 0-.88-.88h-4a.88.88 0 0 0 0 1.76h1.34l1-.18a9.24 9.24 0 1 1 2.91-6.7 9.37 9.37 0 0 1-.41 2.74.87.87 0 1 0 1.67.52A11.19 11.19 0 0 0 23 12 11 11 0 0 0 12 1z"/></svg>');
+      }
+
+      .msg-viewonce.msg-incoming .unviewed_viewonce_icon {
+        filter: var(--icon-f);
+      }
+
+      .msg-viewonce.msg-incoming .viewonce_icon {
+        background-image: url('data:image/svg+xml;,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white" stroke="none"><path d="M13.25 7.75v7.87a.88.88 0 1 1-1.75 0V9.5h-1.25a.74.74 0 0 1-.12-1.5h0A2.34 2.34 0 0 0 12 7.22.73.73 0 0 1 12.5 7a.76.76 0 0 1 .75.75zM8.89 3.29a9.18 9.18 0 0 1 2.65-.53H12A.88.88 0 1 0 12 1h-.54a11.3 11.3 0 0 0-3.16.63.88.88 0 0 0 .29 1.7 1 1 0 0 0 .3-.04zM3.64 8a9.2 9.2 0 0 1 1.5-2.25.87.87 0 1 0-1.29-1.14 11.11 11.11 0 0 0-1.79 2.68.88.88 0 0 0 .41 1.17.84.84 0 0 0 .38.08.87.87 0 0 0 .79-.54zm-.88 8.19a.87.87 0 0 0 .53-1.11 9.31 9.31 0 0 1-.53-2.66v-.46A.88.88 0 1 0 1 12v.54a11.3 11.3 0 0 0 .63 3.16.87.87 0 0 0 .82.58.79.79 0 0 0 .31-.05zm5.7 5.3A.88.88 0 0 0 8 20.36a9.2 9.2 0 0 1-2.25-1.5.87.87 0 1 0-1.17 1.29 10.86 10.86 0 0 0 2.67 1.79.85.85 0 0 0 .38.09.89.89 0 0 0 .83-.5zM12.54 23a11.3 11.3 0 0 0 3.16-.63.86.86 0 0 0 .53-1.12.87.87 0 0 0-1.11-.53 9.31 9.31 0 0 1-2.66.53H12A.88.88 0 1 0 12 23zm7.61-3.61a10.86 10.86 0 0 0 1.79-2.67.87.87 0 1 0-1.58-.72 9.2 9.2 0 0 1-1.5 2.25.86.86 0 0 0 .06 1.23.81.81 0 0 0 .58.23.84.84 0 0 0 .65-.33zM23 12v-.54a11.3 11.3 0 0 0-.63-3.16.87.87 0 0 0-1.65.58 9.31 9.31 0 0 1 .53 2.66V12A.88.88 0 1 0 23 12zm-3.55-6.92a.87.87 0 0 0-.07-1.23 10.86 10.86 0 0 0-2.67-1.79.87.87 0 1 0-.71 1.58 9.2 9.2 0 0 1 2.25 1.5.85.85 0 0 0 .59.23.89.89 0 0 0 .61-.29z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-emoji {
+        font-family: "Apple Color Emoji", "Noto Color Emoji", sans-serif;
+        font-style: normal;
+      }
+
+      .msg-all-emoji {
+        font-size: xxx-large;
+      }
+
+      .msg-outgoing .msg-all-emoji {
+        text-align: right;
+      }
+
+      .no-bg-bubble {
+        background: rgba(0, 0, 0, 0);
+      }
+
+      .no-bg-bubble .footer {
+        color: var(--nobgbubble-footer-c);
+      }
+
+      .no-bg-bubble .checkmarks-sent,
+      .no-bg-bubble .checkmarks-read,
+      .no-bg-bubble .checkmarks-received,
+      .no-bg-bubble .insecure {
+        filter: var(--nobgbubble-checkmarks-f);
+      }
+
+      :not(.spoiler) > .mention-in,
+      .spoiler:hover > .mention-in {
+        background-color: var(--mentionin-bc);
+      }
+
+      :not(.spoiler) > .mention-out,
+      .spoiler:hover > .mention-out {
+        background-color: rgba(0, 0, 0, 0.244);
+      }
+
+      .msg-date-change {
+        font-size: small;
+        align-self: center;
+        position: relative;
+        z-index: 0;
+      }
+
+      .msg-dl-link a {
+        font-size: large;
+        font-weight: 700;
+        text-decoration: none;
+        color: inherit;
+        padding-left: 5px;
+      }
+
+      .msg-name {
+        font-weight: bold;
+        font-size: smaller;
+        margin-bottom: 5px;
+        display: flex;
+        min-height: calc(1em + 4px);
+        flex-flow: row wrap;
+      }
+
+      .membername {
+        padding-top: 1px;
+        width: max-content;
+      }
+
+      .memberlabel-bg {
+        margin-left: 10px;
+        border-radius: 1em;
+        overflow: hidden;
+      }
+
+      .msg-incoming .memberlabel-bg {
+        background-color: currentColor;
+      }
+
+      .msg-outgoing .memberlabel-bg {
+        background-color: #315FF4;
+      }
+
+      .memberlabel {
+        padding: 1px 7px 0;
+        font-weight: 550;
+        height: calc(100% - 1px);
+      }
+
+      .msg-incoming .memberlabel {
+        background-color: var(--labelbg-c);
+      }
+
+      .msg-outgoing .memberlabel {
+        background-color: #FBFCFFCC;
+      }
+
+      .call-link {
+        border-top-left-radius: .4em;
+        border-top-right-radius: .4em;
+        padding: 7px;
+        margin-bottom: 5px;
+      }
+
+      .call-link-avatar-container {
+        aspect-ratio: 1 / 1;
+        height: 70px;
+        border-radius: 50%;
+      }
+
+      .att-dl,
+      .quote-link .msg-name::after,
+      .menu-icon,
+      .call-link-avatar,
+      .shared-contact-avatar {
+        background-position: center;
+        background-repeat: no-repeat;
+        background-size: cover;
+        aspect-ratio: 1 / 1;
+      }
+
+      .shared-contact-avatar {
+        border-radius: 50%;
+        height: 50px;
+      }
+
+      .call-link-avatar {
+        position: relative;
+        top: 10px;
+        left: 10px;
+        height: 50px;
+      }
+
+      .shared-contact-avatar-default {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" width="256" height="256" fill="white"><path d="M174.1 188.5c-13.6 7.7-29.4 12.2-46.1 12.2s-32.5-4.4-46.1-12.2C45.7 199.6 18.1 224 10 256h236c-8.1-32-35.7-56.5-71.9-67.5zM128 20c-44.8 0-81.1 36.3-81.1 81.1s36.3 81.1 81.1 81.1 81.1-36.3 81.1-81.1S172.8 20 128 20zm0 142c-25.8 0-47.8-16-56.7-38.7h113.4C175.8 146 153.8 162 128 162z"/></svg>');
+      }
+
+      .call-link-avatar {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="%23086DA0"><path d="M6.76 3.63h4.98l2 .04c.56.04 1.05.14 1.52.38a3.88 3.88 0 0 1 1.7 1.7c.23.46.33.95.37 1.5.04.46.04 1 .04 1.64l2.8-2.8c1.19-1.18 3.2-.35 3.2 1.32v9.18c0 1.67-2.01 2.5-3.2 1.32l-2.8-2.8-.04 1.63c-.04.56-.14 1.05-.38 1.52a3.88 3.88 0 0 1-1.7 1.7c-.46.23-.95.33-1.5.37-.54.05-1.2.05-2.01.05H6.76c-.8 0-1.47 0-2-.05-.56-.03-1.06-.13-1.52-.38a3.88 3.88 0 0 1-1.7-1.7c-.23-.46-.33-.95-.37-1.5-.05-.54-.05-1.2-.04-2.01V9.26l.04-2c.03-.56.13-1.06.38-1.52a3.88 3.88 0 0 1 1.7-1.7c.46-.23.95-.33 1.5-.37.54-.05 1.2-.05 2.01-.04zm8.86 5.67l-.03-1.9c-.04-.45-.1-.69-.2-.86a2.09 2.09 0 0 0-.93-.93c-.17-.1-.41-.16-.86-.2l-1.9-.04H6.8l-1.9.04c-.45.04-.69.1-.86.2-.4.19-.74.53-.94.93-.1.16-.15.41-.2.86l-.03 1.9v5.4l.04 1.9c.04.45.1.69.2.86a2.09 2.09 0 0 0 .93.93c.17.1.41.16.86.2l1.9.04h4.9l1.9-.04c.45-.04.69-.1.86-.2a2.09 2.09 0 0 0 .93-.93c.1-.17.16-.41.2-.86l.04-1.9V9.3zm1.76 2.7c0 .4.16.8.45 1.09l3.58 3.58.06.04h.08l.06-.05c0-.01.02-.03.02-.07V7.4c0-.04-.02-.06-.02-.07l-.06-.03-.08-.01s-.03 0-.06.04l-3.58 3.58c-.3.29-.45.68-.45 1.09z"/></svg>');
+      }
+
+      .msg-incoming .shared-contact-avatar-default {
+        filter: var(--shared-contact-incoming-f);
+      }
+
+      .msg-outgoing .shared-contact-avatar-default {
+        filter: var(--shared-contact-outgoing-f);
+      }
+
+      .call-link-info,
+      .shared-contact-info {
+        margin-left: 5px;
+      }
+
+      .call-link,
+      .shared-contact {
+        display: flex;
+        flex-direction: row;
+      }
+
+      .call-link-title,
+      .shared-contact-name {
+        font-weight: bold;
+        margin-bottom: 5px;
+        display: block;
+      }
+
+      .call-link pre,
+      .shared-contact pre {
+        font-size: small;
+      }
+
+      .msg p {
+        margin-top: 0;
+        margin-bottom: 5px;
+        display: block;
+      }
+
+      .msg img, .msg video {
+        max-width: 100%;
+        max-height: 400px;
+      }
+
+      img {
+        image-orientation: from-image;
+      }
+
+      audio {
+        max-width: 100%;
+        width: 400px;
+      }
+
+      .shared-contact-avatar input[type=checkbox],
+      .msg-img-container input[type=checkbox],
+      .msg-lp-img-container input[type=checkbox],
+      .thread-subtitle input[type=checkbox] {
+        display: none;
+      }
+
+      .msg-img-container,
+      .msg-vid-container {
+        text-align: center;
+        padding-bottom: 5px;
+      }
+
+      .msg-vid-container video {
+        display: flex;
+      }
+
+      .msg-img-container label {
+        display: flex;
+        flex-direction: column;
+        margin-bottom: 0;
+        align-items: flex-start;
+      }
+
+      .msg-quote-attach label {
+        align-items: flex-end;
+      }
+
+      .caption {
+        font-size: small;
+      }
+
+      .shared-contact-avatar img,
+      .msg-img-container img {
+        cursor: zoom-in;
+        z-index: 1;
+        position: relative;
+        transition: z-index, transform .25s ease;
+        transition-delay: .25s, 0s;
+      }
+
+      .msg-img-container img {
+        border-radius: .4em;
+      }
+
+      .shared-contact-avatar img {
+        border-radius: 50%;
+      }
+
+      .msg-lp-img-container img {
+        border-top-left-radius: 0.4em;
+        border-top-right-radius: 0.4em;
+        cursor: zoom-in;
+        z-index: 1;
+        position: relative;
+        transition: z-index, transform .25s ease;
+        transition-delay: .25s, 0s;
+      }
+
+      .msg-lp-img-container {
+        border-top-left-radius: 0.4em;
+        border-top-right-radius: 0.4em;
+      }
+
+      .lp {
+        padding: 5px;
+        margin-bottom: 5px;
+      }
+
+      .lp-noimg {
+        padding: 7px 8px 5px;
+        margin-bottom: 5px;
+        border-top-left-radius: 0.4em;
+        border-top-right-radius: 0.4em;
+      }
+
+      .lp-title {
+        font-weight: 550;
+      }
+
+      .shared-contact-avatar input[type=checkbox]:checked ~ label > img,
+      .msg-img-container input[type=checkbox]:checked ~ label > img,
+      .msg-lp-img-container input[type=checkbox]:checked ~ label > img {
+        border-radius: 0;
+        cursor: zoom-out;
+        z-index: 2;
+        position: relative;
+        transition: transform .25s ease;
+      }
+
+      .msg-img-container input[type=checkbox]:checked ~ label > img,
+      .msg-lp-img-container input[type=checkbox]:checked ~ label > img {
+        transform: scale(2.5);
+      }
+
+      .shared-contact-avatar input[type=checkbox]:checked ~ label > img {
+        transform: scale(10);
+      }
+
+      .pending-attachment {
+        padding: 5px;
+        margin: 5px;
+        text-align: center;
+        border: 1px dashed;
+      }
+
+      .attachment-unknown-type {
+        border-radius: .4em;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        padding-left: 9px;
+        padding-right: 9px;
+        margin-bottom: 5px;
+        display: flex;
+        align-items: center;
+      }
+
+      .msg-incoming .attachment-unknown-type {
+        background-color: var(--incominglinkpreview-bc);
+      }
+
+      .msg-outgoing .attachment-unknown-type {
+        background-color: rgba(0, 0, 0, 0.244);
+      }
+
+      .document-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 113 161"><path d="M112.5 40.5v105a14.97 14.97 0 0 1-15 15h-82a14.97 14.97 0 0 1-15-15v-130a14.97 14.97 0 0 1 15-15h57" fill="%23f9f9f9" stroke="%23aaaaaa"/><path d="M112.5 40.5h-25a14.97 14.97 0 0 1-15-15V.5z" fill="%23fbfbfb" stroke="%23bbbbbb"/></svg>');
+        display: inline-block;
+        height: 75px;
+        aspect-ratio: 112 / 160;
+        margin-right: 10px;
+        margin-top: 3px;
+        margin-bottom: 3px;
+        color: black;
+        text-align: center;
+      }
+
+      .document-ext {
+        position: relative;
+        top: calc(50% - 0.5em);
+        font-variant: all-small-caps;
+        font-weight: bold;
+      }
+
+      .msg-with-reaction {
+        margin-bottom: 20px;
+        padding-bottom: 15px;
+      }
+
+      .msg-reactions {
+        margin-top: 5px;
+        text-align: center;
+        position: absolute;
+        display: flex;
+      }
+
+      .msg-incoming .msg-reactions {
+        right: 10px;
+      }
+
+      .msg-outgoing .msg-reactions {
+        left: 10px;
+      }
+
+      .msg-reaction {
+        padding-left: 4px;
+        padding-right: 4px;
+        padding-bottom: 1.5px;
+        background-color: var(--msgreaction-bc);
+        border-radius: 13px;
+        border: 1px solid var(--msgreaction-border);
+        line-height: 150%;
+        position: relative;
+        color: var(--msgreaction-c);
+      }
+
+      .reaction-count {
+        color: var(--reactioncount-c);
+        margin-left: 5px;
+      }
+
+      .poll-option-details,
+      .msg-receipt-info,
+      .edited-info,
+      .msg-reaction .msg-reaction-info {
+        display: block;
+        position: absolute;
+        z-index: 1;
+        background-color: var(--msgreactioninfo-bc);
+        border: 1px solid var(--msgreactioninfo-border);
+        padding: 5px;
+        border-radius: 6px;
+        visibility: hidden;
+        opacity: 0;
+        transition: opacity 0.2s;
+      }
+
+      .edited-info,
+      .msg-reaction .msg-reaction-info {
+        bottom: 36px;
+        left: -118px;
+        width: 250px;
+      }
+
+      .msg-receipt-info {
+        width: 270px;
+        right: calc(((270px / 2) * -1) + 15px);
+        font-size: small;
+        bottom: 33px;
+      }
+
+      .msg-receipt-info,
+      .msg-reaction .msg-reaction-info {
+        text-align: center;
+      }
+
+      .edited-info {
+        font-size: initial;
+        text-align: inherit;
+        width: 300px;
+      }
+
+      .edited-info > .msg {
+        max-width: 100%;
+      }
+
+      /* Draw an arrow using border styles */
+      .msg-outgoing .poll-option-details::before,
+      .msg-incoming .poll-option-details::before,
+      .msg-receipt-info::before,
+      .edited-info::before,
+      .msg-reaction .msg-reaction-info::before {
+        content: "";
+        position: absolute;
+        width: 10px;
+        height: 10px;
+        background-color: var(--msgreactioninfo-bc);
+        border-bottom: 1px solid var(--msgreactioninfo-border);
+        border-right: 1px solid var(--msgreactioninfo-border);
+      }
+
+      .msg-receipt-info::before,
+      .edited-info::before,
+      .msg-reaction .msg-reaction-info::before {
+        top: calc(100% - 5px);
+        left: calc(50% - 5px);
+        transform: rotate(45deg);
+      }
+
+      .msg-incoming .poll-option-details::before {
+        top: calc(50% - 5px);
+        left: calc(0% - 5px);
+        transform: rotate(135deg);
+        clip-path: polygon(0% 100%, 100% 100%, 100% 0%);
+      }
+
+      .msg-outgoing .poll-option-details::before {
+        top: calc(50% - 5px);
+        left: calc(100% - 5px);
+        transform: rotate(315deg);
+      }
+
+      .poll-option:hover .poll-option-details,
+      .footer-icons:hover,
+      .footer-icons:hover .msg-receipt-info,
+      .edited:hover,
+      .edited:hover .edited-info,
+      .msg-reaction:hover .msg-reaction-info {
+        visibility: visible;
+        opacity: 1;
+      }
+
+      .msg-incoming .poll-option-details,
+      .msg-outgoing .poll-option-details {
+        top: 50%;
+        transform: translateY(-50%);
+        width: 250px;
+      }
+
+      .poll-option-details div {
+        color: var(--conversationbox-c);
+        padding: 5px 3px;
+      }
+
+      .poll-option-details div:not(:last-child) {
+        border-bottom: 1px solid var(--conversationbox-c);
+      }
+
+      .msg-outgoing .poll-option-details {
+        left: -275px;
+      }
+
+      .msg-incoming .poll-option-details {
+        left: calc(100% + 10px);
+      }
+
+      .msg:has(.poll) {
+        min-width: 30%;
+      }
+
+      .poll-subtitle {
+        font-size: x-small;
+        opacity: 75%;
+      }
+
+      .poll-option-title-votes {
+        display: flex;
+        justify-content: space-between;
+      }
+
+      .poll-option-votes {
+        display: flex;
+      }
+
+      .poll-option-votes-own {
+        margin: 2px 3px 0 0;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        display: flex;
+      }
+
+      .msg-incoming .poll-option-votes-own {
+        background-color: var(--poll-filled-in);
+      }
+
+      .msg-outgoing .poll-option-votes-own {
+        background-color: var(--poll-filled-out);
+      }
+
+      .poll-checkmark {
+        background-image: url('data:image/svg+xml;,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23315FF4" stroke="%23315FF4" stroke-width="1.7"><path d="M9.172,18.5l-6.188,-6.187l1.061,-1.061l5.127,5.127l10.783,-10.784l1.061,1.061l-11.844,11.844z"/></svg>');
+        height: 10px;
+        aspect-ratio: 1 / 1;
+        filter: none;
+        margin-left: auto;
+        margin-right: auto;
+        align-self: center;
+      }
+
+      .msg-incoming .poll-checkmark {
+        filter: var(--poll-checkmark-in);
+      }
+
+      .poll-options {
+        margin-top: 5px;
+        margin-bottom: 5px;
+      }
+
+      .poll-option {
+        margin-top: 5px;
+        position: relative;
+      }
+
+      .poll-option-meter-bar,
+      .poll-option-meter-filled {
+        height: 10px;
+      }
+
+      .poll-option-meter-bar {
+        width: 100%;
+        height: 10px;
+        border-radius: 4px;
+        overflow: hidden;
+        margin-top: 5px;
+        margin-bottom: 5px;
+      }
+
+      .msg-incoming .poll-option-meter-bar {
+        background: var(--poll-unfilled-in);
+      }
+      .msg-outgoing .poll-option-meter-bar {
+        background: var(--poll-unfilled-out);
+      }
+
+      .poll-option-meter-filled {
+        border-radius: inherit;
+      }
+
+      .msg-incoming .poll-option-meter-filled {
+        background: var(--poll-filled-in);
+      }
+      .msg-outgoing .poll-option-meter-filled {
+        background: var(--poll-filled-out);
+      }
+
+      .msg-quote {
+        display: flex;
+        width: 98%;
+        padding: 5px 0;
+        border-radius: .3em;
+        margin-bottom: 5px;
+        margin-right: 2px;
+        justify-content: space-between;
+        border-left: 5px solid #FFFFFF;
+      }
+
+      .msg-incoming .msg-quote,
+      .msg-incoming .msg-lp-img-container,
+      .msg-incoming .call-link,
+      .msg-incoming .lp,
+      .msg-incoming .lp-noimg {
+        background-color: var(--incominglinkpreview-bc);
+      }
+
+      .msg-outgoing .msg-quote,
+      .msg-outgoing .msg-lp-img-container,
+      .msg-outgoing .call-link,
+      .msg-outgoing .lp,
+      .msg-outgoing .lp-noimg {
+        background-color: var(--outgoinglinkpreview-bc);
+        color: #000000;
+      }
+
+      .msg-quote-message {
+        padding-left: 5px;
+      }
+
+      .msg-quote-attach {
+        flex-grow: 1;
+        min-width: 30%;
+        max-width: 30%;
+        margin-right: 5px;
+        text-align: right;
+      }
+
+      .msg-quote-attach .msg-img-container input[type=checkbox]:checked ~ label > img {
+        transform: scale(5);
+      }
+      .msg-quote-attach img {
+        max-height: 5em;
+      }
+
+      .msg-outgoing .msg-data {
+        text-align: right;
+      }
+
+      .msg-outgoing .msg-reactions {
+        text-align: left;
+      }
+
+      .msg-status {
+        background: none;
+        align-self: center;
+      }
+
+      .msg-status div {
+        background: none;
+        text-align: center;
+      }
+
+      .msg-status {
+        max-width: 70%;
+      }
+
+      .msg-status div.status-text {
+        align-items: center;
+        display: flex;
+      }
+
+      .msg-status div.status-text-red {
+        color: #FF0000;
+      }
+
+      .status-text pre {
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      .thread-disappearing-messages-info {
+        display: inline-block;
+        height: 18px;
+        aspect-ratio: 1 / 1;
+        top: 2px;
+        margin-left: 9px;
+        margin-right: 2px;
+        position: relative;
+        background-image: url('data:image/svg+xml;,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="white" stroke="none"><path d="M6.75 6a.75.75 0 0 1-1.5 0c0-.414.475-3.581.5-3.75S5.862 2 6 2s.226.087.25.25L6.75 6zM12 6a6 6 0 1 0-6 6 6.006 6.006 0 0 0 6-6zm-1 0a5 5 0 1 1-5-5 5.006 5.006 0 0 1 5 5z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-video-call-missed {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14.117647 14.117647" stroke="none" fill="red"><path d="m 13.288805,3.2188235 c -0.2276,-0.097 -0.4791,-0.1231 -0.7217,-0.0749 -0.2426,0.0482 -0.465,0.1684 -0.6383,0.3449 l -1.87,1.86 v -1.54 c -0.0026,-0.4633 -0.1877997,-0.9069 -0.5154997,-1.2345 -0.3276,-0.3277 -0.7712,-0.5129 -1.2345,-0.5155 h -6.5 c -0.4633,0.0026 -0.90689998,0.1878 -1.23449998,0.5155 -0.3277,0.3276 -0.5129,0.7712 -0.5155,1.2345 v 6.5000005 c 0.0026,0.4633 0.1878,0.9069 0.5155,1.2345 0.3276,0.3277 0.77119998,0.5129 1.23449998,0.5155 h 6.5 c 0.4633,-0.0026 0.9069,-0.1878 1.2345,-0.5155 0.3277,-0.3276 0.5128997,-0.7712 0.5154997,-1.2345 V 8.7688235 l 1.87,1.8600005 c 0.1146,0.1172 0.2515,0.2103 0.4026,0.2739 0.1512,0.0635 0.3135,0.0962 0.4774,0.0961 0.1652,6e-4 0.3288,-0.0334 0.48,-0.1 0.2289,-0.0923 0.4248,-0.2513 0.5621,-0.4564 0.1373,-0.2051 0.2098,-0.4468005 0.2079,-0.6936005 v -5.38 c 0.0019,-0.2468 -0.0706,-0.4885 -0.2079,-0.6936 -0.1373,-0.2051 -0.3332,-0.3641 -0.5621,-0.4564 z M 9.0588053,10.308824 c -0.0026,0.1981 -0.0824,0.3874 -0.2225,0.5275 -0.1401,0.1401 -0.3294,0.2199 -0.5275,0.2225 h -6.5 c -0.1981,-0.0026 -0.3874,-0.0824 -0.5275,-0.2225 -0.1401,-0.1401 -0.2199,-0.3294 -0.2225,-0.5275 V 3.8088235 c 0.0026,-0.1981 0.0824,-0.3874 0.2225,-0.5275 0.1401,-0.1401 0.3294,-0.2199 0.5275,-0.2225 h 6.5 c 0.1981,0.0026 0.3874,0.0824 0.5275,0.2225 0.1401,0.1401 0.2199,0.3294 0.2225,0.5275 z M 13.058805,9.7488235 c 2e-4,0.0488 -0.0139,0.0966 -0.0406,0.1374 -0.0267,0.0409 -0.0647,0.0731 -0.1094,0.0926 -0.0465,0.0198 -0.0977,0.0256 -0.1474,0.0167 -0.0498,-0.0089 -0.0958,-0.0321 -0.1326,-0.0667 l -2.57,-2.58 v -0.58 l 2.57,-2.58 c 0.0418,-0.0267 0.0904,-0.0409 0.14,-0.0409 0.0496,0 0.0982,0.0142 0.14,0.0409 0.0447,0.0195 0.0827,0.0517 0.1094,0.0926 0.0267,0.0408 0.0408,0.0886 0.0406,0.1374 z m -7.2899997,-2.69 2.14,2.15 -0.7,0.7 -2.15,-2.14 -2.15,2.14 -0.7,-0.7 2.14,-2.15 -2.14,-2.15 0.7,-0.7 2.15,2.14 2.15,-2.14 0.7,0.7 z"/></svg>');
+        display: inline-block;
+        height: 18px;
+        aspect-ratio: 1 / 1;
+        margin-right: 10px;
+        margin-bottom: 5px;
+      }
+
+      .msg-status .msg-video-call-incoming {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14.117647 14.117647" stroke="none" fill="white"><path d="m 13.288805,3.2188234 c -0.2276,-0.097 -0.4791,-0.1231 -0.7217,-0.0749 -0.2426,0.0482 -0.465,0.1684 -0.6383,0.3449 l -1.87,1.86 v -1.54 c -0.0026,-0.4633 -0.1877996,-0.9069 -0.5154999,-1.2345 -0.3276,-0.3277 -0.7712,-0.5129 -1.2345,-0.5155 h -6.5 c -0.4633,0.0026 -0.90689997,0.1878 -1.23449997,0.5155 -0.32769998,0.3276 -0.51289998,0.7712 -0.51549998,1.2345 v 6.5000006 c 0.0026,0.4633 0.1878,0.9069 0.51549998,1.2345 0.3276,0.3277 0.77119997,0.5129 1.23449997,0.5155 h 6.5 c 0.4633,-0.0026 0.9069,-0.1878 1.2345,-0.5155 0.3277003,-0.3276 0.5128999,-0.7712 0.5154999,-1.2345 V 8.7688234 l 1.87,1.8600006 c 0.1146,0.1172 0.2515,0.2103 0.4026,0.2739 0.1512,0.0635 0.3135,0.0962 0.4774,0.0961 0.1652,6e-4 0.3288,-0.0334 0.48,-0.1 0.2289,-0.0923 0.4248,-0.2513 0.5621,-0.4564 0.1373,-0.2051 0.2098,-0.4468003 0.2079,-0.6936003 V 4.3688234 c 0.0019,-0.2468 -0.0706,-0.4885 -0.2079,-0.6936 -0.1373,-0.2051 -0.3332,-0.3641 -0.5621,-0.4564 z M 9.0588051,10.308824 c -0.0026,0.1981 -0.0824,0.3874 -0.2225,0.5275 -0.1401,0.1401 -0.3294,0.2199 -0.5275,0.2225 h -6.5 c -0.1981,-0.0026 -0.3874,-0.0824 -0.5275,-0.2225 -0.1401,-0.1401 -0.2199,-0.3294 -0.2225,-0.5275 V 3.8088234 c 0.0026,-0.1981 0.0824,-0.3874 0.2225,-0.5275 0.1401,-0.1401 0.3294,-0.2199 0.5275,-0.2225 h 6.5 c 0.1981,0.0026 0.3874,0.0824 0.5275,0.2225 0.1401,0.1401 0.2199,0.3294 0.2225,0.5275 z M 13.058805,9.7488237 c 2e-4,0.0488 -0.0139,0.0966 -0.0406,0.1374 -0.0267,0.0409 -0.0647,0.0731 -0.1094,0.0926 -0.0465,0.0198 -0.0977,0.0256 -0.1474,0.0167 -0.0498,-0.0089 -0.0958,-0.0321 -0.1326,-0.0667 l -2.57,-2.5800003 v -0.58 l 2.57,-2.58 c 0.0418,-0.0267 0.0904,-0.0409 0.14,-0.0409 0.0496,0 0.0982,0.0142 0.14,0.0409 0.0447,0.0195 0.0827,0.0517 0.1094,0.0926 0.0267,0.0408 0.0408,0.0886 0.0406,0.1374 z M 3.7688051,9.0588234 h 3.29 v 1.0000006 h -5 V 5.0588234 h 1 v 3.29 l 4.15,-4.14 0.7,0.7 z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-video-call-outgoing {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14.117647 14.117647" stroke="none" fill="white"><path d="m 13.288805,3.2188235 c -0.2276,-0.097 -0.4791,-0.1231 -0.7217,-0.0749 -0.2426,0.0482 -0.465,0.1684 -0.6383,0.3449 l -1.87,1.86 v -1.54 c -0.0026,-0.4633 -0.1877997,-0.9069 -0.5154997,-1.2345 -0.3276,-0.3277 -0.7712,-0.5129 -1.2345,-0.5155 h -6.5 c -0.4633,0.0026 -0.90689998,0.1878 -1.23449998,0.5155 -0.3277,0.3276 -0.5129,0.7712 -0.5155,1.2345 v 6.5000005 c 0.0026,0.4633 0.1878,0.9069 0.5155,1.2345 0.3276,0.3277 0.77119998,0.5129 1.23449998,0.5155 h 6.5 c 0.4633,-0.0026 0.9069,-0.1878 1.2345,-0.5155 0.3277,-0.3276 0.5128997,-0.7712 0.5154997,-1.2345 V 8.7688235 l 1.87,1.8600005 c 0.1146,0.1172 0.2515,0.2103 0.4026,0.2739 0.1512,0.0635 0.3135,0.0962 0.4774,0.0961 0.1652,6e-4 0.3288,-0.0334 0.48,-0.1 0.2289,-0.0923 0.4248,-0.2513 0.5621,-0.4564 0.1373,-0.2051 0.2098,-0.4468005 0.2079,-0.6936005 v -5.38 c 0.0019,-0.2468 -0.0706,-0.4885 -0.2079,-0.6936 -0.1373,-0.2051 -0.3332,-0.3641 -0.5621,-0.4564 z M 9.0588053,10.308824 c -0.0026,0.1981 -0.0824,0.3874 -0.2225,0.5275 -0.1401,0.1401 -0.3294,0.2199 -0.5275,0.2225 h -6.5 c -0.1981,-0.0026 -0.3874,-0.0824 -0.5275,-0.2225 -0.1401,-0.1401 -0.2199,-0.3294 -0.2225,-0.5275 V 3.8088235 c 0.0026,-0.1981 0.0824,-0.3874 0.2225,-0.5275 0.1401,-0.1401 0.3294,-0.2199 0.5275,-0.2225 h 6.5 c 0.1981,0.0026 0.3874,0.0824 0.5275,0.2225 0.1401,0.1401 0.2199,0.3294 0.2225,0.5275 z M 13.058805,9.7488235 c 2e-4,0.0488 -0.0139,0.0966 -0.0406,0.1374 -0.0267,0.0409 -0.0647,0.0731 -0.1094,0.0926 -0.0465,0.0198 -0.0977,0.0256 -0.1474,0.0167 -0.0498,-0.0089 -0.0958,-0.0321 -0.1326,-0.0667 l -2.57,-2.58 v -0.58 l 2.57,-2.58 c 0.0418,-0.0267 0.0904,-0.0409 0.14,-0.0409 0.0496,0 0.0982,0.0142 0.14,0.0409 0.0447,0.0195 0.0827,0.0517 0.1094,0.0926 0.0267,0.0408 0.0408,0.0886 0.0406,0.1374 z m -4.9999997,-5.69 v 5 h -1 v -3.29 l -4.15,4.14 -0.7,-0.7 4.14,-4.15 h -3.29 v -1 z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-group-call {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" stroke="none" fill="white"><path d="M14.23,4.16a1.23,1.23 0,0 0,-1.36 0.27L11,6.29L11,4.75A1.76,1.76 0,0 0,9.25 3L2.75,3A1.76,1.76 0,0 0,1 4.75v6.5A1.76,1.76 0,0 0,2.75 13h6.5A1.76,1.76 0,0 0,11 11.25L11,9.71l1.87,1.86a1.23,1.23 0,0 0,0.88 0.37,1.18 1.18,0 0,0 0.48,-0.1A1.23,1.23 0,0 0,15 10.69L15,5.31A1.23,1.23 0,0 0,14.23 4.16ZM10,11.25a0.76,0.76 0,0 1,-0.75 0.75L2.75,12A0.76,0.76 0,0 1,2 11.25L2,4.75A0.76,0.76 0,0 1,2.75 4h6.5a0.76,0.76 0,0 1,0.75 0.75ZM14,10.69a0.25,0.25 0,0 1,-0.15 0.23,0.26 0.26,0 0,1 -0.28,-0.05L11,8.29L11,7.71l2.57,-2.58a0.26,0.26 0,0 1,0.28 0,0.25 0.25,0 0,1 0.15,0.23Z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-call-incoming {
+        background-image: url('data:image/svg+xml;,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" ><polyline points="16 2 16 8 22 8"></polyline><line x1="23" y1="1" x2="16" y2="8"></line><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-call-missed {
+        background-image: url('data:image/svg+xml;,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="red" stroke-width="2"><line x1="23" y1="1" x2="17" y2="7"></line><line x1="17" y1="1" x2="23" y2="7"></line><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>');
+      }
+
+      .msg-status .msg-call-outgoing {
+        background-image: url('data:image/svg+xml;,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"><polyline points="23 7 23 1 17 1"></polyline><line x1="16" y1="8" x2="23" y2="1"></line><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/></svg>');
+        transform: scale(-1, 1);
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-info-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white" stroke="none"><path d="M12,2.5A9.5,9.5 0,1 1,2.5 12,9.511 9.511,0 0,1 12,2.5M12,1A11,11 0,1 0,23 12,11 11,0 0,0 12,1ZM12,8.5A1.5,1.5 0,0 0,13.5 7a1.5,1.5 0,1 0,-2.56 1.06A1.435,1.435 0,0 0,12 8.5ZM13,16.5L13,10L9.5,10v1.5h2v5L9,16.5L9,18h6L15,16.5Z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .thread-subtitle .msg-security-icon,
+      .msg-status .msg-security-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white" stroke="none"><path d="M21.793,7.888A19.35,19.35 0,0 1,12 23C7.6,20.4 2,15.5 2,4.5 9,4.5 12,1 12,1s2.156,2.5 7.05,3.268L17.766,5.553A14.7,14.7 0,0 1,12 3,15.653 15.653,0 0,1 3.534,5.946c0.431,8.846 4.8,12.96 8.458,15.29A17.39,17.39 0,0 0,19.983 9.7ZM22.53,5.03 L21.47,3.97 12,13.439 8.53,9.97 7.47,11.03 12,15.561Z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-thread-merge-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="white" stroke="none"><path d="M4.137 14c.197 0 .402-.067.584-.186l.394-.26c1.054-.7 2.608-2.277 2.874-3.065h.022c.258.781 1.812 2.365 2.874 3.065l.394.26a1.08 1.08 0 0 0 .577.186c.386 0 .644-.26.644-.625 0-.223-.121-.446-.326-.573l-.599-.379c-1.054-.684-2.912-2.41-2.912-4.233V5.401H9.74c.531 0 .675-.365.379-.774L8.428 2.254c-.242-.335-.606-.342-.856 0L5.873 4.619c-.295.417-.159.782.387.782h1.077V8.19c0 1.823-1.866 3.541-2.912 4.233l-.599.379a.68.68 0 0 0-.326.581c0 .334.25.617.637.617z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-poll-end-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white" stroke="none"><path d="M18.15 3.63c1.52 0.08 2.73 1.33 2.73 2.87v1c0 1.59-1.3 2.88-2.88 2.88h-1.35c0.14 0.34 0.23 0.72 0.23 1.12v1c0 0.43-0.1 0.83-0.26 1.2 1.29 0.27 2.25 1.42 2.25 2.8v1c0 1.59-1.28 2.88-2.87 2.88H6.5c-1.59 0-2.88-1.3-2.88-2.88v-1c0-0.78 0.31-1.48 0.82-2-0.5-0.52-0.82-1.22-0.82-2v-1c0-0.78 0.31-1.48 0.82-2-0.5-0.52-0.82-1.22-0.82-2v-1c0-1.59 1.3-2.88 2.88-2.88H18h0.15ZM6.5 15.38c-0.62 0-1.13 0.5-1.13 1.12v1c0 0.62 0.5 1.13 1.13 1.13H16c0.62 0 1.13-0.5 1.13-1.13v-1c0-0.62-0.5-1.13-1.13-1.13H6.5Zm0-5c-0.62 0-1.13 0.5-1.13 1.12v1c0 0.62 0.5 1.13 1.13 1.13H14c0.62 0 1.13-0.5 1.13-1.13v-1c0-0.62-0.5-1.13-1.13-1.13H6.5Zm0-5c-0.62 0-1.13 0.5-1.13 1.12v1c0 0.62 0.5 1.13 1.13 1.13H18c0.62 0 1.13-0.5 1.13-1.13v-1c0-0.58-0.45-1.06-1.01-1.12H18 6.5Z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .footer .msg-pinned-icon,
+      .msg-status .msg-pinned-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="white" stroke="none"><path d="M10.886 1.604c-.323-.322-.765-.495-1.203-.471a1.35 1.35 0 0 0-1.146.737 4.16 4.16 0 0 0-.432 2.402L6.662 5.475c-1.247-.411-2.585-.376-3.733.159a1.36 1.36 0 0 0-.791 1.145c-.035.448.136.906.47 1.24l2.124 2.124-2.969 2.969a1.5 1.5 0 0 0-.373.619l-.251.818a.25.25 0 0 0 .312.312l.818-.251a1.5 1.5 0 0 0 .619-.373l2.969-2.969 2.124 2.124c.334.334.792.505 1.24.47a1.36 1.36 0 0 0 1.145-.791c.535-1.147.57-2.484.16-3.73l1.205-1.445c.814.097 1.653-.047 2.399-.433.474-.245.713-.693.738-1.146.023-.438-.149-.88-.472-1.203l-3.51-3.51zm-1.194.863c.01-.02.018-.025.02-.026s.017-.009.042-.01c.054-.003.14.02.212.093l3.51 3.51c.073.072.096.158.093.213-.001.024-.007.037-.01.041s-.006.01-.026.02c-.595.308-1.279.392-1.923.25l-.386-.085-2.186 2.623.147.362c.43 1.056.42 2.168.003 3.063-.011.024-.021.031-.024.033s-.019.01-.044.012c-.056.004-.145-.018-.22-.093L3.527 7.1c-.075-.075-.097-.164-.093-.22.002-.025.009-.039.012-.044s.009-.012.033-.024c.895-.417 2.009-.426 3.066.004l.362.147 2.621-2.184-.086-.386c-.142-.645-.058-1.33.25-1.926z"/></svg>');
+        filter: var(--icon-f);
+      }
+      .footer .msg-pinned-icon
+      {
+        height: 12px;
+        width: 12px;
+        margin-right: 5px;
+      }
+
+      .msg-status .msg-spam-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M12 6.5c-.7 0-1.24.6-1.2 1.29l.43 5.5c.03.4.37.71.77.71s.74-.31.77-.71l.42-5.5c.05-.7-.49-1.29-1.19-1.29zm0 8.75a1.25 1.25 0 1 0 0 2.5 1.25 1.25 0 1 0 0-2.5zm3.1-13.62H8.9c-.77 0-1.5.3-2.04.84l-4.4 4.39c-.52.54-.82 1.27-.82 2.03v6.22a2.87 2.87 0 0 0 .84 2.03l4.39 4.4a2.91 2.91 0 0 0 2.03.84h6.22c.76 0 1.49-.3 2.03-.85l4.4-4.39a2.91 2.91 0 0 0 .84-2.03V8.89c0-.76-.3-1.49-.85-2.03l-4.39-4.4a2.9 2.9 0 0 0-2.03-.83zM8.9 3.38h6.2a1.11 1.11 0 0 1 .8.32l4.4 4.4c.2.2.32.5.32.8v6.2a1.11 1.11 0 0 1-.32.8l-4.4 4.4c-.2.2-.5.32-.8.32H8.9a1.11 1.11 0 0 1-.8-.32l-4.4-4.4a1.16 1.16 0 0 1-.33-.8V8.9c0-.3.12-.6.33-.8l4.4-4.4a1.16 1.16 0 0 1 .8-.33z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-pencil-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white" stroke="none"><path d="M21.561,4.561 L19.439,2.439a1.5,1.5 0,0 0,-2.121 0L3.823,15.934a1.5,1.5 0,0 0,-0.394 0.7L2.317,21.076a0.5,0.5 0,0 0,0.607 0.607l4.445,-1.112a1.5,1.5 0,0 0,0.7 -0.394l13.5,-13.495A1.5,1.5 0,0 0,21.561 4.561ZM7.005,19.116l-2.828,0.707L4.884,17l9.772,-9.773 2.122,2.122ZM17.838,8.283 L15.717,6.162 18.379,3.5 20.5,5.621Z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-thread-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="white" stroke="none"><path d="M5.33 2.32a3.35 3.35 0 0 0-3.35 3.35c0 .82.3 1.57.79 2.15a.99.99 0 0 1 .23.73l-.1 1.2.95-.65a1.01 1.01 0 0 1 .78-.16l.29.06h0a5.51 5.51 0 0 0 .15 1.3c-.2 0-.4-.03-.58-.06l-1.4.97c-.68.47-1.6-.06-1.54-.9l.15-1.73a4.61 4.61 0 0 1-1.02-2.9c0-2.57 2.09-4.65 4.65-4.65A4.64 4.64 0 0 1 9.39 3.4c-.44.1-.86.25-1.25.44a3.35 3.35 0 0 0-2.8-1.51zm5.34 2.03c2.56 0 4.65 2.08 4.65 4.65a4.61 4.61 0 0 1-1.01 2.89l.15 1.8a.99.99 0 0 1-1.54.9l-1.45-1.01a4.25 4.25 0 0 1-.8.07 4.65 4.65 0 1 1 0-9.3zM14.02 9a3.35 3.35 0 1 0-3.35 3.35 2.99 2.99 0 0 0 .67-.07 1.03 1.03 0 0 1 .77.16l1 .7-.1-1.27c-.03-.27.06-.53.23-.72A3.37 3.37 0 0 0 14.02 9z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-megaphone-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="white" stroke="none"><path d="M14.117,2C14.0399,2.0002 13.9658,2.0294 13.9094,2.0818L10.7086,5.0142H3.2721C2.9434,5.0142 2.6281,5.1448 2.3957,5.3773C2.1633,5.6097 2.0327,5.925 2.0327,6.2537V9.3522C2.0327,9.6809 2.1633,9.9962 2.3957,10.2286C2.6281,10.461 2.9434,10.5916 3.2721,10.5916H10.7086L13.9075,13.5241C13.9639,13.5765 14.0381,13.6057 14.1151,13.6059C14.1973,13.6059 14.2761,13.5732 14.3342,13.5151C14.3923,13.457 14.425,13.3782 14.425,13.296V2.3105C14.4251,2.2285 14.3928,2.1498 14.3351,2.0916C14.2774,2.0334 14.1989,2.0005 14.117,2ZM13.6522,12.2958L12.7784,11.2281L11.0699,9.6621H3.2721C3.1899,9.6621 3.1111,9.6294 3.053,9.5713C2.9949,9.5132 2.9622,9.4344 2.9622,9.3522V6.2537C2.9622,6.1715 2.9949,6.0927 3.053,6.0346C3.1111,5.9765 3.1899,5.9438 3.2721,5.9438H11.0699L12.7784,4.3778L13.6522,3.3101L13.4973,5.0142V10.5916L13.6522,12.2958Z"/><path d="M5.7509,5.3241h0.9296v8.6759h-0.9296z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-member-add-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="white" stroke="none"><path d="M12.2831,8.4211C12.699,7.9623 12.9758,7.3883 13.0794,6.7696C13.1831,6.1509 13.1091,5.5145 12.8665,4.9385C12.6239,4.3626 12.2234,3.8723 11.7141,3.5279C11.2049,3.1835 10.6091,3 10,3C9.3909,3 8.7951,3.1835 8.2859,3.5279C7.7766,3.8723 7.3761,4.3626 7.1335,4.9385C6.8909,5.5145 6.8169,6.1509 6.9206,6.7696C7.0242,7.3883 7.301,7.9623 7.7169,8.4211C6.9461,8.6021 6.2577,9.0474 5.7642,9.684C5.2707,10.3207 5.0013,11.111 5,11.926V13H5.9375V11.926C5.9383,11.2285 6.2074,10.5599 6.6858,10.0668C7.1642,9.5736 7.8128,9.2962 8.4894,9.2954H11.5106C12.1872,9.2962 12.8358,9.5736 13.3142,10.0668C13.7926,10.5599 14.0617,11.2285 14.0625,11.926V13H15V11.926C14.9987,11.111 14.7293,10.3207 14.2358,9.684C13.7423,9.0474 13.0539,8.6021 12.2831,8.4211ZM10,8.49C9.5674,8.49 9.1444,8.3577 8.7847,8.11C8.425,7.8622 8.1446,7.51 7.979,7.0979C7.8134,6.6859 7.7701,6.2325 7.8545,5.7951C7.9389,5.3576 8.1473,4.9558 8.4532,4.6405C8.7591,4.3251 9.1489,4.1103 9.5732,4.0233C9.9976,3.9363 10.4374,3.981 10.8371,4.1516C11.2368,4.3223 11.5785,4.6113 11.8188,4.9822C12.0592,5.353 12.1875,5.789 12.1875,6.235C12.1875,6.833 11.957,7.4066 11.5468,7.8295C11.1366,8.2524 10.5802,8.49 10,8.49Z"/><path d="M5,6.8H3.2V5H2.8V6.8H1V7.2H2.8V9H3.2V7.2H5V6.8Z" stroke="white" stroke-width="0.5"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-member-remove-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="white" stroke="none"><path d="M12.2831,8.4211C12.699,7.9623 12.9758,7.3883 13.0794,6.7696C13.1831,6.1509 13.1091,5.5145 12.8665,4.9385C12.6239,4.3626 12.2234,3.8723 11.7141,3.5279C11.2049,3.1835 10.6091,3 10,3C9.3909,3 8.7951,3.1835 8.2859,3.5279C7.7766,3.8723 7.3761,4.3626 7.1335,4.9385C6.8909,5.5145 6.8169,6.1509 6.9206,6.7696C7.0242,7.3883 7.301,7.9623 7.7169,8.4211C6.9461,8.6021 6.2577,9.0474 5.7642,9.684C5.2707,10.3207 5.0013,11.111 5,11.926V13H5.9375V11.926C5.9383,11.2285 6.2074,10.5599 6.6858,10.0668C7.1642,9.5736 7.8128,9.2962 8.4894,9.2954H11.5106C12.1872,9.2962 12.8358,9.5736 13.3142,10.0668C13.7926,10.5599 14.0617,11.2285 14.0625,11.926V13H15V11.926C14.9987,11.111 14.7293,10.3207 14.2358,9.684C13.7423,9.0474 13.0539,8.6021 12.2831,8.4211ZM10,8.49C9.5674,8.49 9.1444,8.3577 8.7847,8.11C8.425,7.8622 8.1446,7.51 7.979,7.0979C7.8134,6.6859 7.7701,6.2325 7.8545,5.7951C7.9389,5.3576 8.1473,4.9558 8.4532,4.6405C8.7591,4.3251 9.1489,4.1103 9.5732,4.0233C9.9976,3.9363 10.4374,3.981 10.8371,4.1516C11.2368,4.3223 11.5785,4.6113 11.8188,4.9822C12.0592,5.353 12.1875,5.789 12.1875,6.235C12.1875,6.833 11.957,7.4066 11.5468,7.8295C11.1366,8.2524 10.5802,8.49 10,8.49Z"/><path d="M4.5,6.8H2.925V7.05H2.575V6.8H1V7.3H2.575V7.05H2.925V7.3H4.5V6.8Z"/><path d="M2.925,7.05V6.8H4.5V7.3H2.925V7.05ZM2.925,7.05H2.575M2.575,7.05V6.8H1V7.3H2.575V7.05Z" stroke="white" stroke-width="0.5"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-avatar-update-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white" stroke="none"><path d="M17.5,2L6.5,2A4.5,4.5 0,0 0,2 6.5v11A4.5,4.5 0,0 0,6.5 22h11A4.5,4.5 0,0 0,22 17.5L22,6.5A4.5,4.5 0,0 0,17.5 2ZM6.5,3.5h11a3,3 0,0 1,3 3v6.75l-0.621,-0.932L16,8.439l-3,3 -4,-4L4.121,12.318 3.5,13.25L3.5,6.5A3,3 0,0 1,6.5 3.5ZM17.5,20.5L6.5,20.5a3,3 0,0 1,-3 -3L3.5,15.061L9,9.561l5.97,5.969 1.06,-1.06L14.061,12.5 16,10.561l4.5,4.5L20.5,17.5A3,3 0,0 1,17.5 20.5Z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-group-quit-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="white" stroke="none"><path d="M6,9.5V13H5V9.5H6ZM11,2H7C6.4696,2 5.9609,2.2107 5.5858,2.5858C5.2107,2.9609 5,3.4696 5,4V6.5H6V4C6,3.7348 6.1054,3.4804 6.2929,3.2929C6.4804,3.1054 6.7348,3 7,3H11C11.2652,3 11.5196,3.1054 11.7071,3.2929C11.8946,3.4804 12,3.7348 12,4V13H13V4C13,3.4696 12.7893,2.9609 12.4142,2.5858C12.0391,2.2107 11.5304,2 11,2ZM7.957,4.979L7.257,5.689L8.671,7.1L9.371,7.5H2V8.5H9.375L8.675,8.9L7.252,10.311L7.957,11.021L11,8L7.957,4.979Z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-members-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="white" stroke="white" stroke-width="0.5"><path d="M29,16.75a6.508,6.508 0,0 1,6.5 6.5L35.5,24L37,24v-0.75a8,8 0,0 0,-6.7 -7.885,6.5 6.5,0 1,0 -8.6,0 7.941,7.941 0,0 0,-2.711 0.971A6.5,6.5 0,1 0,9.7 25.365,8 8,0 0,0 3,33.25L3,34L4.5,34v-0.75a6.508,6.508 0,0 1,6.5 -6.5h6a6.508,6.508 0,0 1,6.5 6.5L23.5,34L25,34v-0.75a8,8 0,0 0,-6.7 -7.885,6.468 6.468,0 0,0 1.508,-7.771A6.453,6.453 0,0 1,23 16.75ZM14,25.5a5,5 0,1 1,5 -5A5,5 0,0 1,14 25.5ZM21,10.5a5,5 0,1 1,5 5A5,5 0,0 1,21 10.5Z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-member-approved-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="white" stroke="none"><path d="M13.283,8.4211C13.6989,7.9623 13.9756,7.3883 14.0793,6.7696C14.1829,6.1509 14.1089,5.5145 13.8664,4.9385C13.6238,4.3626 13.2233,3.8723 12.714,3.5279C12.2047,3.1835 11.6089,3 10.9999,3C10.3908,3 9.795,3.1835 9.2857,3.5279C8.7765,3.8723 8.3759,4.3626 8.1334,4.9385C7.8908,5.5145 7.8168,6.1509 7.9204,6.7696C8.0241,7.3883 8.3009,7.9623 8.7167,8.4211C7.946,8.6021 7.2576,9.0474 6.7641,9.684C6.2706,10.3207 6.0012,11.111 5.9999,11.926V13H6.9374V11.926C6.9382,11.2285 7.2073,10.5599 7.6857,10.0668C8.1641,9.5736 8.8127,9.2962 9.4892,9.2954H12.5105C13.187,9.2962 13.8356,9.5736 14.314,10.0668C14.7924,10.5599 15.0615,11.2285 15.0624,11.926V13H15.9999V11.926C15.9986,11.111 15.7291,10.3207 15.2356,9.684C14.7421,9.0474 14.0538,8.6021 13.283,8.4211ZM10.9999,8.49C10.5672,8.49 10.1443,8.3577 9.7845,8.11C9.4248,7.8622 9.1444,7.51 8.9789,7.0979C8.8133,6.6859 8.77,6.2325 8.8544,5.7951C8.9388,5.3576 9.1471,4.9558 9.4531,4.6405C9.759,4.3251 10.1488,4.1103 10.5731,4.0233C10.9974,3.9363 11.4373,3.981 11.837,4.1516C12.2367,4.3223 12.5783,4.6113 12.8187,4.9822C13.0591,5.353 13.1874,5.789 13.1874,6.235C13.1874,6.833 12.9569,7.4066 12.5467,7.8295C12.1364,8.2524 11.58,8.49 10.9999,8.49ZM5.9749,5.2322L6.682,5.9394L3.1465,9.4749L3.1465,9.4749L2.4394,10.182L2.4394,10.182L1.7323,9.4749L0.3181,8.0607L1.0252,7.3536L2.4394,8.7678L5.9749,5.2322Z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-member-rejected-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="white" stroke="none"><path d="M12.2831,8.4211C12.699,7.9623 12.9758,7.3883 13.0794,6.7696C13.1831,6.1509 13.1091,5.5145 12.8665,4.9385C12.6239,4.3626 12.2234,3.8723 11.7141,3.5279C11.2049,3.1835 10.6091,3 10,3C9.3909,3 8.7951,3.1835 8.2859,3.5279C7.7766,3.8723 7.3761,4.3626 7.1335,4.9385C6.8909,5.5145 6.8169,6.1509 6.9206,6.7696C7.0242,7.3883 7.301,7.9623 7.7169,8.4211C6.9461,8.6021 6.2577,9.0474 5.7642,9.684C5.2707,10.3207 5.0013,11.111 5,11.926V13H5.9375V11.926C5.9383,11.2285 6.2074,10.5599 6.6858,10.0668C7.1642,9.5736 7.8128,9.2962 8.4894,9.2954H11.5106C12.1872,9.2962 12.8358,9.5736 13.3142,10.0668C13.7926,10.5599 14.0617,11.2285 14.0625,11.926V13H15V11.926C14.9987,11.111 14.7293,10.3207 14.2358,9.684C13.7423,9.0474 13.0539,8.6021 12.2831,8.4211ZM10,8.49C9.5674,8.49 9.1444,8.3577 8.7847,8.11C8.425,7.8622 8.1446,7.51 7.979,7.0979C7.8134,6.6859 7.7701,6.2325 7.8545,5.7951C7.9389,5.3576 8.1473,4.9558 8.4532,4.6405C8.7591,4.3251 9.1489,4.1103 9.5732,4.0233C9.9976,3.9363 10.4374,3.981 10.8371,4.1516C11.2368,4.3223 11.5785,4.6113 11.8188,4.9822C12.0592,5.353 12.1875,5.789 12.1875,6.235C12.1875,6.833 11.957,7.4066 11.5468,7.8295C11.1366,8.2524 10.5802,8.49 10,8.49Z"/><path d="M4.5556,8.2728L3.2828,7L4.5556,5.7272L4.2728,5.4444L3,6.7172L1.7272,5.4444L1.4444,5.7272L2.7172,7L1.4444,8.2728L1.7272,8.5556L3,7.2828L4.2728,8.5556L4.5556,8.2728Z" stroke="white" stroke-width="0.5"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-profile-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="white" stroke="none"><path d="M13.653,9.893a5,5 0,1 0,-7.306 0A5.589,5.589 0,0 0,2 15.333V17H3.5V15.333A4.088,4.088 0,0 1,7.583 11.25h4.834A4.088,4.088 0,0 1,16.5 15.333V17H18V15.333A5.589,5.589 0,0 0,13.653 9.893ZM10,10a3.5,3.5 0,1 1,3.5 -3.5A3.5,3.5 0,0 1,10 10Z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-checkmark {
+        background-image: url('data:image/svg+xml;,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white" stroke="none"><path d="M9.172,18.5l-6.188,-6.187l1.061,-1.061l5.127,5.127l10.783,-10.784l1.061,1.061l-11.844,11.844z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-expiration-timer-disabled {
+        background-image: url('data:image/svg+xml;,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="white" stroke="none"><path d="M11.47,13.89C10.4585,14.6149 9.2445,15.0033 8,15C6.4087,15 4.8826,14.3679 3.7574,13.2426C2.6321,12.1174 2,10.5913 2,9C2.0004,7.7576 2.3923,6.5469 3.12,5.54L3.83,6.25C3.2027,7.2109 2.9251,8.3584 3.0437,9.4999C3.1623,10.6413 3.6699,11.7072 4.4814,12.5186C5.2928,13.3301 6.3587,13.8377 7.5001,13.9563C8.6416,14.0749 9.7891,13.7973 10.75,13.17L11.47,13.89ZM14.71,14.29L14,15L2,3L2.71,2.29L4.53,4.12C5.3872,3.4951 6.3948,3.1086 7.45,3L7,1H9L8.55,3C9.7326,3.1074 10.8567,3.5633 11.78,4.31C11.8082,4.1801 11.8708,4.0602 11.9613,3.9628C12.0519,3.8655 12.1669,3.7943 12.2945,3.7569C12.422,3.7194 12.5573,3.7169 12.6861,3.7498C12.8149,3.7826 12.9325,3.8496 13.0265,3.9435C13.1204,4.0375 13.1874,4.1551 13.2202,4.2839C13.2531,4.4127 13.2506,4.548 13.2131,4.6755C13.1757,4.8031 13.1045,4.9181 13.0072,5.0087C12.9098,5.0992 12.7899,5.1618 12.66,5.19C13.4844,6.2077 13.9531,7.4672 13.9946,8.7763C14.0362,10.0854 13.6482,11.3721 12.89,12.44L14.71,14.29ZM13,9C12.999,8.0979 12.7539,7.2129 12.2907,6.4387C11.8275,5.6646 11.1636,5.0302 10.3691,4.6027C9.5747,4.1753 8.6795,3.9707 7.7783,4.0107C6.877,4.0507 6.0034,4.3338 5.25,4.83L7.49,7.08L7.75,5H8.25L8.66,8.24L12.17,11.75C12.7097,10.9342 12.9983,9.9781 13,9Z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-expiration-timer-set {
+        background-image: url('data:image/svg+xml;,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="white" stroke="none"><path d="M12.66,5.22C12.7899,5.1918 12.9098,5.1292 13.0072,5.0387C13.1045,4.9481 13.1757,4.8331 13.2132,4.7055C13.2506,4.578 13.2531,4.4427 13.2202,4.3139C13.1874,4.1851 13.1205,4.0675 13.0265,3.9735C12.9325,3.8795 12.8149,3.8126 12.6861,3.7798C12.5573,3.7469 12.422,3.7494 12.2945,3.7868C12.1669,3.8243 12.0519,3.8955 11.9613,3.9928C11.8708,4.0902 11.8082,4.2101 11.78,4.34C10.8603,3.5825 9.7358,3.1161 8.55,3L9,1H7L7.45,3C6.2642,3.1161 5.1397,3.5825 4.22,4.34C4.1918,4.2101 4.1292,4.0902 4.0387,3.9928C3.9481,3.8955 3.8331,3.8243 3.7055,3.7868C3.578,3.7494 3.4427,3.7469 3.3139,3.7798C3.1851,3.8126 3.0675,3.8795 2.9736,3.9735C2.8795,4.0675 2.8126,4.1851 2.7798,4.3139C2.7469,4.4427 2.7494,4.578 2.7868,4.7055C2.8244,4.8331 2.8955,4.9481 2.9928,5.0387C3.0902,5.1292 3.2101,5.1918 3.34,5.22C2.6259,6.1004 2.1759,7.1652 2.042,8.2908C1.9081,9.4165 2.0959,10.5571 2.5835,11.5805C3.0712,12.6038 3.8387,13.4681 4.7973,14.0732C5.756,14.6783 6.8664,14.9995 8,14.9995C9.1336,14.9995 10.244,14.6783 11.2027,14.0732C12.1613,13.4681 12.9289,12.6038 13.4165,11.5805C13.9041,10.5571 14.0919,9.4165 13.958,8.2908C13.8241,7.1652 13.3741,6.1004 12.66,5.22ZM8,14C7.0111,14 6.0444,13.7068 5.2221,13.1573C4.3999,12.6079 3.759,11.827 3.3806,10.9134C3.0022,9.9998 2.9032,8.9944 3.0961,8.0246C3.289,7.0546 3.7652,6.1637 4.4645,5.4645C5.1637,4.7652 6.0546,4.289 7.0245,4.0961C7.9945,3.9032 8.9998,4.0022 9.9134,4.3806C10.8271,4.759 11.6079,5.3999 12.1574,6.2221C12.7068,7.0444 13,8.0111 13,9C13,9.6566 12.8707,10.3068 12.6194,10.9134C12.3681,11.52 11.9998,12.0712 11.5355,12.5355C11.0712,12.9998 10.52,13.3681 9.9134,13.6194C9.3068,13.8707 8.6566,14 8,14ZM8.75,9C8.75,9.1989 8.671,9.3897 8.5303,9.5303C8.3897,9.671 8.1989,9.75 8,9.75C7.8011,9.75 7.6103,9.671 7.4697,9.5303C7.329,9.3897 7.25,9.1989 7.25,9L7.75,5H8.25L8.75,9Z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-phone-icon {
+        background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white" stroke="none"><path d="M17.21 22a8.08 8.08 0 0 1-2.66-.51 20.79 20.79 0 0 1-7.3-4.73 21 21 0 0 1-4.74-7.3c-.78-2.22-.67-4 .35-5.45h0a5 5 0 0 1 2-1.67 2.72 2.72 0 0 1 3.51.81l2.11 3a2.69 2.69 0 0 1-.35 3.49l-.93.85c-.09.08-.15.22-.08.31A20 20 0 0 0 11 13a20 20 0 0 0 2.21 1.91.24.24 0 0 0 .3-.08l.85-.93a2.68 2.68 0 0 1 3.49-.35l3 2.11a2.68 2.68 0 0 1 .85 3.43 5.22 5.22 0 0 1-1.71 2 4.69 4.69 0 0 1-2.78.91zM4.09 4.87c-.46.64-1 1.77-.16 4.08a19.28 19.28 0 0 0 4.38 6.74A19.49 19.49 0 0 0 15 20.07c2.31.81 3.44.3 4.09-.16a3.55 3.55 0 0 0 1.2-1.42A1.21 1.21 0 0 0 20 16.9l-3-2.12a1.18 1.18 0 0 0-1.53.15l-.82.9a1.72 1.72 0 0 1-2.33.29 21.9 21.9 0 0 1-2.37-2.05 22.2 22.2 0 0 1-2-2.37 1.71 1.71 0 0 1 .3-2.32l.89-.82A1.19 1.19 0 0 0 9.21 7L7.1 4a1.19 1.19 0 0 0-1.51-.38 3.72 3.72 0 0 0-1.5 1.25z"/></svg>');
+        filter: var(--icon-f);
+      }
+
+      .msg-status .msg-video-call-incoming,
+      .msg-status .msg-video-call-outgoing,
+      .msg-status .msg-group-call,
+      .msg-status .msg-call-incoming,
+      .msg-status .msg-call-missed,
+      .msg-status .msg-call-outgoing,
+      .msg-status .msg-info-icon,
+      .msg-status .msg-security-icon,
+      .thread-subtitle .msg-security-icon,
+      .msg-status .msg-thread-merge-icon,
+      .msg-status .msg-spam-icon,
+      .msg-status .msg-pencil-icon,
+      .msg-status .msg-thread-icon,
+      .msg-status .msg-megaphone-icon,
+      .msg-status .msg-member-add-icon,
+      .msg-status .msg-member-remove-icon,
+      .msg-status .msg-avatar-update-icon,
+      .msg-status .msg-group-quit-icon,
+      .msg-status .msg-members-icon,
+      .msg-status .msg-member-approved-icon,
+      .msg-status .msg-member-rejected-icon,
+      .msg-status .msg-poll-end-icon,
+      .msg-status .msg-pinned-icon,
+      .msg-status .msg-profile-icon,
+      .msg-status .msg-checkmark,
+      .msg-status .msg-expiration-timer-disabled,
+      .msg-status .msg-expiration-timer-set,
+      .msg-status .msg-phone-icon {
+        display: inline-block;
+        height: 18px;
+        aspect-ratio: 1 / 1;
+        margin-right: 8px;
+        top: 3px;
+        position: relative;
+      }
+
+      .thread-subtitle .msg-security-icon {
+        margin-right: 3px;
+      }
+
+      #menu {
+        display: flex;
+        flex-direction: column;
+        position: fixed;
+        top: 20px;
+        left: 20px;
+      }
+
+      .quote-link,
+      #menu a:link,
+      #menu a:visited,
+      #menu a:hover,
+      #menu a:active {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .att-dl,
+      .quote-link .msg-name::after {
+        width: 1em;
+        display: inline-block;
+        vertical-align: middle;
+      }
+
+      .quote-link .msg-name::after {
+        transform: rotateY(180deg);
+        margin-bottom: 2px;
+        margin-left: 2px;
+        content: "";
+        filter: brightness(0);
+      }
+
+      .att-dl {
+        box-sizing: border-box;
+        transform: rotate(270deg) scaleY(0.8);
+        margin-bottom: 4px;
+        margin-left: 3px;
+      }
+      .msg-incoming .att-dl {
+        filter: var(--icon-f);
+      }
+      .att-dl::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        bottom: 0.05em;
+        height: 0.9em;
+        border-left: 2px solid var(--conversationbox-c);
+      }
+      .msg-outgoing .att-dl::before {
+        border-left: 2px solid white;
+      }
+      .msg-incoming .att-dl::before {
+        border-left: 2px solid var(--conversationbox-c);
+      }
+
+      .menu-item .nav-up
+      {
+        margin-right: 5px;
+      }
+
+      .menu-item {
+        display: flex;
+        flex-direction: row;
+        color: var(--menuitem-c);
+        align-items: center;
+        font-family: Roboto, "Noto Sans", "Liberation Sans", OpenSans, sans-serif;
+        padding: 5px;
+      }
+
+      #thread-title {
+        display: flex;
+        align-items: center;
+        width: auto;
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      .threadtitle {
+        display: inline-block;
+        font-size: x-large;
+        font-family: Roboto, "Noto Sans", "Liberation Sans", OpenSans, sans-serif;
+        padding: 0;
+        margin: 0 auto;
+        min-width: 100%;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      .threadtitle-info {
+        font-size: large;
+      }
+
+      .menu-icon {
+        margin-right: 0;
+        width: 30px;
+      }
+
+      #bottom {
+        display: flex;
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+      }
+
+
+    .att-dl,
+    .quote-link:hover .msg-name::after,
+    .nav-up {
+      background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="white" stroke="white"><path d="M9.5,17.5l1.1,-1.1l-4.9,-4.9l-1.1,-0.8H17V9.2H4.6l1.1,-0.8l4.9,-5L9.5,2.5L2,10L9.5,17.5z"/></svg>');
+    }
+
+    .msg-incoming .quote-link:hover .msg-name::after,
+    .nav-up {
+      filter: var(--icon-f);
+    }
+
+    .menu-item-bottom {
+      display: flex;
+      color: var(--menuitem-c);
+      border-radius: 50%;
+      background-color: var(--msgreactioninfo-bc);
+      width: 40px;
+      height: 40px;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+    }
+
+    .nav-bottom {
+      transform: rotate(270deg);
+      width: 25px;
+      height: 25px;
+    }
+
+    .nav-one {
+      background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="white" stroke-width="3"><path d="M 13.8,2.94 6.73,10 13.8,17.06"/></svg>');
+      filter: var(--icon-f);
+    }
+
+    .nav-max {
+      background-image: url('data:image/svg+xml;,<svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="none" stroke="white" stroke-width="3"><path d="M 10.75,2.94 3.68,10 10.75,17.06M 16.85,2.94 9.78,10 16.85,17.06"/></svg>');
+      filter: var(--icon-f);
+    }
+
+    .nav-fwd {
+      transform: scaleX(-1);
+    }
+
+    .nav-disabled {
+      filter: var(--nav-disabled-f);
+    }
+
+    .conversation-link {
+      display: flex;
+    }
+
+    .conversation-link-left {
+      padding-right: 20px;
+      order: -1;
+    }
+
+    .conversation-link-right {
+      padding-left: 20px;
+      order: 1;
+    }
+
+    .conversation-link > div {
+      align-self: flex-end;
+      position: sticky;
+      bottom: 30px;
+      padding-right: 5px;
+      padding-left: 5px;
+      padding-top: 5px;
+    }
+
+    .groupdetails {
+      display: block;
+      max-height: 0;
+      max-width: 90%;
+      margin-left: auto;
+      margin-right: auto;
+      overflow: hidden;
+      padding-top: 0;
+      padding-bottom: 0;
+      transition: padding-top 0.05s ease, padding-bottom 0.05s ease, max-height 0.25s ease;
+    }
+
+    .columnview {
+      display: flex;
+      flex-flow: row wrap;
+      justify-content: space-between;
+      overflow-wrap: anywhere;
+    }
+
+    .column-left-align,
+    .column-right-align {
+      flex: 0 0 49%;
+    }
+
+    .column-right-align {
+      padding-right: 1%;
+      text-align: right;
+    }
+
+    .column-left-align {
+      padding-left: 1%;
+      text-align: left;
+    }
+
+    .columnview-header {
+      flex: 0 0 100%;
+      text-align: center;
+    }
+
+    .groupdetails .columnview-header {
+      font-style: italic;
+    }
+
+    .msg-receipt-info .columnview-header {
+      text-align: left;
+      font-weight: bold;
+      padding-top: 3px;
+      padding-left: 1%;
+    }
+
+    .thread-subtitle input[type=checkbox]:checked ~ label > .groupdetails {
+      max-height: none;
+      padding-top: 5px;
+      padding-bottom: 5px;
+      overflow: visible;
+      transition: padding-top 0.2s ease, padding-bottom 0.2s ease, max-height 0.4s ease;
+    }
+
+    .thread-subtitle input[type=checkbox] ~ label > small::before {
+      content: '(show';
+    }
+
+    .thread-subtitle input[type=checkbox]:checked ~ label >  small::before {
+      content: '(hide';
+    }
+
+    @media print {
+      #menu {
+        display: none;
+      }
+      #theme {
+        display: none;
+      }
+
+      .thread-subtitle > label > small {
+        display: none;
+      }
+
+      .msg {
+        break-inside: avoid;
+        /* both fit-content and max-content seem fine here, so just including both as fall back */
+        width: -webkit-fit-content;
+        width: -moz-fit-content;
+        width: fit-content;
+        /*leave it up to print settings */
+        /*background-color: transparent;*/
+      }
+
+      .msg-incoming, .msg-outgoing {
+        border: 1px solid black;
+        display: block;
+      }
+
+      .msg-incoming .spoiler,
+      .msg-outgoing .spoiler {
+        filter: none;
+        background: rgba(0, 0, 0, .2);
+      }
+
+      .no-bg-bubble {
+        border: 0;
+      }
+
+      .groupdetails {
+        max-height: none;
+        padding-top: 5px;
+        padding-bottom: 5px;
+        overflow: visible;
+      }
+
+      .incoming-group-msg {
+        display: block;
+      }
+
+      .incoming-group-msg > .msg-incoming {
+        display: inline-block;
+      }
+
+      .msg.msg-incoming, .incoming-group-msg {
+        margin-right: auto;
+      }
+
+      .msg.msg-outgoing {
+        margin-left: auto;
+      }
+
+      .msg-status, .msg-date-change {
+        margin: 0 auto;
+      }
+
+      .conversation-wrapper {
+        width: 100%;
+      }
+
+      body, .controls-wrapper, .conversation-wrapper, .conversation-box {
+        display: block;
+        /*leave it up to print settings */
+        /*background-color: transparent;*/
+      }
+
+      .conversation-box {
+        padding: 0 3px;
+        margin: 0;
+        box-sizing: border-box;
+        width: 100%;
+        border-radius: 0;
+        /*leave it up to print settings */
+        /*color: black; */
+      }
+
+      .msg-reaction {
+        border: none;
+      }
+
+      #message-header {
+        padding-top: 0;
+        padding-bottom: 10px;
+        /*leave it up to print settings */
+        /* color: black;*/
+      }
+
+      .msg-quote {
+        border: 1px solid grey;
+        border-left: 5px solid grey;
+      }
+
+      .msg-incoming .is-expiring,
+      .thread-disappearing-messages-info,
+      .msg-status .msg-video-call-incoming, .msg-status .msg-video-call-outgoing,
+      .msg-status .msg-group-call, .msg-status .msg-call-incoming,
+      .msg-status .msg-call-missed, .msg-status .msg-call-outgoing,
+      .msg-status .msg-info-icon, .msg-status .msg-security-icon,
+      .msg-status .msg-thread-merge-icon, .msg-status .msg-spam-icon,
+      .msg-status .msg-pencil-icon, .msg-status .msg-megaphone-icon,
+      .msg-status .msg-member-add-icon, .msg-status .msg-member-remove-icon,
+      .msg-status .msg-avatar-update-icon, .msg-status .msg-group-quit-icon,
+      .msg-status .msg-members-icon, .msg-status .msg-member-approved-icon,
+      .msg-status .msg-member-rejected-icon, .msg-status .msg-poll-end-icon,
+      .msg-status .msg-pinned-icon, .msg-status .msg-profile-icon, .msg-status .msg-checkmark,
+      .msg-status .msg-expiration-timer-disabled, .msg-status .msg-expiration-timer-set,
+      .msg-status .msg-phone-icon, .msg-status .msg-thread-icon,
+      .msg-incoming .shared-contact-avatar-default,
+      .msg-outgoing .shared-contact-avatar-default {
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+        filter: brightness(0.5);
+      }
+
+      .status-text > div, .footer-icons {
+        -webkit-print-color-adjust: exact;
+        color-adjust: exact;
+        print-color-adjust: exact;
+        filter: var(--media-status-checkmarks-f);
+      }
+
+      .status-text > div.msg-call-missed {
+        filter: none;
+      }
+
+      .avatar {
+        -webkit-print-color-adjust: exact;
+        color-adjust: exact;
+        print-color-adjust: exact;
+        display: inline-block;
+      }
+
+      .convo-avatar, .incoming-group-msg, .msg {
+        break-inside: avoid;
+       }
+
+      .convo-avatar {
+        vertical-align: bottom;
+      }
+
+      .right-column,
+      .left-column {
+        padding: 0;
+        text-align: left;
+        flex: 0 0 100%;
+      }
+
+      .left-column {
+        font-style: italic;
+      }
+
+      .left-column::before {
+        content: '- ';
+      }
+
+      .columnview-header {
+        display: none;
+      }
+
+      #bottom {
+        display: none;
+      }
+      /* todo: print style for audio, video and attachment previews */
+    } /* end @media print */
+
+    </style>
+  </head>
+  <body>
+
+  <input type="checkbox" id="theme-switch">
+  <div id="page">
+    <div class="controls-wrapper">
+      <div class="conversation-wrapper">
+        <div id="message-header">
+          <input type="checkbox" id="zoomCheck-avatar">
+          <label for="zoomCheck-avatar">
+            <img class="avatar avatar-60 header-avatar msg-sender-60" src="media/Avatar_60.jpg" alt="M">
+          </label>
+          <div id="thread-title"><pre class="threadtitle">montreal visit</pre></div>
+            <div class="thread-subtitle">
+5 members
+            <input type="checkbox" id="showmembers">
+            <label for="showmembers">
+              <small> details)</small>
+              <span class="groupdetails">
+                <span class="columnview">
+                  <span class="column-right-align">Members:</span>
+                  <span class="column-left-align">bast <i>(admin)</i>, Alex, Ben, Daniel, Tristan</span>
+                  <span class="column-right-align">Pending members:</span>
+                  <span class="column-left-align">(none)</span>
+                  <span class="column-right-align">Requesting members:</span>
+                  <span class="column-left-align">(none)</span>
+                  <span class="column-right-align">Banned members:</span>
+                  <span class="column-left-align">(none)</span>
+                  <span class="columnview-header">Permissions</span>
+                  <span class="column-right-align">Add members:</span>
+                  <span class="column-left-align"></span>
+                  <span class="column-right-align">Edit group info:</span>
+                  <span class="column-left-align"></span>
+                  <span class="column-right-align">Send messages:</span>
+                  <span class="column-left-align">All members</span>
+                  <span class="column-right-align">Add member labels:</span>
+                  <span class="column-left-align"></span>
+                  <span class="column-right-align">Approve members from invite link:</span>
+                  <span class="column-left-align"></span>
+                  <span class="columnview-header">Options</span>
+                  <span class="column-right-align">Disappearing messages:</span>
+                  <span class="column-left-align">Off</span>
+                  <span class="column-right-align">Group link:</span>
+                  <span class="column-left-align">Off</span>
+                  <span class="column-right-align">Muted:</span>
+                  <span class="column-left-align">No</span>
+                  <span class="column-right-align">Mentions:</span>
+                  <span class="column-left-align">Always notify</span>
+                  <span class="column-right-align">Custom notifications:</span>
+                  <span class="column-left-align">Disabled</span>
+                </span>
+              </span>
+            </label>
+          </div>
+        </div>
+        <div class="conversation-box">
+
+          <div class="msg msg-date-change">
+            <p>
+              Aug 14, 2024
+            </p>
+          </div>
+
+          <!-- Message: _id:122200,type:11075604 -->
+          <div class="msg msg-status">
+            <div class="status-text">
+              <pre dir="auto"><span class="msg-member-add-icon"></span>bast added you to the group.</pre>
+            </div>
+            <div class="footer-status">
+              <span class="msg-data">Aug 14, 2024 02:08:36</span>
+            </div>
+          </div>
+
+          <!-- Message: _id:122201,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">hello french boys</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 14, 2024 02:08:37</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122202,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">Guten Abend</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 14, 2024 02:10:06</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122203,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1 msg-with-reaction">
+            <div>
+              <pre dir="auto">Ich freue mich darauf, meinen Freund in der Stadt zu haben</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 14, 2024 02:10:52</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+            <div class="msg-reactions">
+              <div class="msg-reaction"><span class="msg-emoji">❤️</span><div class="msg-reaction-info">From: bast<br>Sent: 2024-08-14 02:13:27<br>Received: 2024-08-14 02:13:27</div></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122204,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">Wǎnshàng hǎo</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 14, 2024 02:11:13</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122205,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming msg-with-reaction">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">Wǒ hěn qídài wǒ de péngyǒu lái chéng lǐ</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 14, 2024 02:11:55</span>
+              </div>
+              <div class="msg-reactions">
+                <div class="msg-reaction"><span class="msg-emoji">👍</span><div class="msg-reaction-info">From: bast<br>Sent: 2024-08-14 02:13:40<br>Received: 2024-08-14 02:13:40</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122206,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">Vengo a visitare Montreal, posso venire a prendere all&apos;aeroporto?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 14, 2024 02:14:35</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122207,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">Hoe laat kom je aan?</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 14, 2024 02:15:47</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122208,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">Arriverò alle 7 di sabato</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 14, 2024 03:28:36</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122209,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">7am</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 14, 2024 03:28:56</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122210,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">also does anyone volunteer to shelter me ? ben said he could host me but i wouldn’t mind doing the grand tour of the apartments</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 14, 2024 03:31:07</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122211,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">That’s what I would do if I were you</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 14, 2024 04:06:28</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122212,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">Daniel works days and I work night so we can pass you around</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 14, 2024 04:06:45</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="msg msg-date-change">
+            <p>
+              Aug 16, 2024
+            </p>
+          </div>
+
+          <!-- Message: _id:122213,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">yo erik where are you planning on staying for the first night or two while ur here? ive got a decent living room but i wanna know in case ben needs the air mattress</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 16, 2024 03:01:12</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122214,type:10485783 -->
+          <a id="122214"></a>
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">also i think 7am is too early for me to grab u from the airport but the bell and i have done the bus + metro and its pretty good</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 16, 2024 03:01:59</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122215,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">and in case u need it here are the boys addresses:
+Me and Bell - 4805 Rue Chabot
+
+Ben - 158 Rue de Varennes
+
+Caelan - 7026 Av de L’Épée
+
+Tristan and Bronwyn - 3020 Av Barclay
+
+Alex and Franc - 3880 Av Linton</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 16, 2024 03:04:35</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122216,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div class="msg-quote">
+                <a class="quote-link" href="#122214">
+                  <div class="msg-quote-message">
+                    <div class="msg-name">
+                      <div class="membername">Daniel</div>
+                    </div>
+                    <pre dir="auto">also i think 7am is too early for me to grab u from the airport but the bell and i have done the bus + metro and its pretty good</pre>
+                  </div>
+                  </a>
+              </div>
+              <div>
+                <pre dir="auto">sure thing no worries</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 16, 2024 03:46:04</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122217,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">maybe i’ll head to yours first dan, if that’s alright? just cause you work during the week</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 16, 2024 03:46:51</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122218,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">yeah man sounds good. i’ll make u a latte and show ya the neighbourhood</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 16, 2024 11:32:25</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122219,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming no-bg-bubble">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div class="msg-all-emoji">
+                <pre dir="auto"><span class="msg-emoji">😋</span></pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 16, 2024 15:47:51</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122220,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">excellent, i’ll let you know once i’m on my way</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 16, 2024 15:48:11</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122221,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">wait did you get in today or are u getting in tomorrow?</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 16, 2024 15:49:27</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122222,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">i’m flying out at like midnight today, still in bc</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 16, 2024 15:49:52</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122223,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">oh right. hope u get some sleep on the flight</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 16, 2024 15:50:14</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122224,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">thanks <span class="msg-emoji">🙏🏻</span></pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 16, 2024 15:50:35</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="msg msg-date-change">
+            <p>
+              Aug 17, 2024
+            </p>
+          </div>
+
+          <!-- Message: _id:122225,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">on my way into town <span class="mention-in">@Daniel</span> should be at yours a little after 9</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 17, 2024 12:17:03</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122226,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Whats the plan for today fellas</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 17, 2024 17:11:10</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122227,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">I have a few things i need to get done but i’ll be in the beaubien area in the evening if yall wanna meet up before the film</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 17, 2024 17:13:11</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122228,type:11075606 -->
+          <div class="msg msg-status">
+            <div class="status-text">
+              <pre dir="auto"><span class="msg-member-add-icon"></span>You added Tristan.</pre>
+            </div>
+            <div class="footer-status">
+              <span class="msg-data">Aug 17, 2024 21:21:37</span>
+            </div>
+          </div>
+
+          <!-- Message: _id:122229,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto"><span class="mention-in">@Ben</span> what was the name of that lil mexican place you were talking aboyarte earlier</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 17, 2024 21:21:49</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122230,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Sabor Latino probably</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 17, 2024 21:22:43</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="msg msg-date-change">
+            <p>
+              Aug 18, 2024
+            </p>
+          </div>
+
+          <!-- Message: _id:122231,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming no-bg-bubble">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div class="msg-all-emoji">
+                <pre dir="auto"><span class="msg-emoji">☝️</span></pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 18, 2024 15:02:45</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122232,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1">
+            <div class="attachment">
+              <div class="msg-img-container">
+                <input type="checkbox" id="zoomCheck-21660--1">
+                <label for="zoomCheck-21660--1">
+                  <img src="media/Attachment_21660_-1.jpg" alt="Image attachment">
+                </label>
+              </div>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 18, 2024 15:55:59</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122233,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1 msg-with-reaction">
+            <div>
+              <pre dir="auto">sabor latino for lunch?</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 18, 2024 15:56:08</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+            <div class="msg-reactions">
+              <div class="msg-reaction"><span class="msg-emoji">👍</span><div class="msg-reaction-info">From: bast<br>Sent: 2024-08-18 16:36:24<br>Received: 2024-08-18 16:36:24</div></div>
+            </div>
+          </div>
+
+          <div class="msg msg-date-change">
+            <p>
+              Aug 19, 2024
+            </p>
+          </div>
+
+          <!-- Message: _id:122234,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">Are y’all doin anything today?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 16:55:12</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122235,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">My coworker offered to take my shift</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 16:55:22</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122236,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Cinestarz?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 16:55:35</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122237,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Bronwyn had her reading but its supposed to rain all day so i think cozymaxing is the move</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 16:56:38</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122238,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">Oh true</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 16:56:38</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122239,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Could do boigas at my place and then go there</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 16:56:56</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122240,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">Wait so you’re not going to Bronwyn’s thing?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 16:57:14</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122241,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Were u tryna go?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 17:03:05</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122242,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">i still wanted to go to poetry zone if it’s not canceled</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 17:04:46</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122243,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">i think there wouldn’t be any overlap if we go to the 9:45 showing of alien</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 17:05:14</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122244,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Word true</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 17:05:48</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122245,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Whats dan’s vibe</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 17:05:51</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122246,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming msg-with-reaction">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">dan has similar perspective</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 17:06:17</span>
+              </div>
+              <div class="msg-reactions">
+                <div class="msg-reaction"><span class="msg-emoji">👍</span><div class="msg-reaction-info">From: Daniel<br>Sent: 2024-08-19 17:11:51<br>Received: 2024-08-19 17:11:51</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122247,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Dope</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 17:43:39</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122248,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-2 convo-avatar msg-sender-2"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-2">
+                <div class="membername">Tristan</div>
+              </div>
+              <div>
+                <pre dir="auto">I don’t think it’s gonna be cancelled, and it’s gonna be in that park where you can be under the van horne overpass so everyone should be dry , but no pressure if things don’t work out</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 19:31:20</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122249,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">What time was it again?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 19:31:42</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122250,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-2 convo-avatar msg-sender-2"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-2">
+                <div class="membername">Tristan</div>
+              </div>
+              <div>
+                <pre dir="auto">starts at 8, don’t know how long it will go but you could always leave early</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 19:32:57</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122251,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Wordie</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 19:35:17</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122252,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Do you guys wanna link a bit before? <span class="mention-in">@Ben</span> <span class="mention-in">@Daniel</span> <span class="mention-in">@bast</span></pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 19:35:47</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122253,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">im down</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 19, 2024 20:06:05</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122254,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">gotta make dinner first though</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 19, 2024 20:06:16</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122255,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">I’ll probably just meet y’all there</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 19, 2024 23:24:53</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="msg msg-date-change">
+            <p>
+              Aug 20, 2024
+            </p>
+          </div>
+
+          <!-- Message: _id:122256,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Fuck dude i laid down for a sec and only just woke up</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 20, 2024 00:03:35</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122257,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Guess i wont make it but pls give bronwyn and everyone else my regards</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 20, 2024 00:03:52</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122258,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Lmj if yall still wanna catch the flick later</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 20, 2024 00:06:48</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122259,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-2 convo-avatar msg-sender-2"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-2">
+                <div class="membername">Tristan</div>
+              </div>
+              <div>
+                <pre dir="auto">did you guys have any plans for tonight? i pretty much grogged all day</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 20, 2024 22:51:24</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122260,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">we’re grabbing burgs wanna come with?</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 20, 2024 23:07:11</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122261,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-2 convo-avatar msg-sender-2"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-2">
+                <div class="membername">Tristan</div>
+              </div>
+              <div>
+                <pre dir="auto">shit i just bought stuff to make dinner, any plans afterwards?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 20, 2024 23:33:15</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="msg msg-date-change">
+            <p>
+              Aug 21, 2024
+            </p>
+          </div>
+
+          <!-- Message: _id:122262,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1 msg-with-reaction">
+            <div>
+              <pre dir="auto">ur mom</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 21, 2024 00:17:05</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+            <div class="msg-reactions">
+              <div class="msg-reaction"><span class="msg-emoji">😢</span><div class="msg-reaction-info">From: Tristan<br>Sent: 2024-08-21 00:29:03<br>Received: 2024-08-21 00:29:03</div></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122263,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">Daniel wtf</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 21, 2024 00:17:40</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122264,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-2 convo-avatar msg-sender-2"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-2">
+                <div class="membername">Tristan</div>
+              </div>
+              <div>
+                <pre dir="auto">bro…</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 21, 2024 00:29:14</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122265,type:10485783 -->
+          <a id="122265"></a>
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">ben typed this message</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 21, 2024 00:53:27</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122266,type:10485783 -->
+          <a id="122266"></a>
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">also i dont think i am doing anything after cuz i gotta work but we’re thinking fleurs tomorrow</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 21, 2024 00:53:49</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122267,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div class="msg-quote">
+                <a class="quote-link" href="#122265">
+                  <div class="msg-quote-message">
+                    <div class="msg-name">
+                      <div class="membername">Daniel</div>
+                    </div>
+                    <pre dir="auto">ben typed this message</pre>
+                  </div>
+                  </a>
+              </div>
+              <div>
+                <pre dir="auto">Horse shit</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 21, 2024 00:54:01</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122268,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div class="msg-quote">
+                <a class="quote-link" href="#122266">
+                  <div class="msg-quote-message">
+                    <div class="msg-name">
+                      <div class="membername">Daniel</div>
+                    </div>
+                    <pre dir="auto">also i dont think i am doing anything after cuz i gotta work but we’re thinking fleurs tomorrow</pre>
+                  </div>
+                  </a>
+              </div>
+              <div>
+                <pre dir="auto">No Thursday</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 21, 2024 00:54:15</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122269,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-2 convo-avatar msg-sender-2"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-2">
+                <div class="membername">Tristan</div>
+              </div>
+              <div>
+                <pre dir="auto">can we do bowling tonight?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 21, 2024 14:47:14</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122270,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">we might be able too if it’s later on in the night, me and alex have a pretty packed schedule today</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 21, 2024 14:59:53</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122271,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">You should come to the oratory w us tristan</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 21, 2024 15:00:30</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122272,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-2 convo-avatar msg-sender-2"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-2">
+                <div class="membername">Tristan</div>
+              </div>
+              <div>
+                <pre dir="auto">I’d be down, what time are you guys going at?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 21, 2024 15:04:55</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122273,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Probably around like 6-7ish?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 21, 2024 15:26:12</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122274,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-2 convo-avatar msg-sender-2"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-2">
+                <div class="membername">Tristan</div>
+              </div>
+              <div>
+                <pre dir="auto">okay i’m definitely down</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 21, 2024 15:27:36</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122275,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-2 convo-avatar msg-sender-2"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-2">
+                <div class="membername">Tristan</div>
+              </div>
+              <div>
+                <pre dir="auto">would you guys want to grab first, maybe hit up Le Kebab?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 21, 2024 15:27:54</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122276,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto"><span class="mention-in">@Tristan</span> we are like five mins away</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 21, 2024 23:33:29</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="msg msg-date-change">
+            <p>
+              Aug 22, 2024
+            </p>
+          </div>
+
+          <!-- Message: _id:122277,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">Where y’all at?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 22, 2024 03:21:35</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122278,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">went our separate ways, i’m back at yours</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 22, 2024 03:22:20</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122279,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">Are you having fun?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 22, 2024 03:22:37</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122280,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">i’m having fun :)</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 22, 2024 03:24:08</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122281,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">are you just getting off work ?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 22, 2024 03:24:22</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122282,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">Just finished my staff meal gonna hop on a bixi</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 22, 2024 03:24:37</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122283,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">okie dokie</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 22, 2024 03:24:59</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="msg msg-date-change">
+            <p>
+              Aug 23, 2024
+            </p>
+          </div>
+
+          <!-- Message: _id:122284,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">Yo it’s Erik’s last day</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:01:11</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122285,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">I’m working at 4</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:01:17</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122286,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">Boolers assemble</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:01:33</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122287,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">I texted but he no answer :[</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:01:47</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122288,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">yo</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:02:15</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122289,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Yo dude u see my text?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:02:24</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122290,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Whats ur voibe</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:02:30</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122291,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">yeah i just saw it</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:02:32</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122292,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Also what time do you fly out tomo?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:02:42</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122293,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">i fly out at 8am tomorrow</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:02:55</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122294,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Oh shiza</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:03:01</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122295,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">yeah i don’t think i’m down to squeeze a micro hang between your appointments i was just going to explore the city a lil on my own but maybe we could do something low key in the evening</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:07:48</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122296,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">The thing is we’re doing a dinner with a crew at 6 and then just drinking and hanging till the show :(</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:08:29</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122297,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">But i was thinking if you went to old port with ben on his way to work i could dip out of ssense and hang with ya for a couple hrs before i head back home to get ready</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:08:59</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122298,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Maybe hit notre dame or something?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:09:21</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122299,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Grab a bite to eat idk</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:09:27</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122300,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Could roll us a wee little spliff with the sprinkle of weed i got left too</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:12:33</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122301,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Lmk we’re about to head over should be there by 3</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:12:44</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122302,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">hmm i was gonna go to the museum for architecture but it’s quite out of the way of old port</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:18:30</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122303,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">maybe i could go with ben, hit the notre dame and go there afterwards?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:19:43</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122304,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Shiet yeah its a little far from there i’ll have to play it by ear just can’t be late</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:22:46</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122305,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Basically have like 2 hours or so</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 18:24:51</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122306,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-2 convo-avatar msg-sender-2"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-2">
+                <div class="membername">Tristan</div>
+              </div>
+              <div class="msg-quote">
+                <div class="msg-quote-message">
+                  <div class="msg-name">
+                    <div class="membername">Alex</div>
+                  </div>
+                  <pre dir="auto">But i was thinking if you went to old port with ben on his way to work i could dip out of ssense and hang with ya for a couple hrs before i head back home to get ready</pre>
+                </div>
+              </div>
+              <div>
+                <pre dir="auto">are you working at ssense?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 19:31:50</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122307,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Nah lol</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 19:32:03</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122308,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div class="attachment">
+                <div class="msg-img-container">
+                  <input type="checkbox" id="zoomCheck-21661--1">
+                  <label for="zoomCheck-21661--1">
+                    <img src="media/Attachment_21661_-1.jpg" alt="Image attachment">
+                  </label>
+                </div>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 19:32:11</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122309,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Just chilling with these fellas while they try shit on</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 19:32:23</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122310,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">But i can dip out at any moment just let me know <span class="mention-in">@bast</span></pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 19:32:42</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122311,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Super close to place d’armes as well</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 19:32:48</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122312,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">No pressure obviously</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 19:32:56</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122313,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">yeah i don’t think we’ll line up unfortunately we’re just getting ready and are gonna go to the architecture center then drop ben off at work</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 19:33:49</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122314,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Damn<span class="msg-emoji">😔</span></pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 19:34:18</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122315,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Sorry brotha</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 19:34:23</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122316,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">I’ll get a feel for whats up once we leave here give u a call or smth and see where you’re at</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 19:34:59</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122317,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">No worries bro, we’ll see what works if possible but no pressure</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 19:47:25</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122318,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">So you’re headed to the arch museum rn?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 19:47:44</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122319,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">yo erik do u feel like grabbing some ice cream tonight?</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 23, 2024 22:52:05</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122320,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">sure bro</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 22:52:32</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122321,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">just made my way back from downtown so i wanna rest a little bit but after that i’m down, what time were you thinking ?</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 22:53:25</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122322,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">i was thinking like 9</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 23, 2024 22:53:38</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122323,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">sounds good to me <span class="msg-emoji">👍🏻</span></pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 22:53:58</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122324,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1 msg-with-reaction">
+            <div>
+              <pre dir="auto">sweet. i was thinking Cremerie Bo-Bec if youre down, theyre close to mine and open till 10 and theres a chill park nearby</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 23, 2024 22:54:49</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+            <div class="msg-reactions">
+              <div class="msg-reaction"><span class="msg-emoji">👍</span><div class="msg-reaction-info">From: bast<br>Sent: 2024-08-23 23:18:26<br>Received: 2024-08-23 23:18:26</div></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122325,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-2 convo-avatar msg-sender-2"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-2">
+                <div class="membername">Tristan</div>
+              </div>
+              <div>
+                <pre dir="auto">i’ll try and be there!</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 23, 2024 23:38:04</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122326,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">hell yeah</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 23, 2024 23:39:02</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <div class="msg msg-date-change">
+            <p>
+              Aug 24, 2024
+            </p>
+          </div>
+
+          <!-- Message: _id:122327,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">you guys still good for 9 to meet there?</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 24, 2024 00:39:37</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122328,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">yup</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 24, 2024 00:39:47</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122329,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-2 convo-avatar msg-sender-2"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-2">
+                <div class="membername">Tristan</div>
+              </div>
+              <div>
+                <pre dir="auto">i’ll be there a little after 9 if that’s okay</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 24, 2024 00:40:52</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122330,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1 msg-with-reaction">
+            <div>
+              <pre dir="auto">thats all good. i dont mind waiting</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 24, 2024 00:41:09</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+            <div class="msg-reactions">
+              <div class="msg-reaction"><span class="msg-emoji">❤️</span><div class="msg-reaction-info">From: Tristan<br>Sent: 2024-08-24 00:41:39<br>Received: 2024-08-24 00:41:39</div></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122331,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">yeah i’m just leaving now</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 24, 2024 00:41:42</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122332,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-2 convo-avatar msg-sender-2"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-2">
+                <div class="membername">Tristan</div>
+              </div>
+              <div>
+                <pre dir="auto">just got here</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 24, 2024 01:10:14</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122333,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-2 convo-avatar msg-sender-2"></div>
+            <div class="msg msg-incoming msg-with-reaction">
+              <div class="msg-name msg-name-2">
+                <div class="membername">Tristan</div>
+              </div>
+              <div class="attachment">
+                <div class="msg-img-container">
+                  <input type="checkbox" id="zoomCheck-21662--1">
+                  <label for="zoomCheck-21662--1">
+                    <img src="media/Attachment_21662_-1.jpg" alt="Image attachment">
+                  </label>
+                </div>
+              </div>
+              <div>
+                <pre dir="auto">look at these two cool guys <span class="msg-emoji">😎</span></pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 24, 2024 20:03:30</span>
+              </div>
+              <div class="msg-reactions">
+                <div class="msg-reaction"><span class="msg-emoji">❤️</span><span class="reaction-count">2</span><div class="msg-reaction-info">From: Daniel<br>Sent: 2024-08-24 20:04:09<br>Received: 2024-08-24 20:04:09<hr>From: bast<br>Sent: 2024-08-24 20:05:34<br>Received: 2024-08-24 20:05:34</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122334,type:10485783 -->
+          <div class="msg msg-outgoing msg-sender-1">
+            <div>
+              <pre dir="auto">this is great man. makes me miss my friend erik</pre>
+            </div>
+            <div class="footer">
+              <span class="msg-data">Aug 24, 2024 20:04:34</span>
+              <div class="footer-icons checkmarks-read"></div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122335,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming msg-with-reaction">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">just made it back home</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 24, 2024 20:05:46</span>
+              </div>
+              <div class="msg-reactions">
+                <div class="msg-reaction"><span class="msg-emoji">❤️</span><span class="reaction-count">2</span><div class="msg-reaction-info">From: Daniel<br>Sent: 2024-08-24 20:06:27<br>Received: 2024-08-24 20:06:27<hr>From: Ben<br>Sent: 2024-08-24 20:26:01<br>Received: 2024-08-24 20:26:01</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122336,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-9 convo-avatar msg-sender-9"></div>
+            <div class="msg msg-incoming msg-with-reaction">
+              <div class="msg-name msg-name-9">
+                <div class="membername">bast</div>
+              </div>
+              <div>
+                <pre dir="auto">was a wonderful time bros, thanks for taking the time to show me the city</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 24, 2024 20:06:10</span>
+              </div>
+              <div class="msg-reactions">
+                <div class="msg-reaction"><span class="msg-emoji">❤️</span><span class="reaction-count">2</span><div class="msg-reaction-info">From: Ben<br>Sent: 2024-08-24 20:26:04<br>Received: 2024-08-24 20:26:04<hr>From: Alex<br>Sent: 2024-08-24 20:06:47<br>Received: 2024-08-24 20:06:47</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122337,type:10485780 -->
+          <a id="122337"></a>
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-8 convo-avatar msg-sender-8"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-8">
+                <div class="membername">Ben</div>
+              </div>
+              <div>
+                <pre dir="auto">It was lovely having you king</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 24, 2024 20:26:12</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122338,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div class="msg-quote">
+                <a class="quote-link" href="#122337">
+                  <div class="msg-quote-message">
+                    <div class="msg-name">
+                      <div class="membername">Ben</div>
+                    </div>
+                    <pre dir="auto">It was lovely having you king</pre>
+                  </div>
+                  </a>
+              </div>
+              <div>
+                <pre dir="auto">^^^^</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 24, 2024 21:18:53</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Message: _id:122339,type:10485780 -->
+          <div class="incoming-group-msg">
+            <div class="avatar avatar-14 convo-avatar msg-sender-14"></div>
+            <div class="msg msg-incoming">
+              <div class="msg-name msg-name-14">
+                <div class="membername">Alex</div>
+              </div>
+              <div>
+                <pre dir="auto">Come again soon brother</pre>
+              </div>
+              <div class="footer">
+                <span class="msg-data">Aug 24, 2024 21:18:58</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="msg msg-date-change">
+            <p>
+              Jan 28, 2025
+            </p>
+          </div>
+
+          <!-- Message: _id:122340,type:2097684 -->
+          <div class="msg msg-status">
+            <div class="status-text">
+              <pre dir="auto"><span class="msg-security-icon"></span>Your safety number with Ben has changed.</pre>
+            </div>
+            <div class="footer-status">
+              <span class="msg-data">Jan 28, 2025 20:28:05</span>
+            </div>
+          </div>
+
+          <!-- Message: _id:122341,type:10493974 -->
+          <div class="msg msg-status">
+            <div class="status-text">
+              <pre dir="auto"><span class="msg-info-icon"></span>You marked your safety number with Ben unverified</pre>
+            </div>
+            <div class="footer-status">
+              <span class="msg-data">Jan 28, 2025 20:28:57</span>
+            </div>
+          </div>
+
+          <div class="msg msg-date-change">
+            <p>
+              Feb 06, 2025
+            </p>
+          </div>
+
+          <!-- Message: _id:122342,type:10502166 -->
+          <div class="msg msg-status">
+            <div class="status-text">
+              <pre dir="auto"><span class="msg-checkmark"></span>You marked your safety number with Ben verified</pre>
+            </div>
+            <div class="footer-status">
+              <span class="msg-data">Feb 06, 2025 03:06:38</span>
+            </div>
+          </div>
+
+          <div class="msg msg-date-change">
+            <p>
+              May 18, 2025
+            </p>
+          </div>
+
+          <!-- Message: _id:122343,type:2097684 -->
+          <div class="msg msg-status">
+            <div class="status-text">
+              <pre dir="auto"><span class="msg-security-icon"></span>Your safety number with Tristan has changed.</pre>
+            </div>
+            <div class="footer-status">
+              <span class="msg-data">May 18, 2025 07:41:30</span>
+            </div>
+          </div>
+
+          <!-- Message: _id:122344,type:10502166 -->
+          <div class="msg msg-status">
+            <div class="status-text">
+              <pre dir="auto"><span class="msg-checkmark"></span>You marked your safety number with Tristan verified</pre>
+            </div>
+            <div class="footer-status">
+              <span class="msg-data">May 18, 2025 18:05:30</span>
+            </div>
+          </div>
+
+        </div>
+        <a id="pagebottom"></a>
+      </div>
+
+     </div>
+
+       <div id="bottom">
+         <a href="#pagebottom" title="Jump to bottom">
+           <div class="menu-item-bottom">
+             <span class="menu-icon nav-one nav-bottom">
+             </span>
+           </div>
+         </a>
+      </div>
+      <div id="menu">
+        <a href="../index.html">
+          <div class="menu-item">
+            <div class="menu-icon nav-up">
+            </div>
+            <div>
+              index
+            </div>
+          </div>
+        </a>
+      </div>
+
+  </div>
+  </body>
+</html>
