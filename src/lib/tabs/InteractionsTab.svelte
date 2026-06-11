@@ -60,13 +60,12 @@
     export let active: boolean;
     export let filterSignature: string;
     export let currentFilterParams: () => URLSearchParams;
+    export let topLimit: number = 10;
     export let openInContext: (messageId: string) => void;
     export let resolveReactionImage: (
         sourceName: string,
         imageUrl: string | null,
     ) => string | null;
-
-    const MENTION_LIMIT = 20;
     const EMPTY_BUCKET: MemberEventBucket = {
         by_actor: [],
         by_target: [],
@@ -89,7 +88,7 @@
               item.mention.includes(normalizedMentionSearch),
           )
         : mostMentioned;
-    $: visibleMentions = filteredMentions.slice(0, MENTION_LIMIT);
+    $: visibleMentions = filteredMentions.slice(0, topLimit);
 
     async function loadData() {
         const filterKey = currentFilterParams().toString();
@@ -101,13 +100,15 @@
             const mentionsParams = new URLSearchParams(baseParams);
             mentionsParams.set("limit", "200");
             const reactedParams = new URLSearchParams(baseParams);
-            reactedParams.set("limit", "6");
+            reactedParams.set("limit", String(topLimit));
             const authorsParams = new URLSearchParams(baseParams);
-            authorsParams.set("limit", "15");
+            authorsParams.set("limit", String(topLimit));
             const removedParams = new URLSearchParams(baseParams);
             removedParams.set("kind", "removed");
+            removedParams.set("limit", String(topLimit));
             const leftParams = new URLSearchParams(baseParams);
             leftParams.set("kind", "left");
+            leftParams.set("limit", String(topLimit));
             const [mentions, reactedMessages, authors, removedResp, leftResp] =
                 await Promise.all([
                     fetchJson<{

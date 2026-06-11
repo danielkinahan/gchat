@@ -2673,6 +2673,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     @app.get("/api/member-events")
     def member_events(
         kind: str | None = Query(default=None, pattern="^(added|removed|left)$"),
+        limit: int = Query(default=10, ge=1, le=100),
         start: date | None = Query(default=None, alias="from"),
         end: date | None = Query(default=None, alias="to"),
         people: str | None = None,
@@ -2759,8 +2760,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 WHERE {where} AND e.actor_person_id IS NOT NULL
                 GROUP BY p.id, p.display_name, p.color
                 ORDER BY count DESC, p.display_name
+                LIMIT ?
                 """,
-                params,
+                [*params, limit],
             ).fetchall()
             by_target_rows = con.execute(
                 f"""
@@ -2773,8 +2775,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 WHERE {where}
                 GROUP BY p.id, p.display_name, p.color
                 ORDER BY count DESC, p.display_name
+                LIMIT ?
                 """,
-                params,
+                [*params, limit],
             ).fetchall()
             by_chat_rows = con.execute(
                 f"""
@@ -2786,16 +2789,26 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 WHERE {where}
                 GROUP BY c.id, c.name, s.name, s.platform
                 ORDER BY count DESC, c.name
+                LIMIT ?
                 """,
-                params,
+                [*params, limit],
             ).fetchall()
+
+        def _person_display(name: Any) -> str:
+            text = "" if name is None else str(name)
+            if (
+                _normalized_history_name(text) == "you"
+                and app.state.primary_person_name
+            ):
+                return app.state.primary_person_name
+            return text
 
         return {
             "kind": kind,
             "by_actor": [
                 {
                     "id": int(row[0]),
-                    "display_name": row[1],
+                    "display_name": _person_display(row[1]),
                     "color": row[2],
                     "count": int(row[3]),
                 }
@@ -2804,7 +2817,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             "by_target": [
                 {
                     "id": int(row[0]),
-                    "display_name": row[1],
+                    "display_name": _person_display(row[1]),
                     "color": row[2],
                     "count": int(row[3]),
                 }

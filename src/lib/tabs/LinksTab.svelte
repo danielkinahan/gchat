@@ -19,9 +19,8 @@
     export let active: boolean;
     export let filterSignature: string;
     export let currentFilterParams: () => URLSearchParams;
+    export let topLimit: number = 10;
     export let openInContext: (messageId: string) => void;
-
-    const DOMAIN_LIMIT = 20;
 
     let isLoading = false;
     let error = "";
@@ -50,7 +49,7 @@
               item.domain.includes(normalizedDomainSearch),
           )
         : linkedDomains;
-    $: visibleDomains = filteredDomains.slice(0, DOMAIN_LIMIT);
+    $: visibleDomains = filteredDomains.slice(0, topLimit);
 
     async function loadLinksData() {
         const filterKey = currentFilterParams().toString();
@@ -62,7 +61,7 @@
             const domainsParams = new URLSearchParams(baseParams);
             domainsParams.set("limit", "200");
             const authorsParams = new URLSearchParams(baseParams);
-            authorsParams.set("limit", "15");
+            authorsParams.set("limit", String(topLimit));
             const [domains, authors] = await Promise.all([
                 fetchJson<{ items: Array<{ domain: string; count: number }> }>(
                     `/api/linked-domains?${domainsParams.toString()}`,

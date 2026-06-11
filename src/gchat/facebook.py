@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -354,6 +354,21 @@ def _looks_like_reaction_message(text: str) -> bool:
     return _is_emoji_only(normalized)
 
 
+def _merge_emoji_into_summary(summary: str | None, emoji: str) -> str:
+    counts: Counter[str] = Counter()
+    if summary:
+        for token in summary.split():
+            if "×" not in token:
+                continue
+            key, _, value = token.partition("×")
+            try:
+                counts[key] += int(value)
+            except ValueError:
+                continue
+    counts[emoji] += 1
+    return " ".join(f"{token}×{count}" for token, count in counts.most_common())
+
+
 def _timestamp_from_children(children) -> datetime | None:
     for child in reversed(children):
         text = _text(child)
@@ -377,6 +392,7 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
     people_by_key: dict[str, PersonSeed] = {}
     alias_to_raw_id: dict[str, str] = {}
     messages: list[MessageSeed] = []
+    message_event_indices: list[int] = []
     seen_message_ids: set[str] = set()
     rename_events: list[tuple[datetime, int, str, str | None, str | None]] = []
     nickname_events: list[tuple[datetime, int, str, str, str | None, str | None, bool]] = []
@@ -483,8 +499,6 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
             if message_id in seen_message_ids:
                 continue
             seen_message_ids.add(message_id)
-            if not reaction_count and _looks_like_reaction_message(content):
-                reaction_count = 1
             messages.append(
                 MessageSeed(
                     id=message_id,
@@ -501,6 +515,52 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
                     reaction_summary=reaction_summary,
                 )
             )
+            message_event_indices.append(event_index)
+
+    # Facebook DYI exports list messages newest-first within each file and event_index
+    # increments in that iteration order. Sort chronologically (ts ASC, event_index DESC)
+    # so we can (a) attribute "main-emoji reaction messages" to the preceding chronological
+    # message, and (b) assign deterministic sub-minute microseconds for in-minute ordering,
+    # since FB timestamps only have minute precision.
+    indexed_messages = sorted(
+        zip(message_event_indices, messages),
+        key=lambda pair: (pair[1].ts, -pair[0]),
+    )
+    folded: list[MessageSeed] = []
+    last_message_idx: int | None = None
+    for _, msg in indexed_messages:
+        if (
+            last_message_idx is not None
+            and _looks_like_reaction_message(msg.content)
+        ):
+            target = folded[last_message_idx]
+            emoji = normalize_whitespace(msg.content)
+            folded[last_message_idx] = replace(
+                target,
+                reaction_count=target.reaction_count + 1,
+                reaction_summary=_merge_emoji_into_summary(
+                    target.reaction_summary, emoji
+                ),
+            )
+            continue
+        folded.append(msg)
+        last_message_idx = len(folded) - 1
+
+    processed: list[MessageSeed] = []
+    prev_minute: datetime | None = None
+    minute_counter = 0
+    for msg in folded:
+        minute_key = msg.ts.replace(second=0, microsecond=0)
+        if minute_key != prev_minute:
+            minute_counter = 0
+            prev_minute = minute_key
+        if minute_counter < 1_000_000:
+            adjusted = msg.ts.replace(microsecond=minute_counter)
+        else:
+            adjusted = msg.ts
+        processed.append(replace(msg, ts=adjusted))
+        minute_counter += 1
+    messages = processed
 
     name_changes: list[NameChangeSeed] = []
     last_name: str | None = None

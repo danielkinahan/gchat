@@ -164,6 +164,7 @@
         ? data.filters.platforms.split(",")
         : [];
     let selectedYear: number | null = selectedYearFromRange(fromDate, toDate);
+    let topLimit = 10;
     let activeTab:
         | "overview"
         | "language"
@@ -320,6 +321,7 @@
         selectedPeople.join(","),
         selectedThemes.join(","),
         selectedPlatforms.join(","),
+        String(topLimit),
     ].join("|");
 
     $: runtimeState = data.runtimeState;
@@ -556,6 +558,29 @@
             </fieldset>
         </div>
 
+        <div class="filter-group filter-card filter-card-compact">
+            <fieldset class="date-range-fieldset">
+                <legend>
+                    <span>Top N</span>
+                    <small>{topLimit}</small>
+                </legend>
+                <input
+                    type="number"
+                    class="top-limit-input"
+                    min="1"
+                    max="100"
+                    bind:value={topLimit}
+                    on:change={() => {
+                        if (!Number.isFinite(topLimit) || topLimit < 1) {
+                            topLimit = 1;
+                        } else if (topLimit > 100) {
+                            topLimit = 100;
+                        }
+                    }}
+                />
+            </fieldset>
+        </div>
+
         <div class="filter-group filter-card">
             <fieldset class="date-range-fieldset">
                 <legend>
@@ -620,6 +645,7 @@
         active={activeTab === "overview"}
         {filterSignature}
         {currentFilterParams}
+        {topLimit}
         baseData={{
             overview: data.overview,
             topPeople: data.topPeople,
@@ -638,6 +664,7 @@
         active={activeTab === "language"}
         {filterSignature}
         {currentFilterParams}
+        {topLimit}
         {openInContext}
     />
 
@@ -645,6 +672,7 @@
         active={activeTab === "links"}
         {filterSignature}
         {currentFilterParams}
+        {topLimit}
         {openInContext}
     />
 
@@ -652,6 +680,7 @@
         active={activeTab === "interactions"}
         {filterSignature}
         {currentFilterParams}
+        {topLimit}
         {openInContext}
         resolveReactionImage={toReactionImageUrl}
     />

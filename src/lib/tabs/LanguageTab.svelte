@@ -35,6 +35,7 @@
     export let active: boolean;
     export let filterSignature: string;
     export let currentFilterParams: () => URLSearchParams;
+    export let topLimit: number = 10;
     export let openInContext: (messageId: string) => void;
 
     const WORD_LIST_LIMIT = 500;
@@ -58,7 +59,7 @@
     $: filteredWords = normalizedWordSearch
         ? topWords.filter((item) => item.word.includes(normalizedWordSearch))
         : topWords;
-    $: visibleWords = filteredWords.slice(0, WORD_LIST_LIMIT);
+    $: visibleWords = filteredWords.slice(0, topLimit);
 
     function maxCount(items: Array<{ count: number }>): number {
         return Math.max(...items.map((item) => item.count || 0), 1);
@@ -104,7 +105,7 @@
         try {
             const params = currentFilterParams();
             params.set("word", word);
-            params.set("limit", "12");
+            params.set("limit", String(topLimit));
             wordBreakdown = await fetchJson<WordBreakdown>(
                 `/api/word-breakdown?${params.toString()}`,
             );

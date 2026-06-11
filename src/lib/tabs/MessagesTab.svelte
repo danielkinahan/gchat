@@ -47,6 +47,7 @@
     export let active: boolean;
     export let filterSignature: string;
     export let currentFilterParams: () => URLSearchParams;
+    export let topLimit: number = 10;
     export let baseData: {
         overview: Overview;
         topPeople: TopPeople;
@@ -110,6 +111,16 @@
     let conversationMetricRequestId = 0;
     let loadedConversationMetricFilterKey: string | null = null;
 
+    type MessagesTopOverride = {
+        topPeople: TopPeople;
+        topChats: MessageTabData["topChats"];
+        topThemes: MessageTabData["topThemes"];
+    };
+    let messagesTopOverride: MessagesTopOverride | null = null;
+    let messagesTopOverrideKey: string | null = null;
+    let isLoadingMessagesTop = false;
+    let messagesTopRequestId = 0;
+
     function messageCountLabel(metric: CountMetric): string {
         if (metric === "words") return "words";
         if (metric === "conversations") return "conversations";
@@ -139,7 +150,9 @@
             topThemes,
         ] = await Promise.all([
             fetchJson<Overview>(`/api/overview?${query}`),
-            fetchJson<TopPeople>(`/api/top-people?limit=10&${query}`),
+            fetchJson<TopPeople>(
+                `/api/top-people?limit=${topLimit}&${query}`,
+            ),
             fetchJson<{
                 points: Array<{ day: string; message_count: number }>;
             }>(`/api/calendar?${query}`),
@@ -163,14 +176,14 @@
                     theme_name: string;
                     message_count: number;
                 }>;
-            }>(`/api/top-chats?limit=15&${query}`),
+            }>(`/api/top-chats?limit=${topLimit}&${query}`),
             fetchJson<{
                 items: Array<{
                     id: number;
                     name: string;
                     message_count: number;
                 }>;
-            }>(`/api/top-themes?limit=15&${query}`),
+            }>(`/api/top-themes?limit=${topLimit}&${query}`),
         ]);
         return {
             overview,
@@ -284,16 +297,60 @@
         void loadConversationMetricData();
     }
 
+    async function loadMessagesTopOverride() {
+        const filterKey = filterSignature;
+        if (
+            isLoadingMessagesTop ||
+            messagesTopOverrideKey === filterKey
+        )
+            return;
+        isLoadingMessagesTop = true;
+        const requestId = ++messagesTopRequestId;
+        try {
+            const baseParams = currentFilterParams();
+            const query = baseParams.toString();
+            const [topPeople, topChats, topThemes] = await Promise.all([
+                fetchJson<TopPeople>(
+                    `/api/top-people?limit=${topLimit}&${query}`,
+                ),
+                fetchJson<MessageTabData["topChats"]>(
+                    `/api/top-chats?limit=${topLimit}&${query}`,
+                ),
+                fetchJson<MessageTabData["topThemes"]>(
+                    `/api/top-themes?limit=${topLimit}&${query}`,
+                ),
+            ]);
+            if (requestId !== messagesTopRequestId) return;
+            messagesTopOverride = { topPeople, topChats, topThemes };
+            messagesTopOverrideKey = filterKey;
+        } catch {
+            // fall back to base data silently
+        } finally {
+            if (requestId === messagesTopRequestId) {
+                isLoadingMessagesTop = false;
+            }
+        }
+    }
+
+    $: if (
+        messageMetric === "messages" &&
+        active &&
+        !isLoadingMessagesTop &&
+        messagesTopOverrideKey !== filterSignature
+    ) {
+        void loadMessagesTopOverride();
+    }
+
     $: if (messageMetric === "messages") {
         overviewData = {
             overview: baseData.overview,
-            topPeople: baseData.topPeople,
+            topPeople: messagesTopOverride?.topPeople ?? baseData.topPeople,
             calendar: baseData.calendar,
             activityHeatmap: baseData.activityHeatmap,
             messagesByMonth: baseData.messagesByMonth,
             messagesByHour: baseData.messagesByHour,
-            topChats: baseData.topChats,
-            topThemes: baseData.topThemes,
+            topChats: messagesTopOverride?.topChats ?? baseData.topChats,
+            topThemes: messagesTopOverride?.topThemes ?? baseData.topThemes,
         };
     }
     $: if (messageMetric === "words" && wordMetricData) {
@@ -318,8 +375,8 @@
 
     const PLATFORM_COLORS: Record<string, string> = {
         discord: "#5865f2",
-        facebook: "#1877f2",
-        signal: "#3a76f0",
+        facebook: "#f43f5e",
+        signal: "#22c55e",
     };
     const platformColor = (platform: string): string =>
         PLATFORM_COLORS[platform.toLowerCase()] ?? "#a855f7";
