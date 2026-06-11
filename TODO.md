@@ -1,8 +1,8 @@
-1. Add concept of conversations (Every group of messages seperate by 30 minutes without messages per chat/channel). Bake into db like we do with all messages
-2. Add aggregate count for kicking by kicker, kickee and by chat
-3. Better display of chat and nickname changes
-4. Aggregate soundcloud links like youtube
-5. Add a way for the scheduler to restart the api to load the new db. Maybe a restart endpoint
-6. Add graph for platform usage over time
-7. FB chats that have a group emoji should be included in reaction counts
-8. Include general link preview library
+1. Replace custom YouTube/SoundCloud iframe embeds with a general link-preview
+   library (OpenGraph). Would require an `/api/link-preview?url=` endpoint that
+   fetches and parses OG metadata, plus a Svelte component to render it. Left
+   for a future change.
+2. Platform usage over time should be a line graph
+3. Clicking on links in link tab should show example messages like the language tab.
+4. Place links tab next to language
+5. Make conversations a filter like we have for the messages and word buttons

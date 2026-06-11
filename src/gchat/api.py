@@ -168,6 +168,7 @@ def _get_display_name(
 def _canonical_link_domain_expr(column: str) -> str:
     return f"""CASE
             WHEN lower({column}) IN ('youtu.be', 'youtube.com', 'www.youtube.com', 'm.youtube.com') THEN 'youtube.com'
+            WHEN lower({column}) IN ('soundcloud.com', 'www.soundcloud.com', 'm.soundcloud.com', 'on.soundcloud.com', 'snd.sc', 'api.soundcloud.com') THEN 'soundcloud.com'
             ELSE lower({column})
         END"""
 
@@ -785,6 +786,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         app.state.db_path, "reaction_details_json"
     )
     app.state.has_is_edited = _messages_has_column(app.state.db_path, "is_edited")
+    app.state.has_conversation_id = _messages_has_column(
+        app.state.db_path, "conversation_id"
+    )
     app.state.signal_filename_index = _build_signal_filename_index(app.state.data_dir)
     app.state._runtime_signature = (
         _path_signature(app.state.db_path),
@@ -834,6 +838,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             app.state.has_is_edited = _messages_has_column(
                 app.state.db_path, "is_edited"
             )
+            app.state.has_conversation_id = _messages_has_column(
+                app.state.db_path, "conversation_id"
+            )
             app.state.signal_filename_index = _build_signal_filename_index(
                 app.state.data_dir
             )
@@ -857,6 +864,28 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.post("/api/restart")
+    def restart_api() -> dict[str, Any]:
+        """Exit the API process so the container manager restarts it.
+
+        Used by the scheduler to pick up a freshly built database. The endpoint
+        is only intended to be called from inside the docker network (the
+        scheduler talks directly to `api:8000`); the nginx web gateway blocks
+        external callers, so we don't bother with a token here.
+
+        The exit is scheduled on a short delay so the response can be flushed
+        before the process terminates.
+        """
+
+        def _shutdown() -> None:
+            import time
+
+            time.sleep(0.25)
+            os._exit(0)
+
+        threading.Thread(target=_shutdown, daemon=True).start()
+        return {"status": "restarting"}
 
     @app.get("/api/runtime-state")
     def runtime_state() -> dict[str, Any]:
@@ -1707,6 +1736,27 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 """,
                 params,
             ).fetchone()
+            conversations_row = (None, None, None)
+            if app.state.has_conversation_id:
+                conversations_row = con.execute(
+                    f"""
+                    SELECT
+                        COUNT(DISTINCT m.conversation_id) AS conversation_count,
+                        AVG(per_conversation.message_count) AS avg_messages,
+                        MAX(per_conversation.message_count) AS longest_conversation
+                    FROM messages m
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    LEFT JOIN (
+                        SELECT conversation_id, COUNT(*) AS message_count
+                        FROM messages
+                        WHERE conversation_id IS NOT NULL
+                        GROUP BY conversation_id
+                    ) per_conversation ON per_conversation.conversation_id = m.conversation_id
+                    WHERE {where} AND m.conversation_id IS NOT NULL
+                    """,
+                    params,
+                ).fetchone() or (None, None, None)
         total_messages = int(total[0] or 0)
         start_ts = total[1]
         end_ts = total[2]
@@ -1758,6 +1808,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     else None,
                     "count": int(most_active_hour[1]) if most_active_hour else 0,
                 },
+                "conversation_count": int(conversations_row[0] or 0),
+                "avg_messages_per_conversation": float(conversations_row[1] or 0.0),
+                "longest_conversation_message_count": int(conversations_row[2] or 0),
             },
             "people": [
                 {
@@ -1828,6 +1881,87 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 {"bucket": row[0].isoformat(), "message_count": int(row[1])}
                 for row in rows
             ],
+        }
+
+    @app.get("/api/platform-over-time")
+    def platform_over_time(
+        granularity: str = Query(default="month", pattern="^(day|week|month|year)$"),
+        start: date | None = Query(default=None, alias="from"),
+        end: date | None = Query(default=None, alias="to"),
+        people: str | None = None,
+        themes: str | None = None,
+        platforms: str | None = None,
+        metric: str = Query(default="messages", pattern="^(messages|words)$"),
+    ) -> dict[str, Any]:
+        """Per-platform message/word counts bucketed over time."""
+        metric = _count_metric(metric)
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
+        params: list[Any] = [granularity]
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
+        with _connect(app.state.db_path) as con:
+            if metric == "words":
+                rows = con.execute(
+                    f"""
+                    SELECT date_trunc(?, bucket_ts) AS bucket, platform, SUM(word_count) AS count
+                    FROM (
+                        SELECT m.ts AS bucket_ts, s.platform AS platform, {_word_count_expr()} AS word_count
+                        FROM messages m
+                        JOIN channels c ON c.id = m.channel_id
+                        JOIN sources s ON c.source_id = s.id
+                        WHERE {where}
+                    )
+                    GROUP BY bucket, platform
+                    ORDER BY bucket, platform
+                    """,
+                    params,
+                ).fetchall()
+            else:
+                rows = con.execute(
+                    f"""
+                    SELECT date_trunc(?, m.ts) AS bucket, s.platform, COUNT(*) AS count
+                    FROM messages m
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    WHERE {where}
+                    GROUP BY bucket, s.platform
+                    ORDER BY bucket, s.platform
+                    """,
+                    params,
+                ).fetchall()
+
+        buckets_index: dict[str, dict[str, int]] = {}
+        platforms_seen: set[str] = set()
+        for bucket_ts, platform, count in rows:
+            key = bucket_ts.isoformat() if bucket_ts else ""
+            bucket_entry = buckets_index.setdefault(key, {})
+            bucket_entry[str(platform)] = bucket_entry.get(str(platform), 0) + int(
+                count or 0
+            )
+            platforms_seen.add(str(platform))
+        points = []
+        for bucket_key in sorted(buckets_index):
+            counts = buckets_index[bucket_key]
+            points.append(
+                {
+                    "bucket": bucket_key,
+                    "counts": {
+                        platform: int(counts.get(platform, 0))
+                        for platform in sorted(platforms_seen)
+                    },
+                }
+            )
+        return {
+            "granularity": granularity,
+            "platforms": sorted(platforms_seen),
+            "points": points,
         }
 
     @app.get("/api/calendar")
@@ -2441,6 +2575,158 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 )
 
             return {"chats": chats}
+
+    @app.get("/api/member-events")
+    def member_events(
+        kind: str | None = Query(default=None, pattern="^(added|removed|left)$"),
+        start: date | None = Query(default=None, alias="from"),
+        end: date | None = Query(default=None, alias="to"),
+        people: str | None = None,
+        themes: str | None = None,
+        platforms: str | None = None,
+    ) -> dict[str, Any]:
+        """Aggregate kicks/leaves/adds by actor (kicker), target (kickee), and chat.
+
+        Returns three rankings filtered by the same query params as the rest of
+        the API. The `people` filter applies to *both* actor and target so a
+        person-scoped view includes events they were involved in either way.
+        """
+        # Ensure table exists in this DB. Older DBs may not have it.
+        with _connect(app.state.db_path) as con:
+            has_table = con.execute(
+                """
+                SELECT 1 FROM information_schema.tables WHERE table_name = 'member_events'
+                """
+            ).fetchone()
+        if not has_table:
+            return {"kind": kind, "by_actor": [], "by_target": [], "by_chat": []}
+
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
+
+        clauses: list[str] = ["1 = 1"]
+        params: list[Any] = []
+        if start is not None:
+            clauses.append("e.ts >= ?")
+            params.append(datetime.combine(start, time.min))
+        if end is not None:
+            clauses.append("e.ts < ?")
+            params.append(datetime.combine(end + timedelta(days=1), time.min))
+        if kind:
+            clauses.append("e.kind = ?")
+            params.append(kind)
+        if filters.platforms:
+            placeholders = ", ".join("?" for _ in filters.platforms)
+            clauses.append(f"s.platform IN ({placeholders})")
+            params.extend(filters.platforms)
+        if filters.themes:
+            theme_names = {
+                app.state.theme_id_to_name.get(theme_id)
+                for theme_id in filters.themes
+            }
+            theme_names.discard(None)
+            channel_ids = sorted(
+                {
+                    channel_id
+                    for theme_name in theme_names
+                    for channel_id in app.state.theme_to_channel_ids.get(
+                        theme_name, []
+                    )
+                }
+            )
+            if not channel_ids:
+                return {"kind": kind, "by_actor": [], "by_target": [], "by_chat": []}
+            placeholders = ", ".join("?" for _ in channel_ids)
+            clauses.append(f"e.channel_id IN ({placeholders})")
+            params.extend(channel_ids)
+        if filters.people:
+            placeholders = ", ".join("?" for _ in filters.people)
+            clauses.append(
+                f"(e.actor_person_id IN ({placeholders}) OR e.target_person_id IN ({placeholders}))"
+            )
+            params.extend(filters.people)
+            params.extend(filters.people)
+        where = " AND ".join(clauses)
+
+        with _connect(app.state.db_path) as con:
+            by_actor_rows = con.execute(
+                f"""
+                SELECT
+                    p.id, p.display_name, p.color, COUNT(*) AS count
+                FROM member_events e
+                JOIN channels c ON c.id = e.channel_id
+                JOIN sources s ON s.id = c.source_id
+                JOIN people p ON p.id = e.actor_person_id
+                WHERE {where} AND e.actor_person_id IS NOT NULL
+                GROUP BY p.id, p.display_name, p.color
+                ORDER BY count DESC, p.display_name
+                """,
+                params,
+            ).fetchall()
+            by_target_rows = con.execute(
+                f"""
+                SELECT
+                    p.id, p.display_name, p.color, COUNT(*) AS count
+                FROM member_events e
+                JOIN channels c ON c.id = e.channel_id
+                JOIN sources s ON s.id = c.source_id
+                JOIN people p ON p.id = e.target_person_id
+                WHERE {where}
+                GROUP BY p.id, p.display_name, p.color
+                ORDER BY count DESC, p.display_name
+                """,
+                params,
+            ).fetchall()
+            by_chat_rows = con.execute(
+                f"""
+                SELECT
+                    c.id, c.name, s.name AS source_name, s.platform, COUNT(*) AS count
+                FROM member_events e
+                JOIN channels c ON c.id = e.channel_id
+                JOIN sources s ON s.id = c.source_id
+                WHERE {where}
+                GROUP BY c.id, c.name, s.name, s.platform
+                ORDER BY count DESC, c.name
+                """,
+                params,
+            ).fetchall()
+
+        return {
+            "kind": kind,
+            "by_actor": [
+                {
+                    "id": int(row[0]),
+                    "display_name": row[1],
+                    "color": row[2],
+                    "count": int(row[3]),
+                }
+                for row in by_actor_rows
+            ],
+            "by_target": [
+                {
+                    "id": int(row[0]),
+                    "display_name": row[1],
+                    "color": row[2],
+                    "count": int(row[3]),
+                }
+                for row in by_target_rows
+            ],
+            "by_chat": [
+                {
+                    "id": int(row[0]),
+                    "name": _get_display_name(row[1], row[2], app.state.fb_chat_names),
+                    "source_name": row[2],
+                    "platform": row[3],
+                    "count": int(row[4]),
+                }
+                for row in by_chat_rows
+            ],
+        }
 
     @app.get("/api/top-chats")
     def top_chats(

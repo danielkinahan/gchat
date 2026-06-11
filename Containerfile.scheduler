@@ -8,7 +8,7 @@ WORKDIR /app
 
 # Install build tools and dependencies
 RUN pacman -Syu --noconfirm && \
-    pacman -S --needed --noconfirm git base-devel sudo
+    pacman -S --needed --noconfirm git base-devel sudo curl
 
 # Create non-root builder user (required for AUR)
 RUN useradd -m builder && \

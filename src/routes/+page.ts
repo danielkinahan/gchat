@@ -1,4 +1,9 @@
-import type { Overview, TimePoint, TopPeople } from "$lib/api";
+import type {
+  Overview,
+  PlatformOverTime,
+  TimePoint,
+  TopPeople,
+} from "$lib/api";
 import { fetchJson, filterQuery } from "$lib/api";
 
 export const load = async ({ url, fetch }) => {
@@ -18,6 +23,7 @@ export const load = async ({ url, fetch }) => {
     metadata,
     nameHistory,
     runtimeState,
+    platformOverTime,
   ] = await Promise.all([
     fetchJson<Overview>(`/api/overview${query}`, fetch),
     fetchJson<{ granularity: string; points: TimePoint[] }>(
@@ -88,6 +94,10 @@ export const load = async ({ url, fetch }) => {
       current_signature: unknown;
       up_to_date: boolean;
     }>(`/api/runtime-state`, fetch),
+    fetchJson<PlatformOverTime>(
+      `/api/platform-over-time?granularity=month${querySuffix}`,
+      fetch,
+    ),
   ]);
 
   return {
@@ -103,6 +113,7 @@ export const load = async ({ url, fetch }) => {
     metadata,
     nameHistory,
     runtimeState,
+    platformOverTime,
     filters: {
       from: url.searchParams.get("from") ?? "",
       to: url.searchParams.get("to") ?? "",

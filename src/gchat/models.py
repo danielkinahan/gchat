@@ -55,3 +55,25 @@ class NameChangeSeed:
     ts: datetime
     kind: str
     payload_json: str | None = None
+
+
+@dataclass(frozen=True)
+class MemberEventSeed:
+    """A membership change event in a channel.
+
+    `kind` is one of: "added", "removed", "left".
+    `actor_raw_id` is the person who initiated the action (when present).
+    `target_raw_id` is the person affected. For self-leave events, actor and
+    target are the same.
+    """
+
+    source_name: str
+    platform: str
+    channel_raw_id: str
+    kind: str
+    actor_raw_id: str | None
+    target_raw_id: str
+    actor_display_name: str | None
+    target_display_name: str
+    ts: datetime
+    payload_json: str | None = None

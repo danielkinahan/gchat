@@ -131,6 +131,14 @@
             current_signature: unknown;
             up_to_date: boolean;
         };
+        platformOverTime: {
+            granularity: string;
+            platforms: string[];
+            points: Array<{
+                bucket: string;
+                counts: Record<string, number>;
+            }>;
+        };
         filters: {
             from: string;
             to: string;
@@ -276,6 +284,37 @@
         color: string;
         count: number;
     }> = [];
+    type MemberEventBucket = {
+        by_actor: Array<{
+            id: number;
+            display_name: string;
+            color: string;
+            count: number;
+        }>;
+        by_target: Array<{
+            id: number;
+            display_name: string;
+            color: string;
+            count: number;
+        }>;
+        by_chat: Array<{
+            id: number;
+            name: string;
+            source_name: string;
+            platform: string;
+            count: number;
+        }>;
+    };
+    let removedEvents: MemberEventBucket = {
+        by_actor: [],
+        by_target: [],
+        by_chat: [],
+    };
+    let leftEvents: MemberEventBucket = {
+        by_actor: [],
+        by_target: [],
+        by_chat: [],
+    };
     let peopleFilterOptions: PeopleFilterOption[] = [];
     const toMediaUrl = (value: string | null): string | null =>
         value && value.startsWith("/api/") ? apiUrl(value) : value;
@@ -325,6 +364,10 @@
         /(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/i;
     const YOUTUBE_ONLY_PATTERN =
         /^\s*(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)[^\s]+\s*$/i;
+    const SOUNDCLOUD_URL_PATTERN =
+        /https?:\/\/(?:(?:www|m|on)\.)?(?:soundcloud\.com|snd\.sc)\/[^\s]+/i;
+    const SOUNDCLOUD_ONLY_PATTERN =
+        /^\s*https?:\/\/(?:(?:www|m|on)\.)?(?:soundcloud\.com|snd\.sc)\/[^\s]+\s*$/i;
     const youtubeEmbedUrl = (content: string | null): string | null => {
         const text = (content ?? "").trim();
         if (!text) return null;
@@ -336,6 +379,29 @@
         const text = (content ?? "").trim();
         return Boolean(text) && YOUTUBE_ONLY_PATTERN.test(text);
     };
+    const soundcloudEmbedUrl = (content: string | null): string | null => {
+        const text = (content ?? "").trim();
+        if (!text) return null;
+        const match = text.match(SOUNDCLOUD_URL_PATTERN);
+        if (!match) return null;
+        const params = new URLSearchParams({
+            url: match[0],
+            color: "#1d4ed8",
+            auto_play: "false",
+            hide_related: "true",
+            show_comments: "false",
+            show_user: "true",
+            show_reposts: "false",
+            visual: "false",
+        });
+        return `https://w.soundcloud.com/player/?${params.toString()}`;
+    };
+    const isSoundcloudOnlyContent = (content: string | null): boolean => {
+        const text = (content ?? "").trim();
+        return Boolean(text) && SOUNDCLOUD_ONLY_PATTERN.test(text);
+    };
+    const embedOnlyContent = (content: string | null): boolean =>
+        isYoutubeOnlyContent(content) || isSoundcloudOnlyContent(content);
     const formatRuntimeMtime = (mtimeNs: number | null): string => {
         if (mtimeNs == null) return "missing";
         return new Date(mtimeNs / 1_000_000).toLocaleString();
@@ -586,7 +652,17 @@
             reactedParams.set("limit", "6");
             const authorsParams = new URLSearchParams(baseParams);
             authorsParams.set("limit", "15");
-            const [mentions, reactedMessages, authors] = await Promise.all([
+            const removedParams = new URLSearchParams(baseParams);
+            removedParams.set("kind", "removed");
+            const leftParams = new URLSearchParams(baseParams);
+            leftParams.set("kind", "left");
+            const [
+                mentions,
+                reactedMessages,
+                authors,
+                removedResp,
+                leftResp,
+            ] = await Promise.all([
                 fetchJson<{ items: Array<{ mention: string; count: number }> }>(
                     `/api/most-mentioned?${mentionsParams.toString()}`,
                 ),
@@ -621,6 +697,12 @@
                         count: number;
                     }>;
                 }>(`/api/reaction-authors?${authorsParams.toString()}`),
+                fetchJson<MemberEventBucket>(
+                    `/api/member-events?${removedParams.toString()}`,
+                ),
+                fetchJson<MemberEventBucket>(
+                    `/api/member-events?${leftParams.toString()}`,
+                ),
             ]);
             mostMentioned = mentions.items;
             topReactedMessages = reactedMessages.items.map((message) => ({
@@ -632,6 +714,8 @@
                 ),
             }));
             reactionAuthors = authors.items;
+            removedEvents = removedResp;
+            leftEvents = leftResp;
         } catch (err) {
             interactionsError =
                 err instanceof Error
@@ -731,6 +815,90 @@
 
     function formatChange(newName: string): string {
         return newName;
+    }
+
+    function isMeaningfulPrevious(
+        previous: string | null | undefined,
+        next: string,
+    ): boolean {
+        const trimmedPrev = (previous ?? "").trim();
+        if (!trimmedPrev) return false;
+        if (trimmedPrev.toLowerCase() === next.trim().toLowerCase()) return false;
+        if (trimmedPrev === "(cleared)") return false;
+        return true;
+    }
+
+    const RELATIVE_TIME = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+    const RELATIVE_THRESHOLDS: Array<{ unit: Intl.RelativeTimeFormatUnit; seconds: number }> = [
+        { unit: "year", seconds: 60 * 60 * 24 * 365 },
+        { unit: "month", seconds: 60 * 60 * 24 * 30 },
+        { unit: "week", seconds: 60 * 60 * 24 * 7 },
+        { unit: "day", seconds: 60 * 60 * 24 },
+        { unit: "hour", seconds: 60 * 60 },
+        { unit: "minute", seconds: 60 },
+    ];
+
+    function formatRelativeTime(ts: string | null): string {
+        if (!ts) return "Unknown time";
+        const target = new Date(ts).getTime();
+        if (!Number.isFinite(target)) return "Unknown time";
+        const diffSeconds = (target - Date.now()) / 1000;
+        for (const { unit, seconds } of RELATIVE_THRESHOLDS) {
+            if (Math.abs(diffSeconds) >= seconds) {
+                return RELATIVE_TIME.format(
+                    Math.round(diffSeconds / seconds),
+                    unit,
+                );
+            }
+        }
+        return RELATIVE_TIME.format(Math.round(diffSeconds), "second");
+    }
+
+    function formatAbsoluteTime(ts: string | null): string {
+        if (!ts) return "N/A";
+        const parsed = new Date(ts);
+        if (Number.isNaN(parsed.getTime())) return "N/A";
+        return parsed.toLocaleString();
+    }
+
+    type GroupedChange<T> = {
+        author_name: string | null;
+        ts: string | null;
+        changes: T[];
+    };
+
+    function groupChangesByAuthor<
+        T extends {
+            author_name?: string | null;
+            ts: string | null;
+        },
+    >(changes: T[]): GroupedChange<T>[] {
+        const groups: GroupedChange<T>[] = [];
+        for (const change of changes) {
+            const author = change.author_name ?? null;
+            const ts = change.ts ?? null;
+            const last = groups[groups.length - 1];
+            const sameAuthor =
+                last && (last.author_name ?? null) === author;
+            const closeInTime =
+                last &&
+                last.ts &&
+                ts &&
+                Math.abs(
+                    new Date(ts).getTime() - new Date(last.ts).getTime(),
+                ) <= 5 * 60 * 1000;
+            if (sameAuthor && closeInTime) {
+                last.changes.push(change);
+                last.ts = ts ?? last.ts;
+            } else {
+                groups.push({
+                    author_name: author,
+                    ts,
+                    changes: [change],
+                });
+            }
+        }
+        return groups;
     }
 
     async function selectWord(word: string) {
@@ -1061,6 +1229,27 @@
     );
     $: monthMax = maxMessageCount(overviewData.messagesByMonth.points);
     $: hourMax = maxMessageCount(overviewData.messagesByHour.points);
+    const PLATFORM_COLORS: Record<string, string> = {
+        discord: "#5865f2",
+        facebook: "#1877f2",
+        signal: "#3a76f0",
+    };
+    const platformColor = (platform: string): string =>
+        PLATFORM_COLORS[platform.toLowerCase()] ?? "#a855f7";
+    $: platformOverTimePoints = data.platformOverTime.points;
+    $: platformOverTimeMax = Math.max(
+        ...platformOverTimePoints.map((point) =>
+            Object.values(point.counts).reduce(
+                (sum, value) => sum + (value || 0),
+                0,
+            ),
+        ),
+        1,
+    );
+    $: platformLabelStep = Math.max(
+        1,
+        Math.ceil(platformOverTimePoints.length / 8),
+    );
     $: weekdayTotals = weekdayLabels.map((_, index) =>
         overviewData.activityHeatmap.points
             .filter((point) => point.weekday === index + 1)
@@ -1553,6 +1742,29 @@
                                 )}</strong
                             >
                         </div>
+                        <div>
+                            <span
+                                >💬 Conversations
+                                <small class="hint"
+                                    >(30 min idle = new convo)</small
+                                ></span
+                            ><strong
+                                >{messageStats.conversation_count.toLocaleString()}</strong
+                            >
+                        </div>
+                        <div>
+                            <span>Avg messages per conversation</span><strong
+                                >{messageStats.avg_messages_per_conversation.toFixed(
+                                    1,
+                                )}</strong
+                            >
+                        </div>
+                        <div>
+                            <span>Longest conversation</span><strong
+                                >{messageStats.longest_conversation_message_count.toLocaleString()}
+                                messages</strong
+                            >
+                        </div>
                     {:else}
                         <div>
                             <span>Average {overviewMetricLabel} per day</span
@@ -1689,6 +1901,103 @@
                 </div>
             </div>
         </section>
+
+        <section
+            class="overview-bottom-secondary"
+            class:tab-hidden={activeTab !== "overview"}
+        >
+            <div class="panel timeline-panel platform-panel">
+                <div class="panel-head">
+                    <h2>Platform usage over time (monthly)</h2>
+                    <div class="platform-legend">
+                        {#each data.platformOverTime.platforms as platform}
+                            <span class="legend-item">
+                                <span
+                                    class="legend-swatch"
+                                    style={`background:${platformColor(platform)}`}
+                                ></span>
+                                {platform}
+                            </span>
+                        {/each}
+                    </div>
+                </div>
+                {#if platformOverTimePoints.length === 0}
+                    <p class="muted">No platform data available.</p>
+                {:else}
+                    <div class="timeline-plot">
+                        <div class="timeline-axis">
+                            <span
+                                >{Math.round(
+                                    platformOverTimeMax,
+                                ).toLocaleString()}</span
+                            >
+                            <span
+                                >{Math.round(
+                                    platformOverTimeMax * 0.75,
+                                ).toLocaleString()}</span
+                            >
+                            <span
+                                >{Math.round(
+                                    platformOverTimeMax * 0.5,
+                                ).toLocaleString()}</span
+                            >
+                            <span
+                                >{Math.round(
+                                    platformOverTimeMax * 0.25,
+                                ).toLocaleString()}</span
+                            >
+                            <span>0</span>
+                        </div>
+                        <div class="timeline-chart">
+                            {#each platformOverTimePoints as point, i}
+                                {@const total = Object.values(
+                                    point.counts,
+                                ).reduce(
+                                    (sum, value) => sum + (value || 0),
+                                    0,
+                                )}
+                                <div
+                                    class="timeline-bar-wrap"
+                                    title={`${new Date(point.bucket).toLocaleDateString(
+                                        "en-US",
+                                        { month: "long", year: "numeric" },
+                                    )}: ${total.toLocaleString()} messages`}
+                                >
+                                    <div class="timeline-bar-slot">
+                                        <div
+                                            class="platform-stack"
+                                            style={`height:${(total / platformOverTimeMax) * 100}%`}
+                                        >
+                                            {#each data.platformOverTime.platforms as platform}
+                                                {@const count =
+                                                    point.counts[platform] ||
+                                                    0}
+                                                {#if count > 0}
+                                                    <div
+                                                        class="platform-segment"
+                                                        style={`flex:${count};background:${platformColor(platform)}`}
+                                                    ></div>
+                                                {/if}
+                                            {/each}
+                                        </div>
+                                    </div>
+                                    <span class="timeline-label"
+                                        >{i % platformLabelStep === 0
+                                            ? new Date(
+                                                  point.bucket,
+                                              ).toLocaleDateString("en-US", {
+                                                  month: "short",
+                                                  year: "2-digit",
+                                              })
+                                            : ""}</span
+                                    >
+                                </div>
+                            {/each}
+                        </div>
+                    </div>
+                {/if}
+            </div>
+        </section>
     {/if}
 
     <section class="language" class:tab-hidden={activeTab !== "language"}>
@@ -1821,8 +2130,21 @@
                                                 allowfullscreen
                                             ></iframe>
                                         </div>
+                                    {:else if soundcloudEmbedUrl(message.content)}
+                                        <div class="soundcloud-embed">
+                                            <iframe
+                                                src={soundcloudEmbedUrl(
+                                                    message.content,
+                                                )!}
+                                                title="SoundCloud track"
+                                                loading="lazy"
+                                                scrolling="no"
+                                                frameborder="no"
+                                                allow="autoplay"
+                                            ></iframe>
+                                        </div>
                                     {/if}
-                                    {#if message.content && !isYoutubeOnlyContent(message.content)}
+                                    {#if message.content && !embedOnlyContent(message.content)}
                                         <p>{message.content}</p>
                                     {/if}
                                 </div>
@@ -2050,6 +2372,97 @@
                 </div>
             {/if}
         </div>
+
+        {#if removedEvents.by_actor.length || removedEvents.by_target.length || removedEvents.by_chat.length}
+            <div class="panel rank-panel">
+                <h2>Top kickers (removed others from chats)</h2>
+                <div class="rank-list">
+                    {#each removedEvents.by_actor as person}
+                        <div class="rank-row">
+                            <span class="rank-name">
+                                <span
+                                    class="swatch"
+                                    style={`background:${person.color}`}
+                                ></span>{person.display_name}
+                            </span>
+                            <div class="rank-track">
+                                <div
+                                    class="rank-fill author"
+                                    style={`width:${(person.count / Math.max(removedEvents.by_actor[0]?.count || 1, 1)) * 100}%`}
+                                ></div>
+                            </div>
+                            <strong>{person.count.toLocaleString()}</strong>
+                        </div>
+                    {/each}
+                </div>
+            </div>
+
+            <div class="panel rank-panel">
+                <h2>Most kicked (removed from chats)</h2>
+                <div class="rank-list">
+                    {#each removedEvents.by_target as person}
+                        <div class="rank-row">
+                            <span class="rank-name">
+                                <span
+                                    class="swatch"
+                                    style={`background:${person.color}`}
+                                ></span>{person.display_name}
+                            </span>
+                            <div class="rank-track">
+                                <div
+                                    class="rank-fill mention"
+                                    style={`width:${(person.count / Math.max(removedEvents.by_target[0]?.count || 1, 1)) * 100}%`}
+                                ></div>
+                            </div>
+                            <strong>{person.count.toLocaleString()}</strong>
+                        </div>
+                    {/each}
+                </div>
+            </div>
+
+            <div class="panel rank-panel">
+                <h2>Chats with the most kicks</h2>
+                <div class="rank-list">
+                    {#each removedEvents.by_chat as chat}
+                        <div class="rank-row">
+                            <span class="rank-name">{chat.name}</span>
+                            <div class="rank-track">
+                                <div
+                                    class="rank-fill channel"
+                                    style={`width:${(chat.count / Math.max(removedEvents.by_chat[0]?.count || 1, 1)) * 100}%`}
+                                ></div>
+                            </div>
+                            <strong>{chat.count.toLocaleString()}</strong>
+                        </div>
+                    {/each}
+                </div>
+            </div>
+        {/if}
+
+        {#if leftEvents.by_target.length}
+            <div class="panel rank-panel">
+                <h2>Most departures (left a chat themselves)</h2>
+                <div class="rank-list">
+                    {#each leftEvents.by_target as person}
+                        <div class="rank-row">
+                            <span class="rank-name">
+                                <span
+                                    class="swatch"
+                                    style={`background:${person.color}`}
+                                ></span>{person.display_name}
+                            </span>
+                            <div class="rank-track">
+                                <div
+                                    class="rank-fill links-author"
+                                    style={`width:${(person.count / Math.max(leftEvents.by_target[0]?.count || 1, 1)) * 100}%`}
+                                ></div>
+                            </div>
+                            <strong>{person.count.toLocaleString()}</strong>
+                        </div>
+                    {/each}
+                </div>
+            </div>
+        {/if}
     </section>
 
     <section class="history" class:tab-hidden={activeTab !== "chats"}>
@@ -2070,27 +2483,44 @@
                 {#if chat.previous_names.length}
                     <div class="history-group">
                         <h3>Chat name history</h3>
-                        <div class="history-list">
-                            {#each chat.previous_names as change}
-                                <div class="history-row">
-                                    <div class="history-change">
-                                        {formatChange(change.new_name)}
-                                        {#if change.author_name}
-                                            <span class="muted">
-                                                · by {change.author_name}</span
+                        <ol class="history-timeline">
+                            {#each groupChangesByAuthor(chat.previous_names) as group}
+                                <li class="history-timeline-item">
+                                    <div class="history-meta">
+                                        {#if group.author_name}
+                                            <strong>{group.author_name}</strong>
+                                        {:else}
+                                            <strong class="muted"
+                                                >Unknown actor</strong
                                             >
                                         {/if}
+                                        <span
+                                            class="muted"
+                                            title={formatAbsoluteTime(group.ts)}
+                                        >
+                                            {formatRelativeTime(group.ts)}
+                                        </span>
                                     </div>
-                                    <time
-                                        >{change.ts
-                                            ? new Date(
-                                                  change.ts,
-                                              ).toLocaleString()
-                                            : "N/A"}</time
-                                    >
-                                </div>
+                                    <div class="history-changes">
+                                        {#each group.changes as change}
+                                            <div class="history-change">
+                                                {#if isMeaningfulPrevious(change.previous_name, change.new_name)}
+                                                    <span class="prev"
+                                                        >{change.previous_name}</span
+                                                    >
+                                                    <span class="arrow"
+                                                        >→</span
+                                                    >
+                                                {/if}
+                                                <span class="next"
+                                                    >{change.new_name}</span
+                                                >
+                                            </div>
+                                        {/each}
+                                    </div>
+                                </li>
                             {/each}
-                        </div>
+                        </ol>
                     </div>
                 {/if}
             </details>
@@ -2122,27 +2552,57 @@
                             <div class="participant-card">
                                 <strong>{chat.current_name}</strong>
                                 <span class="muted">{chat.platform}</span>
-                                <div class="history-list">
-                                    {#each chat.history as change}
-                                        <div class="history-row">
-                                            <div class="history-change">
-                                                {formatChange(change.new_name)}
-                                                {#if change.author_name}
-                                                    <span class="muted">
-                                                        · by {change.author_name}
-                                                    </span>
+                                <ol class="history-timeline">
+                                    {#each groupChangesByAuthor(chat.history) as group}
+                                        <li class="history-timeline-item">
+                                            <div class="history-meta">
+                                                {#if group.author_name}
+                                                    <strong
+                                                        >{group.author_name}</strong
+                                                    >
+                                                {:else}
+                                                    <strong class="muted"
+                                                        >Unknown actor</strong
+                                                    >
                                                 {/if}
+                                                <span
+                                                    class="muted"
+                                                    title={formatAbsoluteTime(
+                                                        group.ts,
+                                                    )}
+                                                >
+                                                    {formatRelativeTime(
+                                                        group.ts,
+                                                    )}
+                                                </span>
                                             </div>
-                                            <time
-                                                >{change.ts
-                                                    ? new Date(
-                                                          change.ts,
-                                                      ).toLocaleString()
-                                                    : "N/A"}</time
-                                            >
-                                        </div>
+                                            <div class="history-changes">
+                                                {#each group.changes as change}
+                                                    <div class="history-change">
+                                                        {#if isMeaningfulPrevious(change.previous_name, change.new_name)}
+                                                            <span class="prev"
+                                                                >{change.previous_name}</span
+                                                            >
+                                                            <span class="arrow"
+                                                                >→</span
+                                                            >
+                                                        {/if}
+                                                        {#if change.new_name === "(cleared)"}
+                                                            <span
+                                                                class="next muted"
+                                                                >cleared</span
+                                                            >
+                                                        {:else}
+                                                            <span class="next"
+                                                                >{change.new_name}</span
+                                                            >
+                                                        {/if}
+                                                    </div>
+                                                {/each}
+                                            </div>
+                                        </li>
                                     {/each}
-                                </div>
+                                </ol>
                             </div>
                         {/each}
                     </div>
@@ -2825,30 +3285,86 @@
         margin-bottom: 8px;
     }
 
-    .history-list {
-        display: grid;
-        gap: 8px;
-    }
-
-    .history-row {
-        display: flex;
-        justify-content: space-between;
-        gap: 12px;
-        padding-bottom: 8px;
-        border-bottom: 1px solid #1f2937;
-        font-size: 0.8rem;
-    }
-
-    .history-row time {
-        color: #94a3b8;
-        white-space: nowrap;
-        flex: 0 0 auto;
-    }
-
     .history-change {
         color: #e2e8f0;
         min-width: 0;
         overflow-wrap: anywhere;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .history-timeline {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 12px;
+        position: relative;
+    }
+
+    .history-timeline::before {
+        content: "";
+        position: absolute;
+        top: 6px;
+        bottom: 6px;
+        left: 6px;
+        width: 2px;
+        background: linear-gradient(180deg, #1f2937, #0b1220);
+    }
+
+    .history-timeline-item {
+        position: relative;
+        padding-left: 22px;
+    }
+
+    .history-timeline-item::before {
+        content: "";
+        position: absolute;
+        top: 6px;
+        left: 0;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: #1d4ed8;
+        border: 3px solid #0b1220;
+        box-shadow: 0 0 0 1px #1f2937;
+    }
+
+    .history-meta {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        flex-wrap: wrap;
+        font-size: 0.8rem;
+        margin-bottom: 4px;
+    }
+
+    .history-meta strong {
+        color: #e2e8f0;
+    }
+
+    .history-changes {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 0.85rem;
+    }
+
+    .history-changes .prev {
+        color: #94a3b8;
+        text-decoration: line-through;
+    }
+
+    .history-changes .arrow {
+        color: #60a5fa;
+        font-weight: 600;
+    }
+
+    .history-changes .next {
+        color: #f8fafc;
+        font-weight: 500;
     }
 
     .rank-list {
@@ -3107,6 +3623,72 @@
         width: 100%;
         height: 100%;
         border: 0;
+    }
+
+    .soundcloud-embed {
+        margin-top: 10px;
+        width: min(100%, 520px);
+        height: 166px;
+        border-radius: 14px;
+        overflow: hidden;
+        border: 1px solid #1f2937;
+        background: #020617;
+    }
+
+    .soundcloud-embed iframe {
+        width: 100%;
+        height: 100%;
+        border: 0;
+    }
+
+    .platform-panel .panel-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+    }
+
+    .platform-legend {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        font-size: 0.85rem;
+        color: #cbd5e1;
+        text-transform: capitalize;
+    }
+
+    .legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .legend-swatch {
+        width: 12px;
+        height: 12px;
+        border-radius: 3px;
+        display: inline-block;
+    }
+
+    .platform-stack {
+        width: 100%;
+        display: flex;
+        flex-direction: column-reverse;
+        align-self: flex-end;
+        border-radius: 4px;
+        overflow: hidden;
+    }
+
+    .platform-segment {
+        width: 100%;
+    }
+
+    .hint {
+        color: #64748b;
+        font-size: 0.75rem;
+        font-weight: 400;
+        margin-left: 4px;
     }
 
     .mini-bar-track {

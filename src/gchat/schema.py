@@ -70,6 +70,27 @@ CREATE TABLE IF NOT EXISTS messages (
   reaction_details_json TEXT,
   is_edited BOOLEAN DEFAULT FALSE,
   lang TEXT,
-  sentiment REAL
+  sentiment REAL,
+  conversation_id INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS conversations (
+  id INTEGER PRIMARY KEY,
+  channel_id INTEGER NOT NULL,
+  start_ts TIMESTAMP NOT NULL,
+  end_ts TIMESTAMP NOT NULL,
+  message_count INTEGER NOT NULL,
+  participant_count INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS member_events (
+  id INTEGER PRIMARY KEY,
+  channel_id INTEGER NOT NULL,
+  source_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  actor_person_id INTEGER,
+  target_person_id INTEGER NOT NULL,
+  ts TIMESTAMP NOT NULL,
+  payload_json TEXT
 );
 """

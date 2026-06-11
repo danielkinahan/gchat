@@ -10,7 +10,14 @@ import duckdb
 from .discord import normalize_export as normalize_discord
 from .discovery import discover_dataset
 from .facebook import normalize_chat as normalize_facebook
-from .models import ChannelSeed, MessageSeed, NameChangeSeed, PersonSeed, SourceSeed
+from .models import (
+    ChannelSeed,
+    MemberEventSeed,
+    MessageSeed,
+    NameChangeSeed,
+    PersonSeed,
+    SourceSeed,
+)
 from .reconciliation import load_reconciliation
 from .schema import SCHEMA_SQL
 from .signal import normalize as normalize_signal
@@ -24,6 +31,7 @@ class NormalizedDataset:
     people: list[PersonSeed]
     name_changes: list[NameChangeSeed]
     messages: list[MessageSeed]
+    member_events: list[MemberEventSeed]
 
 
 def _notify(status: Callable[[str], None] | None, message: str) -> None:
@@ -43,6 +51,7 @@ def _collect(
     people: "OrderedDict[tuple[str, str], PersonSeed]" = OrderedDict()
     name_changes: list[NameChangeSeed] = []
     messages: list[MessageSeed] = []
+    member_events: list[MemberEventSeed] = []
 
     _notify(status, f"Scanning {data_dir}")
     for path in paths.discord_files:
@@ -68,6 +77,7 @@ def _collect(
             people.setdefault((person.platform, person.raw_id), person)
         name_changes.extend(export.name_changes)
         messages.extend(export.messages)
+        member_events.extend(export.member_events)
 
     for path in paths.signal_exports:
         _notify(status, f"Normalizing Signal HTML export {path.name}")
@@ -91,6 +101,7 @@ def _collect(
         people=list(people.values()),
         name_changes=name_changes,
         messages=messages,
+        member_events=member_events,
     )
 
 
@@ -184,12 +195,78 @@ def build_database(
             )
         )
 
-    message_rows = []
+    # Group messages by channel/time first so we can assign conversation ids.
+    # A conversation is a run of messages within the same channel where no two
+    # consecutive messages are more than 30 minutes apart.
+    CONVERSATION_GAP_SECONDS = 30 * 60
+
+    deduped_messages = []
     seen_message_ids: set[str] = set()
     for message in sorted(dataset.messages, key=lambda m: (m.ts, m.id)):
         if message.id in seen_message_ids:
             continue
         seen_message_ids.add(message.id)
+        deduped_messages.append(message)
+
+    # Bucket by channel id so we can walk each channel in chronological order.
+    per_channel: dict[int, list] = {}
+    for message in deduped_messages:
+        channel_id = channel_ids[(message.source_name, message.channel_raw_id)]
+        per_channel.setdefault(channel_id, []).append(message)
+
+    conversation_id_for_message: dict[str, int] = {}
+    conversation_rows: list[tuple[int, int, object, object, int, int]] = []
+    next_conversation_id = 1
+    for channel_id, channel_messages in per_channel.items():
+        channel_messages.sort(key=lambda m: (m.ts, m.id))
+        current_conversation_id: int | None = None
+        current_start = None
+        current_end = None
+        current_count = 0
+        current_people: set[tuple[str, str]] = set()
+        last_ts = None
+        for message in channel_messages:
+            gap = (
+                (message.ts - last_ts).total_seconds() if last_ts is not None else None
+            )
+            if current_conversation_id is None or (
+                gap is not None and gap > CONVERSATION_GAP_SECONDS
+            ):
+                if current_conversation_id is not None:
+                    conversation_rows.append(
+                        (
+                            current_conversation_id,
+                            channel_id,
+                            current_start,
+                            current_end,
+                            current_count,
+                            len(current_people),
+                        )
+                    )
+                current_conversation_id = next_conversation_id
+                next_conversation_id += 1
+                current_start = message.ts
+                current_count = 0
+                current_people = set()
+            conversation_id_for_message[message.id] = current_conversation_id
+            current_end = message.ts
+            current_count += 1
+            current_people.add((message.person.platform, message.person.raw_id))
+            last_ts = message.ts
+        if current_conversation_id is not None:
+            conversation_rows.append(
+                (
+                    current_conversation_id,
+                    channel_id,
+                    current_start,
+                    current_end,
+                    current_count,
+                    len(current_people),
+                )
+            )
+
+    message_rows = []
+    for message in deduped_messages:
         person_id = person_ids[(message.person.platform, message.person.raw_id)]
         channel_id = channel_ids[(message.source_name, message.channel_raw_id)]
         word_count, char_count = message_counts(message.content)
@@ -211,6 +288,7 @@ def build_database(
                 message.is_edited,
                 None,
                 None,
+                conversation_id_for_message.get(message.id),
             )
         )
 
@@ -290,14 +368,56 @@ def build_database(
             "INSERT INTO channel_name_changes VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             channel_name_change_rows,
         )
+    if conversation_rows:
+        _notify(status, f"  Writing conversations ({len(conversation_rows)} rows)")
+        con.executemany(
+            "INSERT INTO conversations VALUES (?, ?, ?, ?, ?, ?)",
+            conversation_rows,
+        )
+    member_event_rows = []
+    for idx, event in enumerate(
+        sorted(
+            dataset.member_events,
+            key=lambda e: (e.ts, e.kind, e.target_raw_id),
+        ),
+        start=1,
+    ):
+        channel_key = (event.source_name, event.channel_raw_id)
+        channel_id = channel_ids.get(channel_key)
+        target_id = person_ids.get((event.platform, event.target_raw_id))
+        if channel_id is None or target_id is None:
+            continue
+        actor_id = (
+            person_ids.get((event.platform, event.actor_raw_id))
+            if event.actor_raw_id
+            else None
+        )
+        source_id = source_ids[event.source_name]
+        member_event_rows.append(
+            (
+                idx,
+                channel_id,
+                source_id,
+                event.kind,
+                actor_id,
+                target_id,
+                event.ts,
+                event.payload_json,
+            )
+        )
+    if member_event_rows:
+        _notify(status, f"  Writing member events ({len(member_event_rows)} rows)")
+        con.executemany(
+            "INSERT INTO member_events VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            member_event_rows,
+        )
     if message_rows:
         _notify(status, f"  Writing messages ({len(message_rows)} rows)")
-        # Insert messages in batches for better performance
         batch_size = 50000
         for i in range(0, len(message_rows), batch_size):
             batch = message_rows[i : i + batch_size]
             con.executemany(
-                "INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 batch,
             )
             _notify(

@@ -9,7 +9,14 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
-from .models import MessageSeed, NameChangeSeed, PersonSeed, SourceSeed, ChannelSeed
+from .models import (
+    ChannelSeed,
+    MemberEventSeed,
+    MessageSeed,
+    NameChangeSeed,
+    PersonSeed,
+    SourceSeed,
+)
 from .util import fix_facebook_mojibake, hash_message, message_counts, normalize_whitespace
 
 
@@ -20,6 +27,59 @@ class FacebookThread:
     messages: list[MessageSeed]
     people: list[PersonSeed]
     name_changes: list[NameChangeSeed]
+    member_events: list[MemberEventSeed]
+
+
+_MEMBER_EVENT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    # "X added Y, Z to the group"
+    (
+        re.compile(
+            r"^(?P<actor>.+?) added (?P<targets>.+?) to the (?:group|chat)\.?$",
+            re.IGNORECASE,
+        ),
+        "added",
+    ),
+    # "X removed Y from the group"
+    (
+        re.compile(
+            r"^(?P<actor>.+?) removed (?P<targets>.+?) from the (?:group|chat)\.?$",
+            re.IGNORECASE,
+        ),
+        "removed",
+    ),
+    # "X left the group" - the actor is also the target
+    (
+        re.compile(
+            r"^(?P<actor>.+?) left the (?:group|chat|conversation)\.?$",
+            re.IGNORECASE,
+        ),
+        "left",
+    ),
+)
+
+
+def _split_target_names(targets: str) -> list[str]:
+    cleaned = re.sub(r"\s+and\s+", ", ", targets, flags=re.IGNORECASE)
+    return [part.strip().rstrip(".") for part in cleaned.split(",") if part.strip()]
+
+
+def _extract_member_event(content: str) -> tuple[str, str, list[str]] | None:
+    text = normalize_whitespace(content)
+    if not text:
+        return None
+    for pattern, kind in _MEMBER_EVENT_PATTERNS:
+        match = pattern.match(text)
+        if not match:
+            continue
+        actor = match.group("actor").strip()
+        if kind == "left":
+            return kind, actor, [actor]
+        targets_text = match.groupdict().get("targets", "")
+        targets = _split_target_names(targets_text) if targets_text else []
+        if not targets:
+            continue
+        return kind, actor, targets
+    return None
 
 
 def _parse_timestamp(text: str) -> datetime:
@@ -251,9 +311,47 @@ def _reaction_summary(node) -> str | None:
 
 _REACTION_EMOJIS = {"👍", "❤️", "❤", "😂", "😮", "😢", "😡", "🥰"}
 
+# Variation selectors / zero-width joiners are common in emoji sequences and
+# should not be counted as visible characters when deciding if a message is
+# emoji-only.
+_EMOJI_MODIFIER_CODEPOINTS = {
+    "\ufe0f",  # variation selector-16
+    "\ufe0e",  # variation selector-15
+    "\u200d",  # zero-width joiner
+}
+
+
+def _is_emoji_only(text: str) -> bool:
+    """Return True when `text` looks like a short emoji-only message.
+
+    Facebook group chats allow setting a custom reaction emoji that is unique
+    per chat (#7 in TODO). Messages whose entire content is that emoji should be
+    treated as a reaction. We approximate this by considering messages that
+    consist solely of non-ASCII symbol characters (emoji / pictographs) and are
+    short.
+    """
+    if not text:
+        return False
+    visible = [
+        ch for ch in text if not ch.isspace() and ch not in _EMOJI_MODIFIER_CODEPOINTS
+    ]
+    if not visible or len(visible) > 6:
+        return False
+    for ch in visible:
+        codepoint = ord(ch)
+        if ch.isalnum():
+            return False
+        if codepoint < 0x80:
+            # Non-emoji punctuation (single emoji is always in the supplementary planes).
+            return False
+    return True
+
 
 def _looks_like_reaction_message(text: str) -> bool:
-    return normalize_whitespace(text) in _REACTION_EMOJIS
+    normalized = normalize_whitespace(text)
+    if normalized in _REACTION_EMOJIS:
+        return True
+    return _is_emoji_only(normalized)
 
 
 def _timestamp_from_children(children) -> datetime | None:
@@ -282,6 +380,7 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
     seen_message_ids: set[str] = set()
     rename_events: list[tuple[datetime, int, str, str | None, str | None]] = []
     nickname_events: list[tuple[datetime, int, str, str, str | None, str | None, bool]] = []
+    member_events: list[MemberEventSeed] = []
     event_index = 0
 
     for html_file in sorted(chat_dir.glob("message_*.html")):
@@ -312,6 +411,44 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
                     else None
                 )
                 rename_events.append((ts, event_index, rename, actor_name, actor_raw_id))
+            if member_event := _extract_member_event(content or _text(container)):
+                event_kind, actor_name, target_names = member_event
+                actor_raw_id = alias_to_raw_id.get(_name_key(actor_name))
+                if actor_raw_id is None and event_kind == "left":
+                    actor_raw_id = raw_id
+                for target_name in target_names:
+                    target_raw_id = alias_to_raw_id.get(
+                        _name_key(target_name), target_name
+                    )
+                    people_by_key.setdefault(
+                        target_raw_id,
+                        PersonSeed(
+                            platform="facebook",
+                            raw_id=target_raw_id,
+                            display_name=target_name,
+                        ),
+                    )
+                    alias_to_raw_id.setdefault(_name_key(target_name), target_raw_id)
+                    payload = {
+                        "actor_name": actor_name,
+                        "actor_raw_id": actor_raw_id,
+                        "target_name": target_name,
+                        "chatId": channel.raw_id,
+                    }
+                    member_events.append(
+                        MemberEventSeed(
+                            source_name=source.name,
+                            platform="facebook",
+                            channel_raw_id=channel.raw_id,
+                            kind=event_kind,
+                            actor_raw_id=actor_raw_id,
+                            target_raw_id=target_raw_id,
+                            actor_display_name=actor_name,
+                            target_display_name=target_name,
+                            ts=ts,
+                            payload_json=json.dumps(payload, ensure_ascii=False),
+                        )
+                    )
             if nickname_data := _extract_nickname_change(content or _text(container)):
                 target_name, nickname, actor_name, is_cleared = nickname_data
                 target_raw_id = alias_to_raw_id.get(_name_key(target_name), target_name)
@@ -428,4 +565,5 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
         messages=messages,
         people=list(people_by_key.values()),
         name_changes=name_changes,
+        member_events=member_events,
     )

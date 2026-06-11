@@ -22,6 +22,9 @@ export type Overview = {
     most_active_month: { bucket: string | null; count: number };
     most_active_day: { bucket: string | null; count: number };
     most_active_hour: { bucket: string | null; count: number };
+    conversation_count: number;
+    avg_messages_per_conversation: number;
+    longest_conversation_message_count: number;
   };
   people: Array<{
     id: number;
@@ -42,6 +45,15 @@ export type TopPeople = {
     display_name: string;
     color: string;
     message_count: number;
+  }>;
+};
+
+export type PlatformOverTime = {
+  granularity: string;
+  platforms: string[];
+  points: Array<{
+    bucket: string;
+    counts: Record<string, number>;
   }>;
 };
 
