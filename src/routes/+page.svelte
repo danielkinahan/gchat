@@ -1,5 +1,7 @@
 <script lang="ts">
+    import { tick } from "svelte";
     import { goto } from "$app/navigation";
+    import MessageCard from "$lib/components/MessageCard.svelte";
     import {
         apiUrl,
         fetchJson,
@@ -816,22 +818,77 @@
         }
     }
 
+    let snippetMessages: Array<any> = [];
+    let snippetTargetId: string | null = null;
+    let snippetModalVisible = false;
+    let snippetLoading = false;
+    let snippetError = "";
+
+    function closeSnippetModal() {
+        snippetModalVisible = false;
+        snippetMessages = [];
+        snippetTargetId = null;
+        snippetError = "";
+    }
+
     async function openInContext(messageId: string) {
         if (!messageId) return;
+        snippetLoading = true;
+        snippetError = "";
         try {
-            const res = await fetchJson<{ url: string; fragment?: string }>(
-                `/api/message-context?message_id=${encodeURIComponent(messageId)}`,
+            // Try DB-driven JSON window (fast and reliable)
+            const res = await fetch(
+                apiUrl(
+                    `/api/message-window?message_id=${encodeURIComponent(messageId)}&context=10`,
+                ),
             );
-            if (res?.url) {
-                const full =
-                    apiUrl(res.url) + (res.fragment ? `#${res.fragment}` : "");
-                window.open(full, "_blank", "noopener");
-            } else {
-                languageError = "No context URL returned for message";
-            }
+            if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+            const data = await res.json();
+            // normalize attachment display URLs for MessageCard
+            snippetMessages = (data.items || []).map((m: any) => ({
+                ...m,
+                attachment_url:
+                    toDisplayAttachmentUrl(
+                        m.attachment_url,
+                        m.attachment_preview,
+                    ) || m.attachment_url,
+            }));
+            snippetTargetId = messageId;
+            snippetModalVisible = true;
+            snippetLoading = false;
+            // scroll to target element after insertion
+            await tick();
+            const el = document.getElementById(
+                `chatlog__message-container-${messageId}`,
+            );
+            if (el) el.scrollIntoView({ behavior: "auto", block: "center" });
+            return;
         } catch (err) {
-            languageError =
-                err instanceof Error ? err.message : "Failed to fetch context";
+            snippetLoading = false;
+            // Fallback: try the existing message-context / anchored flow (opens new tab)
+            try {
+                const res2 = await fetchJson<{
+                    url: string;
+                    fragment?: string;
+                }>(
+                    `/api/message-context?message_id=${encodeURIComponent(messageId)}`,
+                );
+                if (res2?.url) {
+                    const full =
+                        apiUrl(res2.url) +
+                        (res2.fragment ? `#${res2.fragment}` : "");
+                    window.open(full, "_blank", "noopener");
+                    return;
+                }
+            } catch (err2) {
+                // ignore and proceed to anchored media fallback
+            }
+            const fallback = `/api/media-anchored?message_id=${encodeURIComponent(messageId)}`;
+            window.open(
+                apiUrl(fallback) + `#chatlog__message-container-${messageId}`,
+                "_blank",
+                "noopener",
+            );
         }
     }
 
@@ -845,6 +902,8 @@
             await loadLinksData();
         }
     }
+
+    // Snippet modal markup will be rendered at the end of the page; ensure basic styles
 
     async function openInteractionsTab() {
         activeTab = "interactions";
@@ -1936,97 +1995,29 @@
                                     Show in context
                                 </button>
                             </div>
-                            {#if message.reaction_details.length}
-                                <div class="reaction-pills">
-                                    {#each message.reaction_details as reaction}
-                                        <span class="reaction-pill">
-                                            {#if reaction.image_url}
-                                                <img
-                                                    src={toReactionImageUrl(
-                                                        message.source_name,
-                                                        reaction.image_url,
-                                                    )}
-                                                    alt={reaction.name}
-                                                    loading="lazy"
-                                                />
-                                            {/if}
-                                            <span>{reaction.name}</span>
-                                            <strong>×{reaction.count}</strong>
-                                        </span>
-                                    {/each}
-                                </div>
-                            {/if}
-                            {#if youtubeEmbedUrl(message.content)}
-                                <div class="youtube-embed">
-                                    <iframe
-                                        src={youtubeEmbedUrl(message.content)!}
-                                        title="YouTube video"
-                                        loading="lazy"
-                                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                        allowfullscreen
-                                    ></iframe>
-                                </div>
-                            {/if}
-                            {#if message.content && !isYoutubeOnlyContent(message.content)}
-                                <p>{message.content}</p>
-                            {/if}
-                            {#if message.attachment_display_url && attachmentKind(message.attachment_display_url) === "image"}
-                                <img
-                                    class="reaction-attachment-image"
-                                    src={message.attachment_display_url}
-                                    alt={attachmentLabel(
-                                        message.attachment_preview ||
-                                            message.attachment_url ||
-                                            "attachment",
-                                    )}
-                                    loading="lazy"
-                                />
-                            {:else if message.attachment_display_url && attachmentKind(message.attachment_display_url) === "video"}
-                                <!-- svelte-ignore a11y_media_has_caption -->
-                                <video
-                                    class="reaction-attachment-video"
-                                    src={message.attachment_display_url}
-                                    controls
-                                    preload="metadata"
-                                >
-                                    <a
-                                        href={message.attachment_display_url}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        >{attachmentLabel(
-                                            message.attachment_preview ||
-                                                message.attachment_url ||
-                                                "attachment",
-                                        )}</a
-                                    >
-                                </video>
-                            {:else if message.attachment_display_url && attachmentKind(message.attachment_display_url) === "audio"}
-                                <audio
-                                    class="reaction-attachment-audio"
-                                    src={message.attachment_display_url}
-                                    controls
-                                    preload="none"
-                                ></audio>
-                            {:else if message.attachment_display_url && attachmentKind(message.attachment_display_url) === "link"}
-                                <p>
-                                    <a
-                                        href={message.attachment_display_url}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        >{attachmentLabel(
-                                            message.attachment_preview ||
-                                                message.attachment_url ||
-                                                "attachment",
-                                        )}</a
-                                    >
-                                </p>
-                            {:else if message.attachment_preview}
-                                <p>
-                                    Attachment: {attachmentLabel(
+                            <MessageCard
+                                message={{
+                                    id: message.id,
+                                    ts: message.ts,
+                                    content: message.content,
+                                    attachment_url:
+                                        message.attachment_url ||
+                                        message.attachment_display_url,
+                                    attachment_preview:
                                         message.attachment_preview,
-                                    )}
-                                </p>
-                            {/if}
+                                    reaction_count: message.reaction_count,
+                                    reaction_summary: message.reaction_summary,
+                                    reaction_details: message.reaction_details,
+                                    person_name: message.person_name,
+                                    person_color: message.person_color,
+                                    channel_name: message.channel_name,
+                                    source_name: message.source_name,
+                                }}
+                                highlight={false}
+                                bare={true}
+                                showMeta={false}
+                                resolveReactionImage={toReactionImageUrl}
+                            />
                         </article>
                     {/each}
                 </div>
@@ -2159,6 +2150,34 @@
             {/each}
         {/if}
     </section>
+    {#if snippetModalVisible}
+        <div
+            class="snippet-modal-backdrop"
+            on:click={() => closeSnippetModal()}
+        >
+            <div class="snippet-modal" on:click|stopPropagation>
+                <button class="close" on:click={closeSnippetModal}
+                    >Close ✕</button
+                >
+                {#if snippetLoading}
+                    <p class="muted">Loading...</p>
+                {:else if snippetError}
+                    <p class="muted">{snippetError}</p>
+                {:else}
+                    <div class="snippet-body">
+                        {#each snippetMessages as message}
+                            <MessageCard
+                                {message}
+                                highlight={message.id === snippetTargetId}
+                                resolveReactionImage={toReactionImageUrl}
+                                large={true}
+                            />
+                        {/each}
+                    </div>
+                {/if}
+            </div>
+        </div>
+    {/if}
 </main>
 
 <footer class="runtime-footer">
@@ -2476,6 +2495,38 @@
         font-size: 0.8rem;
         color: #94a3b8;
         margin-bottom: 8px;
+    }
+
+    /* Snippet modal styles */
+    .snippet-modal-backdrop {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.6);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1200;
+    }
+    .snippet-modal {
+        width: min(980px, 96%);
+        max-height: 90%;
+        overflow: auto;
+        background: #0b1220;
+        border: 1px solid #334155;
+        border-radius: 10px;
+        padding: 16px;
+    }
+    .snippet-modal .close {
+        float: right;
+        background: transparent;
+        border: none;
+        color: #cbd5e1;
+        cursor: pointer;
+        font-size: 0.95rem;
+        padding: 6px 10px;
+    }
+    .snippet-modal .snippet-body {
+        margin-top: 8px;
     }
 
     .example-message p {

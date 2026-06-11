@@ -12,9 +12,10 @@ from urllib.parse import unquote, urlencode, urlparse
 import duckdb
 import uvicorn
 import yaml
+from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from .reconciliation import load_reconciliation
 
@@ -971,6 +972,513 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         raise HTTPException(
             status_code=404, detail="Unsupported platform for message context"
         )
+
+    @app.get("/api/media-anchored")
+    def media_anchored(message_id: str) -> Response:
+        """Serve an HTML export with an injected anchor id for the specified message.
+
+        This is a best-effort helper used by the frontend to jump to a message inside
+        an export that doesn't include stable element ids. The endpoint will:
+        - Lookup the message in the DB to get platform/source/channel and content.
+        - Find the corresponding export HTML file on disk (best-effort).
+        - Insert an id attribute like `chatlog__message-container-<message_id>` on the
+          element that contains a short snippet of the message content and return the modified HTML.
+        """
+        # Lookup message
+        with _connect(app.state.db_path) as con:
+            row = con.execute(
+                """
+                SELECT m.content, c.platform_channel_id, s.platform, s.name
+                FROM messages m
+                JOIN channels c ON c.id = m.channel_id
+                JOIN sources s ON s.id = c.source_id
+                WHERE m.id = ?
+                """,
+                [message_id],
+            ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Message not found")
+        content, channel_raw_id, platform, source_name = row
+        snippet = " ".join(str(content or "").split())[:200].strip()
+
+        data_dir = app.state.data_dir
+
+        def find_file_and_root() -> tuple[Path, Path] | tuple[None, None]:
+            # Return (file_path, source_root)
+            if platform == "discord":
+                discord_root = (data_dir / "discord").resolve()
+                if not discord_root.exists():
+                    return None, None
+                for path in discord_root.rglob(f"{channel_raw_id}.html"):
+                    return path, discord_root
+                return None, None
+            if platform == "signal":
+                signal_root = (data_dir / "signal_decrypted").resolve()
+                if not signal_root.exists():
+                    return None, None
+                # first try source dirs for an exact match
+                for source_dir in signal_root.iterdir():
+                    candidate = source_dir / f"{channel_raw_id}.html"
+                    if candidate.exists():
+                        return candidate, source_dir
+                # fallback: search all html files under signal root for the snippet
+                for path in signal_root.rglob("*.html"):
+                    try:
+                        txt = path.read_text(encoding="utf-8", errors="ignore")
+                    except Exception:
+                        continue
+                    if snippet and snippet in " ".join(txt.split()):
+                        return path, path.parent
+                return None, None
+            if platform == "facebook":
+                fb_root = (data_dir / "facebook" / channel_raw_id).resolve()
+                if fb_root.exists() and fb_root.is_dir():
+                    for path in fb_root.iterdir():
+                        if path.suffix == ".html":
+                            txt = path.read_text(encoding="utf-8", errors="ignore")
+                            if snippet and snippet in " ".join(txt.split()):
+                                return path, fb_root
+                    # if no snippet match, return first html
+                    for path in fb_root.iterdir():
+                        if path.suffix == ".html":
+                            return path, fb_root
+                # fallback: search entire facebook tree
+                fb_root_all = (data_dir / "facebook").resolve()
+                if fb_root_all.exists():
+                    for path in fb_root_all.rglob("*.html"):
+                        try:
+                            txt = path.read_text(encoding="utf-8", errors="ignore")
+                        except Exception:
+                            continue
+                        if snippet and snippet in " ".join(txt.split()):
+                            return path, path.parent
+                return None, None
+            return None, None
+
+        file_and_root = find_file_and_root()
+        if not file_and_root or file_and_root[0] is None:
+            raise HTTPException(
+                status_code=404, detail="HTML export not found for message"
+            )
+        file_path, source_root = file_and_root
+
+        # Load HTML and try to find the element containing the snippet
+        try:
+            html = file_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            raise HTTPException(status_code=404, detail="Failed to read HTML export")
+
+        soup = BeautifulSoup(html, "html.parser")
+
+        # Rewrite asset URLs so they point to /api/media with platform/source/path params.
+        # This prevents the browser from requesting relative paths like /api/media/Avatar_36.png
+        # which lack the necessary query parameters.
+        try:
+            # Determine source_folder: prefer the name of source_root relative to data_dir
+            source_folder = None
+            if platform == "signal":
+                # If file_path is under data_dir/signal_decrypted/<source_folder>/..., derive source_folder
+                sig_root = (data_dir / "signal_decrypted").resolve()
+                try:
+                    rel = file_path.relative_to(sig_root)
+                    parts = rel.parts
+                    if parts:
+                        source_folder = parts[0]
+                except Exception:
+                    source_folder = (
+                        source_root.name if source_root is not None else None
+                    )
+            elif platform == "facebook":
+                # file_path parent is the chat folder; source_folder is channel_raw_id
+                source_folder = channel_raw_id
+            elif platform == "discord":
+                source_folder = source_name.removeprefix("Discord: ").strip()
+
+            if source_folder:
+                for tag in soup.find_all(True):
+                    for attr in ("src", "href"):
+                        val = tag.get(attr)
+                        if not val or not isinstance(val, str):
+                            continue
+                        v = val.strip()
+                        if (
+                            not v
+                            or v.startswith("data:")
+                            or v.startswith("http://")
+                            or v.startswith("https://")
+                        ):
+                            continue
+                        # Resolve candidate path relative to the file_path
+                        candidate = None
+                        try:
+                            candidate_path = (file_path.parent / unquote(v)).resolve()
+                            if candidate_path.exists() and candidate_path.is_file():
+                                candidate = candidate_path
+                        except Exception:
+                            candidate = None
+                        if candidate is None:
+                            # Fall back to treating v as relative to the source root
+                            try:
+                                rel_candidate = Path(unquote(v)).as_posix().lstrip("/")
+                                candidate = (
+                                    (source_root / rel_candidate)
+                                    if source_root is not None
+                                    else None
+                                )
+                                if candidate is not None and not candidate.exists():
+                                    candidate = None
+                            except Exception:
+                                candidate = None
+                        if candidate is None:
+                            continue
+                        try:
+                            rel = (
+                                candidate.relative_to(source_root).as_posix()
+                                if source_root is not None
+                                else candidate.name
+                            )
+                        except Exception:
+                            rel = candidate.name
+                        new_url = _media_url(platform, source_folder, rel)
+                        tag[attr] = new_url
+        except Exception:
+            # Non-fatal; proceed without rewriting assets
+            pass
+
+        target_id = f"chatlog__message-container-{message_id}"
+        found = None
+        if snippet:
+            # find a tag whose text contains the snippet (case-insensitive)
+            norm_snip = snippet.casefold()
+            for tag in soup.find_all(True):
+                try:
+                    text = " ".join(tag.get_text(" ", strip=True).split())
+                except Exception:
+                    continue
+                if norm_snip and norm_snip in text.casefold():
+                    found = tag
+                    break
+        if found is None:
+            # fallback: try to find element matching common message container classes
+            for cls in ["chatlog__message-container", "pam", "message", "chat-message"]:
+                el = soup.select_one(f".{cls}")
+                if el:
+                    found = el
+                    break
+        if found is not None:
+            # if the found element is nested, prefer an enclosing div
+            parent = found
+            for _ in range(3):
+                if parent.name and parent.name.lower() in {"div", "article", "li"}:
+                    break
+                if parent.parent is None:
+                    break
+                parent = parent.parent
+            parent["id"] = target_id
+        modified_html = str(soup)
+        return Response(content=modified_html, media_type="text/html")
+
+    @app.get("/api/message-snippet")
+    def message_snippet(
+        message_id: str, context: int = Query(default=5, ge=0, le=50)
+    ) -> Response:
+        """Return a small HTML page showing a window of messages around the given message id.
+
+        The page is self-contained and uses resolved /api/media URLs for attachments so the browser
+        won't attempt to load relative media paths that would otherwise 404.
+        """
+        with _connect(app.state.db_path) as con:
+            row = con.execute(
+                """
+                SELECT m.id, m.ts, m.content, m.attachment_preview, m.attachment_count, m.reaction_count, m.reaction_summary, m.reaction_details_json, m.channel_id, c.platform_channel_id, s.platform, s.name, p.display_name, p.color
+                FROM messages m
+                JOIN channels c ON c.id = m.channel_id
+                JOIN sources s ON s.id = c.source_id
+                LEFT JOIN people p ON p.id = m.person_id
+                WHERE m.id = ?
+                """,
+                [message_id],
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Message not found")
+            (
+                msg_id,
+                msg_ts,
+                msg_content,
+                msg_attach_preview,
+                msg_attach_count,
+                msg_reaction_count,
+                msg_reaction_summary,
+                msg_reaction_details,
+                msg_channel_id,
+                platform_channel_id,
+                platform,
+                source_name,
+                person_name,
+                person_color,
+            ) = row
+
+            # Fetch surrounding messages by loading the ordered message list for the channel
+            channel_rows = con.execute(
+                """
+                SELECT m.id, m.ts, m.content, m.attachment_preview, m.attachment_count, m.reaction_count, m.reaction_summary, m.reaction_details_json, p.display_name, p.color
+                FROM messages m
+                LEFT JOIN people p ON p.id = m.person_id
+                WHERE m.channel_id = ?
+                ORDER BY m.ts ASC, m.id ASC
+                """,
+                [msg_channel_id],
+            ).fetchall()
+
+            # Find index of the target message
+            idx = None
+            for i, r in enumerate(channel_rows):
+                if str(r[0]) == str(msg_id):
+                    idx = i
+                    break
+            if idx is None:
+                # If not found in channel (shouldn't happen), return only the target
+                window_rows = [
+                    (
+                        msg_id,
+                        msg_ts,
+                        msg_content,
+                        msg_attach_preview,
+                        msg_attach_count,
+                        msg_reaction_count,
+                        msg_reaction_summary,
+                        msg_reaction_details,
+                        person_name,
+                        person_color,
+                    )
+                ]
+            else:
+                start = max(0, idx - context)
+                end = min(len(channel_rows), idx + context + 1)
+                selected = channel_rows[start:end]
+                # selected contains tuples with same schema as prev_rows/next_rows
+                window_rows = []
+                for r in selected:
+                    # ensure we have consistent tuple length matching later unpack
+                    window_rows.append(r)
+
+        # Build HTML outside the DB context
+        from html import escape as _escape
+
+        def _resolve_attach(preview: str | None) -> str | None:
+            try:
+                return _resolve_local_attachment_url(
+                    preview,
+                    source_name,
+                    app.state.data_dir,
+                    app.state.signal_filename_index,
+                )
+            except Exception:
+                return None
+
+        def _attachment_html(preview: str | None):
+            url = _resolve_attach(preview)
+            if not url:
+                return ""
+            lower = url.lower()
+            if any(
+                lower.endswith(ext)
+                for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp")
+            ):
+                return (
+                    f'<div class="attachment"><img src="{url}" alt="attachment"/></div>'
+                )
+            return f'<div class="attachment"><a href="{url}" target="_blank" rel="noreferrer">Attachment</a></div>'
+
+        parts: list[str] = []
+        parts.append(
+            '<!doctype html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/>'
+        )
+        parts.append(
+            "<style>body{font-family:Inter,system-ui,Roboto,Arial,sans-serif;padding:18px;background:#0f172a;color:#e2e8f0} .snippet{max-width:900px;margin:0 auto} .message{padding:8px;border-radius:8px;margin-bottom:8px;background:rgba(255,255,255,0.02)} .message.target{background:linear-gradient(90deg,#0ea5e9, #7dd3fc);color:#04111a} .meta{font-size:0.9rem;color:#94a3b8} .content{margin-top:6px;white-space:pre-wrap} .attachment img{max-width:100%;height:auto;border-radius:6px;margin-top:6px}</style>"
+        )
+        parts.append('</head><body><div class="snippet">')
+
+        # Debug header: how many messages in window
+        total_msgs = len(window_rows)
+        parts.append(
+            f'<div class="snippet-meta">Showing {total_msgs} messages in context</div>'
+        )
+        parts.append(
+            '<div style="display:none">'
+            + _escape(str([r[0] for r in window_rows]))
+            + "</div>"
+        )
+
+        for row in window_rows:
+            (
+                r_id,
+                r_ts,
+                r_content,
+                r_attach_preview,
+                r_attach_count,
+                r_reaction_count,
+                r_reaction_summary,
+                r_reaction_details,
+                r_person_name,
+                r_person_color,
+            ) = row
+            is_target = r_id == msg_id
+            safe_person = _escape(str(r_person_name or "Unknown"))
+            safe_time = _escape(str(r_ts) if r_ts is not None else "N/A")
+            safe_content = _escape(str(r_content or ""))
+            attach_html = _attachment_html(r_attach_preview)
+            # reactions
+            reactions_html = ""
+            try:
+                if r_reaction_details:
+                    details = json.loads(r_reaction_details)
+                    # show as pills
+                    parts_reacts = []
+                    for react in details:
+                        name = _escape(str(react.get("name") or ""))
+                        count = int(react.get("count") or 0)
+                        if not name:
+                            continue
+                        parts_reacts.append(
+                            f'<span class="react-pill">{name}×{count}</span>'
+                        )
+                    if parts_reacts:
+                        reactions_html = (
+                            f'<div class="reactions">{" ".join(parts_reacts)}</div>'
+                        )
+                elif r_reaction_summary:
+                    reactions_html = f'<div class="reactions">{_escape(str(r_reaction_summary))}</div>'
+            except Exception:
+                reactions_html = ""
+            cls = "message target" if is_target else "message"
+            parts.append(
+                f'<div id="chatlog__message-container-{r_id}" class="{cls}"><div class="meta"><strong style="color:{_escape(str(r_person_color or "#fff"))}">{safe_person}</strong> <time>{safe_time}</time></div><div class="content">{safe_content}</div>{attach_html}{reactions_html}</div>'
+            )
+
+        parts.append("</div></body></html>")
+        return Response(content="\n".join(parts), media_type="text/html")
+
+    @app.get("/api/message-window")
+    def message_window(
+        message_id: str, context: int = Query(default=10, ge=0, le=50)
+    ) -> dict[str, object]:
+        """Return a JSON window of messages around the given message id.
+
+        This is a DB-driven window suitable for client-side rendering.
+        """
+        with _connect(app.state.db_path) as con:
+            row = con.execute(
+                """
+                SELECT m.id, m.ts, m.content, m.attachment_preview, m.attachment_count, m.reaction_count, m.reaction_summary, m.reaction_details_json, m.channel_id, c.platform_channel_id, s.platform, s.name, p.display_name, p.color
+                FROM messages m
+                JOIN channels c ON c.id = m.channel_id
+                JOIN sources s ON s.id = c.source_id
+                LEFT JOIN people p ON p.id = m.person_id
+                WHERE m.id = ?
+                """,
+                [message_id],
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Message not found")
+            (
+                msg_id,
+                msg_ts,
+                msg_content,
+                msg_attach_preview,
+                msg_attach_count,
+                msg_reaction_count,
+                msg_reaction_summary,
+                msg_reaction_details,
+                msg_channel_id,
+                platform_channel_id,
+                platform,
+                source_name,
+                person_name,
+                person_color,
+            ) = row
+
+            channel_rows = con.execute(
+                """
+                SELECT m.id, m.ts, m.content, m.attachment_preview, m.attachment_count, m.reaction_count, m.reaction_summary, m.reaction_details_json, p.display_name, p.color
+                FROM messages m
+                LEFT JOIN people p ON p.id = m.person_id
+                WHERE m.channel_id = ?
+                ORDER BY m.ts ASC, m.id ASC
+                """,
+                [msg_channel_id],
+            ).fetchall()
+            idx = None
+            for i, r in enumerate(channel_rows):
+                if str(r[0]) == str(msg_id):
+                    idx = i
+                    break
+            if idx is None:
+                selected = [
+                    (
+                        msg_id,
+                        msg_ts,
+                        msg_content,
+                        msg_attach_preview,
+                        msg_attach_count,
+                        msg_reaction_count,
+                        msg_reaction_summary,
+                        msg_reaction_details,
+                        person_name,
+                        person_color,
+                    )
+                ]
+            else:
+                start = max(0, idx - context)
+                end = min(len(channel_rows), idx + context + 1)
+                selected = channel_rows[start:end]
+
+        # Build JSON payload
+        items: list[dict[str, object]] = []
+        for r in selected:
+            (
+                r_id,
+                r_ts,
+                r_content,
+                r_attach_preview,
+                r_attach_count,
+                r_reaction_count,
+                r_reaction_summary,
+                r_reaction_details,
+                r_person_name,
+                r_person_color,
+            ) = r
+            attach_url = (
+                _resolve_local_attachment_url(
+                    r_attach_preview,
+                    source_name,
+                    app.state.data_dir,
+                    app.state.signal_filename_index,
+                )
+                if r_attach_preview
+                else None
+            )
+            items.append(
+                {
+                    "id": r_id,
+                    "ts": r_ts.isoformat() if r_ts else None,
+                    "content": r_content,
+                    "attachment_preview": r_attach_preview,
+                    "attachment_url": attach_url,
+                    "attachment_count": r_attach_count,
+                    "reaction_count": r_reaction_count,
+                    "reaction_summary": r_reaction_summary,
+                    "reaction_details": json.loads(r_reaction_details)
+                    if r_reaction_details
+                    else None,
+                    "person_name": r_person_name,
+                    "person_color": r_person_color,
+                    "channel_id": msg_channel_id,
+                    "platform": platform,
+                    "source_name": source_name,
+                }
+            )
+        return {"items": items}
 
     @app.get("/api/overview")
     def overview(

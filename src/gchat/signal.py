@@ -159,16 +159,42 @@ def _strip_surrounding_quotes(value: str) -> str:
 
 def _extract_group_name_change_from_text(content: str) -> tuple[str | None, str] | None:
     text = " ".join(content.split())
-    for pattern in _GROUP_NAME_PATTERNS:
-        match = pattern.match(text)
-        if not match:
-            continue
-        actor = match.group("actor").strip() or None
-        group_name = _strip_surrounding_quotes(
-            match.group("name").strip().rstrip(".!?").strip()
-        )
-        if group_name:
-            return actor, group_name
+
+    def _is_system_sentence(s: str) -> bool:
+        s_clean = s.strip().lower()
+        patterns = [
+            r"you changed the group description",
+            r"you changed the group avatar",
+            r"changed the group description",
+            r"changed the group avatar",
+            r"updated the group photo",
+            r"changed the group photo",
+            r"added .* to the group",
+            r"removed .* from the group",
+        ]
+        for pat in patterns:
+            if re.search(pat, s_clean):
+                return True
+        return False
+
+    # Try matching against a cleaned version with system-like sentences removed.
+    parts = re.split(r"(?<=[.!?])\s+", text)
+    kept = [p.strip() for p in parts if p.strip() and not _is_system_sentence(p)]
+    cleaned = " ".join(kept).strip()
+
+    candidates = [cleaned, text] if cleaned and cleaned != text else [text]
+
+    for candidate in candidates:
+        for pattern in _GROUP_NAME_PATTERNS:
+            match = pattern.match(candidate)
+            if not match:
+                continue
+            actor = match.group("actor").strip() or None
+            group_name = _strip_surrounding_quotes(
+                match.group("name").strip().rstrip(".!?").strip()
+            )
+            if group_name:
+                return actor, group_name
     return None
 
 
