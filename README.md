@@ -93,8 +93,11 @@ uv run python -m gchat serve --db data/gchat-db/gchat.duckdb --host 127.0.0.1 --
 docker compose -f compose.yml up --build
 ```
 
-The compose stack starts with the scheduler building the DuckDB file on startup,
-then starts the API on `:8000` behind the web gateway on `:3000`.
+The compose stack starts the API on `:8000` behind the web gateway on `:3000`.
+The scheduler container only rebuilds the DuckDB file when its cron triggers
+fire (see `DB_REBUILD_CRON` / `EXPORT_CRON` below); it no longer rebuilds on
+startup. If the database is missing on a fresh install, trigger a one-off
+rebuild manually with `docker compose exec scheduler sh /app/scripts/scheduler/rebuild-db.sh`.
 
 The web gateway proxies `/api/*` to the internal API service, so only the web
 service needs a published port.

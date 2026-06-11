@@ -5,8 +5,7 @@ DB_CRON="${DB_REBUILD_CRON:-0 3 */14 * *}"
 EXPORT_CRON="${EXPORT_CRON:-0 2 * * 0}"
 OFFLINE_MODE="${SCHEDULER_OFFLINE:-false}"
 
-echo "scheduler: running initial full export + database rebuild"
-sh /app/scripts/scheduler/rebuild-db.sh
+echo "scheduler: skipping startup rebuild; waiting for cron triggers"
 
 cat > /tmp/crontab <<EOF
 # Full refresh + rebuild
