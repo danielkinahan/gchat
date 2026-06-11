@@ -448,24 +448,15 @@
         return params;
     }
 
-    async function loadTopWords(searchQuery = "") {
-        const requestId = ++wordsRequestId;
+    async function loadTopWords() {
         const filterKey = currentFilterParams().toString();
-        // If we're already loading or we've already loaded for this filter set,
-        // skip unless the user provided an explicit search query (server-side q).
-        const q = searchQuery.trim().toLowerCase();
-        if (isLoadingWords || (loadedWordsFilterKey === filterKey && !q))
-            return;
+        if (isLoadingWords || loadedWordsFilterKey === filterKey) return;
+        const requestId = ++wordsRequestId;
         isLoadingWords = true;
         languageError = "";
         try {
             const params = currentFilterParams();
-            if (q) {
-                params.set("q", q);
-                params.set("limit", "200");
-            } else {
-                params.set("all", "true");
-            }
+            params.set("all", "true");
             const response = await fetchJson<{
                 items: Array<{ word: string; count: number }>;
             }>(`/api/top-words?${params.toString()}`);
@@ -486,10 +477,8 @@
             languageError =
                 err instanceof Error ? err.message : "Failed to load words";
         } finally {
-            if (requestId === wordsRequestId) {
-                loadedWordsFilterKey = filterKey;
-                isLoadingWords = false;
-            }
+            loadedWordsFilterKey = filterKey;
+            isLoadingWords = false;
         }
     }
 
@@ -530,7 +519,7 @@
     async function openLanguageTab() {
         activeTab = "language";
         if (topWords.length === 0) {
-            await loadTopWords(wordSearch);
+            await loadTopWords();
         }
     }
 
@@ -949,7 +938,7 @@
         !isLoadingWords &&
         loadedWordsFilterKey !== filterSignature
     ) {
-        void loadTopWords(wordSearch);
+        void loadTopWords();
     }
 
     function togglePerson(ids: number[]) {

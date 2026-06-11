@@ -17,11 +17,11 @@ services:
     depends_on:
       - api
 
-  scheduler:
-    build:
-      context: .
-      dockerfile: Containerfile.scheduler
-    env_file: .env
-    volumes:
-      - ./data:/data
-      - ./config:/config:ro
+  # scheduler:
+  #   build:
+  #     context: .
+  #     dockerfile: Containerfile.scheduler
+  #   env_file: .env
+  #   volumes:
+  #     - ./data:/data
+  #     - ./config:/config:ro
