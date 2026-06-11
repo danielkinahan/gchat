@@ -2,6 +2,7 @@
     import { tick } from "svelte";
     import { goto } from "$app/navigation";
     import MessageCard from "$lib/components/MessageCard.svelte";
+    import LinkPreview from "$lib/LinkPreview.svelte";
     import {
         apiUrl,
         fetchJson,
@@ -10,7 +11,7 @@
         type TopPeople,
     } from "$lib/api";
 
-    type CountMetric = "messages" | "words";
+    type CountMetric = "messages" | "words" | "conversations";
     type NicknameChange = {
         previous_name?: string | null;
         new_name: string;
@@ -205,6 +206,12 @@
     let wordMetricRequestId = 0;
     let loadedWordMetricFilterKey: string | null = null;
 
+    let conversationMetricData: MessageTabData | null = null;
+    let conversationMetricError = "";
+    let isLoadingConversationMetric = false;
+    let conversationMetricRequestId = 0;
+    let loadedConversationMetricFilterKey: string | null = null;
+
     let isLoadingWords = false;
     let isLoadingBreakdown = false;
     let languageError = "";
@@ -252,6 +259,22 @@
         count: number;
     }> = [];
     let loadedLinksFilterKey: string | null = null;
+    let selectedDomain = "";
+    let domainExamples: Array<{
+        id: string;
+        ts: string | null;
+        content: string;
+        person_name: string;
+        person_color: string;
+        channel_name: string;
+        source_name: string;
+    }> = [];
+    let showDomainExamples = false;
+    let isLoadingDomainExamples = false;
+    let isAppendingDomainExamples = false;
+    let hasMoreDomainExamples = false;
+    let domainExamplesError = "";
+    let domainExamplesRequestId = 0;
     let isLoadingInteractions = false;
     let interactionsError = "";
     let mentionSearch = "";
@@ -359,49 +382,36 @@
         }
         return null;
     };
-    const YOUTUBE_EMBED_BASE = "https://www.youtube-nocookie.com/embed";
-    const YOUTUBE_URL_PATTERN =
-        /(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/i;
-    const YOUTUBE_ONLY_PATTERN =
-        /^\s*(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)[^\s]+\s*$/i;
-    const SOUNDCLOUD_URL_PATTERN =
-        /https?:\/\/(?:(?:www|m|on)\.)?(?:soundcloud\.com|snd\.sc)\/[^\s]+/i;
-    const SOUNDCLOUD_ONLY_PATTERN =
-        /^\s*https?:\/\/(?:(?:www|m|on)\.)?(?:soundcloud\.com|snd\.sc)\/[^\s]+\s*$/i;
-    const youtubeEmbedUrl = (content: string | null): string | null => {
+    const MESSAGE_URL_PATTERN = /\bhttps?:\/\/[^\s<>"']+/gi;
+    const PREVIEW_LINK_LIMIT = 2;
+    const extractMessageLinks = (content: string | null): string[] => {
         const text = (content ?? "").trim();
-        if (!text) return null;
-        const match = text.match(YOUTUBE_URL_PATTERN);
-        if (!match) return null;
-        return `${YOUTUBE_EMBED_BASE}/${match[1]}?rel=0`;
+        if (!text) return [];
+        const matches = text.match(MESSAGE_URL_PATTERN);
+        if (!matches) return [];
+        const seen = new Set<string>();
+        const result: string[] = [];
+        for (const raw of matches) {
+            const cleaned = raw.replace(/[)\].,!?;:]+$/u, "");
+            if (cleaned.length < 8) continue;
+            if (seen.has(cleaned)) continue;
+            seen.add(cleaned);
+            result.push(cleaned);
+            if (result.length >= PREVIEW_LINK_LIMIT) break;
+        }
+        return result;
     };
-    const isYoutubeOnlyContent = (content: string | null): boolean => {
+    const isUrlOnlyMessage = (content: string | null): boolean => {
         const text = (content ?? "").trim();
-        return Boolean(text) && YOUTUBE_ONLY_PATTERN.test(text);
+        if (!text) return false;
+        const matches = text.match(MESSAGE_URL_PATTERN);
+        if (!matches || matches.length === 0) return false;
+        let stripped = text;
+        for (const match of matches) {
+            stripped = stripped.replace(match, "");
+        }
+        return stripped.replace(/[\s\u200b]+/g, "").length === 0;
     };
-    const soundcloudEmbedUrl = (content: string | null): string | null => {
-        const text = (content ?? "").trim();
-        if (!text) return null;
-        const match = text.match(SOUNDCLOUD_URL_PATTERN);
-        if (!match) return null;
-        const params = new URLSearchParams({
-            url: match[0],
-            color: "#1d4ed8",
-            auto_play: "false",
-            hide_related: "true",
-            show_comments: "false",
-            show_user: "true",
-            show_reposts: "false",
-            visual: "false",
-        });
-        return `https://w.soundcloud.com/player/?${params.toString()}`;
-    };
-    const isSoundcloudOnlyContent = (content: string | null): boolean => {
-        const text = (content ?? "").trim();
-        return Boolean(text) && SOUNDCLOUD_ONLY_PATTERN.test(text);
-    };
-    const embedOnlyContent = (content: string | null): boolean =>
-        isYoutubeOnlyContent(content) || isSoundcloudOnlyContent(content);
     const formatRuntimeMtime = (mtimeNs: number | null): string => {
         if (mtimeNs == null) return "missing";
         return new Date(mtimeNs / 1_000_000).toLocaleString();
@@ -455,11 +465,15 @@
     let runtimeState = data.runtimeState;
 
     function messageCountLabel(metric: CountMetric): string {
-        return metric === "words" ? "words" : "messages";
+        if (metric === "words") return "words";
+        if (metric === "conversations") return "conversations";
+        return "messages";
     }
 
     function messageCountTitle(metric: CountMetric): string {
-        return metric === "words" ? "Word count" : "Message count";
+        if (metric === "words") return "Word count";
+        if (metric === "conversations") return "Conversation count";
+        return "Message count";
     }
 
     function attachmentKind(
@@ -638,6 +652,83 @@
         }
     }
 
+    async function selectDomain(domain: string) {
+        if (selectedDomain === domain && showDomainExamples) {
+            showDomainExamples = false;
+            return;
+        }
+        selectedDomain = domain;
+        domainExamples = [];
+        hasMoreDomainExamples = false;
+        showDomainExamples = true;
+        await loadDomainExamples(0, false);
+    }
+
+    async function loadDomainExamples(offset = 0, append = false) {
+        if (!selectedDomain) return;
+        const requestId = ++domainExamplesRequestId;
+        if (append) {
+            isAppendingDomainExamples = true;
+        } else {
+            isLoadingDomainExamples = true;
+        }
+        domainExamplesError = "";
+        try {
+            const params = currentFilterParams();
+            params.set("domain", selectedDomain);
+            params.set("limit", offset > 0 ? "5" : "6");
+            if (offset > 0) params.set("offset", String(offset));
+            const response = await fetchJson<{
+                domain: string;
+                has_more: boolean;
+                messages: Array<{
+                    id: string;
+                    ts: string | null;
+                    content: string;
+                    person_name: string;
+                    person_color: string;
+                    channel_name: string;
+                    source_name: string;
+                }>;
+            }>(`/api/domain-examples?${params.toString()}`);
+            if (requestId !== domainExamplesRequestId) return;
+            if (response.domain === selectedDomain) {
+                domainExamples = append
+                    ? [...domainExamples, ...response.messages]
+                    : response.messages;
+                hasMoreDomainExamples = response.has_more;
+            }
+        } catch (err) {
+            if (requestId !== domainExamplesRequestId) return;
+            domainExamplesError =
+                err instanceof Error
+                    ? err.message
+                    : "Failed to load example messages";
+        } finally {
+            if (requestId === domainExamplesRequestId) {
+                isLoadingDomainExamples = false;
+                isAppendingDomainExamples = false;
+            }
+        }
+    }
+
+    async function showMoreDomainExamples() {
+        const oldScroll = typeof window !== "undefined" ? window.scrollY : 0;
+        const oldHeight =
+            typeof document !== "undefined"
+                ? document.documentElement.scrollHeight
+                : 0;
+        await loadDomainExamples(domainExamples.length, true);
+        const newHeight =
+            typeof document !== "undefined"
+                ? document.documentElement.scrollHeight
+                : 0;
+        const delta = newHeight - oldHeight;
+        if (typeof window !== "undefined" && delta !== 0) {
+            window.scrollTo({ top: oldScroll + delta });
+        }
+    }
+
     async function loadInteractionsData() {
         const filterKey = currentFilterParams().toString();
         if (isLoadingInteractions || loadedInteractionsFilterKey === filterKey)
@@ -727,6 +818,68 @@
         }
     }
 
+    async function fetchMetricTabData(
+        metric: "words" | "conversations",
+    ): Promise<MessageTabData> {
+        const baseParams = currentFilterParams();
+        baseParams.set("metric", metric);
+        const query = baseParams.toString();
+        const [
+            overview,
+            topPeople,
+            calendar,
+            activityHeatmap,
+            messagesByMonth,
+            messagesByHour,
+            topChats,
+            topThemes,
+        ] = await Promise.all([
+            fetchJson<Overview>(`/api/overview?${query}`),
+            fetchJson<TopPeople>(`/api/top-people?limit=10&${query}`),
+            fetchJson<{
+                points: Array<{ day: string; message_count: number }>;
+            }>(`/api/calendar?${query}`),
+            fetchJson<{
+                points: Array<{
+                    weekday: number;
+                    hour: number;
+                    message_count: number;
+                }>;
+            }>(`/api/activity-heatmap?${query}`),
+            fetchJson<{
+                points: Array<{ month: string; message_count: number }>;
+            }>(`/api/messages-by-month?${query}`),
+            fetchJson<{
+                points: Array<{ hour: number; message_count: number }>;
+            }>(`/api/messages-by-hour?${query}`),
+            fetchJson<{
+                items: Array<{
+                    id: number;
+                    name: string;
+                    theme_name: string;
+                    message_count: number;
+                }>;
+            }>(`/api/top-chats?limit=15&${query}`),
+            fetchJson<{
+                items: Array<{
+                    id: number;
+                    name: string;
+                    message_count: number;
+                }>;
+            }>(`/api/top-themes?limit=15&${query}`),
+        ]);
+        return {
+            overview,
+            topPeople,
+            calendar,
+            activityHeatmap,
+            messagesByMonth,
+            messagesByHour,
+            topChats,
+            topThemes,
+        };
+    }
+
     async function loadWordMetricData() {
         const filterKey = currentFilterParams().toString();
         if (
@@ -739,64 +892,9 @@
         wordMetricData = null;
         const requestId = ++wordMetricRequestId;
         try {
-            const baseParams = currentFilterParams();
-            baseParams.set("metric", "words");
-            const query = baseParams.toString();
-            const [
-                overview,
-                topPeople,
-                calendar,
-                activityHeatmap,
-                messagesByMonth,
-                messagesByHour,
-                topChats,
-                topThemes,
-            ] = await Promise.all([
-                fetchJson<Overview>(`/api/overview?${query}`),
-                fetchJson<TopPeople>(`/api/top-people?limit=10&${query}`),
-                fetchJson<{
-                    points: Array<{ day: string; message_count: number }>;
-                }>(`/api/calendar?${query}`),
-                fetchJson<{
-                    points: Array<{
-                        weekday: number;
-                        hour: number;
-                        message_count: number;
-                    }>;
-                }>(`/api/activity-heatmap?${query}`),
-                fetchJson<{
-                    points: Array<{ month: string; message_count: number }>;
-                }>(`/api/messages-by-month?${query}`),
-                fetchJson<{
-                    points: Array<{ hour: number; message_count: number }>;
-                }>(`/api/messages-by-hour?${query}`),
-                fetchJson<{
-                    items: Array<{
-                        id: number;
-                        name: string;
-                        theme_name: string;
-                        message_count: number;
-                    }>;
-                }>(`/api/top-chats?limit=15&${query}`),
-                fetchJson<{
-                    items: Array<{
-                        id: number;
-                        name: string;
-                        message_count: number;
-                    }>;
-                }>(`/api/top-themes?limit=15&${query}`),
-            ]);
+            const result = await fetchMetricTabData("words");
             if (requestId !== wordMetricRequestId) return;
-            wordMetricData = {
-                overview,
-                topPeople,
-                calendar,
-                activityHeatmap,
-                messagesByMonth,
-                messagesByHour,
-                topChats,
-                topThemes,
-            };
+            wordMetricData = result;
             overviewData = wordMetricData;
             loadedWordMetricFilterKey = filterKey;
         } catch (err) {
@@ -809,6 +907,38 @@
             if (requestId === wordMetricRequestId) {
                 loadedWordMetricFilterKey = filterKey;
                 isLoadingWordMetric = false;
+            }
+        }
+    }
+
+    async function loadConversationMetricData() {
+        const filterKey = currentFilterParams().toString();
+        if (
+            isLoadingConversationMetric ||
+            (loadedConversationMetricFilterKey === filterKey &&
+                conversationMetricData)
+        )
+            return;
+        isLoadingConversationMetric = true;
+        conversationMetricError = "";
+        conversationMetricData = null;
+        const requestId = ++conversationMetricRequestId;
+        try {
+            const result = await fetchMetricTabData("conversations");
+            if (requestId !== conversationMetricRequestId) return;
+            conversationMetricData = result;
+            overviewData = conversationMetricData;
+            loadedConversationMetricFilterKey = filterKey;
+        } catch (err) {
+            if (requestId !== conversationMetricRequestId) return;
+            conversationMetricError =
+                err instanceof Error
+                    ? err.message
+                    : "Failed to load conversation counts";
+        } finally {
+            if (requestId === conversationMetricRequestId) {
+                loadedConversationMetricFilterKey = filterKey;
+                isLoadingConversationMetric = false;
             }
         }
     }
@@ -1094,6 +1224,14 @@
         ) {
             void loadWordMetricData();
         }
+        if (
+            metric === "conversations" &&
+            activeTab === "overview" &&
+            (loadedConversationMetricFilterKey !== filterSignature ||
+                !conversationMetricData)
+        ) {
+            void loadConversationMetricData();
+        }
     }
 
     $: fromDate = data.filters.from;
@@ -1125,6 +1263,24 @@
         void loadWordMetricData();
     }
 
+    $: if (
+        messageMetric === "conversations" &&
+        activeTab === "overview" &&
+        !isLoadingConversationMetric &&
+        loadedConversationMetricFilterKey !== filterSignature
+    ) {
+        void loadConversationMetricData();
+    }
+
+    let lastDomainExamplesFilter = filterSignature;
+    $: if (filterSignature !== lastDomainExamplesFilter) {
+        lastDomainExamplesFilter = filterSignature;
+        showDomainExamples = false;
+        selectedDomain = "";
+        domainExamples = [];
+        hasMoreDomainExamples = false;
+    }
+
     $: if (messageMetric === "messages") {
         overviewData = {
             overview: data.overview,
@@ -1139,6 +1295,9 @@
     }
     $: if (messageMetric === "words" && wordMetricData) {
         overviewData = wordMetricData;
+    }
+    $: if (messageMetric === "conversations" && conversationMetricData) {
+        overviewData = conversationMetricData;
     }
     $: overviewMetricLabel = messageCountLabel(messageMetric);
     $: overviewMetricTitle = messageCountTitle(messageMetric);
@@ -1238,11 +1397,8 @@
         PLATFORM_COLORS[platform.toLowerCase()] ?? "#a855f7";
     $: platformOverTimePoints = data.platformOverTime.points;
     $: platformOverTimeMax = Math.max(
-        ...platformOverTimePoints.map((point) =>
-            Object.values(point.counts).reduce(
-                (sum, value) => sum + (value || 0),
-                0,
-            ),
+        ...platformOverTimePoints.flatMap((point) =>
+            Object.values(point.counts).map((value) => value || 0),
         ),
         1,
     );
@@ -1250,6 +1406,49 @@
         1,
         Math.ceil(platformOverTimePoints.length / 8),
     );
+    const PLATFORM_CHART_WIDTH = 960;
+    const PLATFORM_CHART_HEIGHT = 280;
+    const PLATFORM_CHART_PADDING = { top: 16, right: 16, bottom: 28, left: 56 };
+    $: platformChartInnerWidth =
+        PLATFORM_CHART_WIDTH -
+        PLATFORM_CHART_PADDING.left -
+        PLATFORM_CHART_PADDING.right;
+    $: platformChartInnerHeight =
+        PLATFORM_CHART_HEIGHT -
+        PLATFORM_CHART_PADDING.top -
+        PLATFORM_CHART_PADDING.bottom;
+    function platformChartX(index: number, total: number): number {
+        if (total <= 1) {
+            return PLATFORM_CHART_PADDING.left + platformChartInnerWidth / 2;
+        }
+        return (
+            PLATFORM_CHART_PADDING.left +
+            (index / (total - 1)) * platformChartInnerWidth
+        );
+    }
+    function platformChartY(value: number): number {
+        const ratio = Math.max(0, value) / platformOverTimeMax;
+        return (
+            PLATFORM_CHART_PADDING.top +
+            (1 - Math.min(ratio, 1)) * platformChartInnerHeight
+        );
+    }
+    $: platformLines = data.platformOverTime.platforms.map((platform) => {
+        const points = platformOverTimePoints.map((point, i) => ({
+            x: platformChartX(i, platformOverTimePoints.length),
+            y: platformChartY(point.counts[platform] || 0),
+            value: point.counts[platform] || 0,
+            bucket: point.bucket,
+        }));
+        return { platform, color: platformColor(platform), points };
+    });
+    $: platformGridLines = [0, 0.25, 0.5, 0.75, 1].map((ratio) => ({
+        ratio,
+        y:
+            PLATFORM_CHART_PADDING.top +
+            (1 - ratio) * platformChartInnerHeight,
+        label: Math.round(platformOverTimeMax * ratio).toLocaleString(),
+    }));
     $: weekdayTotals = weekdayLabels.map((_, index) =>
         overviewData.activityHeatmap.points
             .filter((point) => point.weekday === index + 1)
@@ -1520,6 +1719,11 @@
             on:click={openLanguageTab}>Language</button
         >
         <button
+            class:active={activeTab === "links"}
+            type="button"
+            on:click={openLinksTab}>Links</button
+        >
+        <button
             class:active={activeTab === "chats"}
             type="button"
             on:click={openChatsTab}>Chats</button
@@ -1528,11 +1732,6 @@
             class:active={activeTab === "nicknames"}
             type="button"
             on:click={openNicknamesTab}>Nicknames</button
-        >
-        <button
-            class:active={activeTab === "links"}
-            type="button"
-            on:click={openLinksTab}>Links</button
         >
         <button
             class:active={activeTab === "interactions"}
@@ -1555,6 +1754,25 @@
                 {:else}
                     <p class="muted">
                         {wordMetricError || "Word counts are unavailable."}
+                    </p>
+                {/if}
+            </div>
+        </section>
+    {:else if messageMetric === "conversations" && !conversationMetricData}
+        <section
+            class="overview-top"
+            class:tab-hidden={activeTab !== "overview"}
+        >
+            <div class="panel timeline-panel">
+                <div class="panel-head">
+                    <h2>Conversation counts</h2>
+                </div>
+                {#if isLoadingConversationMetric}
+                    <p class="muted">Loading conversation counts...</p>
+                {:else}
+                    <p class="muted">
+                        {conversationMetricError ||
+                            "Conversation counts are unavailable."}
                     </p>
                 {/if}
             </div>
@@ -1583,6 +1801,12 @@
                             class:active={messageMetric === "words"}
                             on:click={() => setMessageMetric("words")}
                             >Words</button
+                        >
+                        <button
+                            type="button"
+                            class:active={messageMetric === "conversations"}
+                            on:click={() => setMessageMetric("conversations")}
+                            >Conversations</button
                         >
                     </div>
                 </div>
@@ -1924,76 +2148,90 @@
                 {#if platformOverTimePoints.length === 0}
                     <p class="muted">No platform data available.</p>
                 {:else}
-                    <div class="timeline-plot">
-                        <div class="timeline-axis">
-                            <span
-                                >{Math.round(
-                                    platformOverTimeMax,
-                                ).toLocaleString()}</span
-                            >
-                            <span
-                                >{Math.round(
-                                    platformOverTimeMax * 0.75,
-                                ).toLocaleString()}</span
-                            >
-                            <span
-                                >{Math.round(
-                                    platformOverTimeMax * 0.5,
-                                ).toLocaleString()}</span
-                            >
-                            <span
-                                >{Math.round(
-                                    platformOverTimeMax * 0.25,
-                                ).toLocaleString()}</span
-                            >
-                            <span>0</span>
-                        </div>
-                        <div class="timeline-chart">
-                            {#each platformOverTimePoints as point, i}
-                                {@const total = Object.values(
-                                    point.counts,
-                                ).reduce(
-                                    (sum, value) => sum + (value || 0),
-                                    0,
-                                )}
-                                <div
-                                    class="timeline-bar-wrap"
-                                    title={`${new Date(point.bucket).toLocaleDateString(
-                                        "en-US",
-                                        { month: "long", year: "numeric" },
-                                    )}: ${total.toLocaleString()} messages`}
+                    <div class="platform-line-chart">
+                        <svg
+                            viewBox={`0 0 ${PLATFORM_CHART_WIDTH} ${PLATFORM_CHART_HEIGHT}`}
+                            preserveAspectRatio="none"
+                            role="img"
+                            aria-label="Platform usage over time"
+                        >
+                            {#each platformGridLines as gridLine}
+                                <line
+                                    class="grid-line"
+                                    x1={PLATFORM_CHART_PADDING.left}
+                                    x2={PLATFORM_CHART_WIDTH -
+                                        PLATFORM_CHART_PADDING.right}
+                                    y1={gridLine.y}
+                                    y2={gridLine.y}
+                                />
+                                <text
+                                    class="axis-label-y"
+                                    x={PLATFORM_CHART_PADDING.left - 8}
+                                    y={gridLine.y + 4}
+                                    text-anchor="end">{gridLine.label}</text
                                 >
-                                    <div class="timeline-bar-slot">
-                                        <div
-                                            class="platform-stack"
-                                            style={`height:${(total / platformOverTimeMax) * 100}%`}
-                                        >
-                                            {#each data.platformOverTime.platforms as platform}
-                                                {@const count =
-                                                    point.counts[platform] ||
-                                                    0}
-                                                {#if count > 0}
-                                                    <div
-                                                        class="platform-segment"
-                                                        style={`flex:${count};background:${platformColor(platform)}`}
-                                                    ></div>
-                                                {/if}
-                                            {/each}
-                                        </div>
-                                    </div>
-                                    <span class="timeline-label"
-                                        >{i % platformLabelStep === 0
-                                            ? new Date(
-                                                  point.bucket,
-                                              ).toLocaleDateString("en-US", {
-                                                  month: "short",
-                                                  year: "2-digit",
-                                              })
-                                            : ""}</span
-                                    >
-                                </div>
                             {/each}
-                        </div>
+                            {#each platformOverTimePoints as point, i}
+                                {#if i % platformLabelStep === 0}
+                                    <text
+                                        class="axis-label-x"
+                                        x={platformChartX(
+                                            i,
+                                            platformOverTimePoints.length,
+                                        )}
+                                        y={PLATFORM_CHART_HEIGHT -
+                                            PLATFORM_CHART_PADDING.bottom +
+                                            18}
+                                        text-anchor="middle"
+                                    >
+                                        {new Date(
+                                            point.bucket,
+                                        ).toLocaleDateString("en-US", {
+                                            month: "short",
+                                            year: "2-digit",
+                                        })}
+                                    </text>
+                                {/if}
+                            {/each}
+                            {#each platformLines as line}
+                                {#if line.points.length > 0}
+                                    <polyline
+                                        class="platform-line"
+                                        fill="none"
+                                        stroke={line.color}
+                                        stroke-width="2"
+                                        stroke-linejoin="round"
+                                        stroke-linecap="round"
+                                        points={line.points
+                                            .map(
+                                                (point) =>
+                                                    `${point.x},${point.y}`,
+                                            )
+                                            .join(" ")}
+                                    />
+                                    {#each line.points as point}
+                                        <circle
+                                            class="platform-line-dot"
+                                            cx={point.x}
+                                            cy={point.y}
+                                            r="3"
+                                            fill={line.color}
+                                        >
+                                            <title
+                                                >{new Date(
+                                                    point.bucket,
+                                                ).toLocaleDateString("en-US", {
+                                                    month: "long",
+                                                    year: "numeric",
+                                                })} ·
+                                                {line.platform}:
+                                                {point.value.toLocaleString()}</title
+                                            >
+                                        </circle>
+                                    {/each}
+                                {/if}
+                            {/each}
+                        </svg>
                     </div>
                 {/if}
             </div>
@@ -2118,35 +2356,12 @@
                                             Show in context
                                         </button>
                                     </div>
-                                    {#if youtubeEmbedUrl(message.content)}
-                                        <div class="youtube-embed">
-                                            <iframe
-                                                src={youtubeEmbedUrl(
-                                                    message.content,
-                                                )!}
-                                                title="YouTube video"
-                                                loading="lazy"
-                                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                                allowfullscreen
-                                            ></iframe>
-                                        </div>
-                                    {:else if soundcloudEmbedUrl(message.content)}
-                                        <div class="soundcloud-embed">
-                                            <iframe
-                                                src={soundcloudEmbedUrl(
-                                                    message.content,
-                                                )!}
-                                                title="SoundCloud track"
-                                                loading="lazy"
-                                                scrolling="no"
-                                                frameborder="no"
-                                                allow="autoplay"
-                                            ></iframe>
-                                        </div>
-                                    {/if}
-                                    {#if message.content && !embedOnlyContent(message.content)}
+                                    {#if message.content && !isUrlOnlyMessage(message.content)}
                                         <p>{message.content}</p>
                                     {/if}
+                                    {#each extractMessageLinks(message.content) as link (link)}
+                                        <LinkPreview url={link} />
+                                    {/each}
                                 </div>
                             {/each}
                         </div>
@@ -2191,14 +2406,13 @@
             {:else}
                 <div class="rank-list">
                     {#each visibleDomains as domain}
-                        <div class="rank-row">
-                            <span class="rank-name">
-                                <a
-                                    href={`https://${domain.domain}`}
-                                    target="_blank"
-                                    rel="noreferrer">{domain.domain}</a
-                                >
-                            </span>
+                        <button
+                            type="button"
+                            class="rank-row domain-row"
+                            class:selected={selectedDomain === domain.domain}
+                            on:click={() => selectDomain(domain.domain)}
+                        >
+                            <span class="rank-name">{domain.domain}</span>
                             <div class="rank-track">
                                 <div
                                     class="rank-fill domain"
@@ -2206,7 +2420,7 @@
                                 ></div>
                             </div>
                             <strong>{domain.count.toLocaleString()}</strong>
-                        </div>
+                        </button>
                     {/each}
                 </div>
             {/if}
@@ -2238,6 +2452,81 @@
                 </div>
             {/if}
         </div>
+
+        {#if showDomainExamples && selectedDomain}
+            <div class="panel example-panel domain-examples-panel">
+                <div class="panel-head">
+                    <h2>
+                        Messages linking
+                        <a
+                            href={`https://${selectedDomain}`}
+                            target="_blank"
+                            rel="noreferrer">{selectedDomain}</a
+                        >
+                    </h2>
+                    <button
+                        type="button"
+                        class="examples-toggle"
+                        on:click={() => (showDomainExamples = false)}
+                        >Hide</button
+                    >
+                </div>
+                {#if domainExamplesError}
+                    <p class="muted">{domainExamplesError}</p>
+                {:else if isLoadingDomainExamples}
+                    <p class="muted">Loading example messages...</p>
+                {:else if domainExamples.length === 0}
+                    <p class="muted">No example messages found.</p>
+                {:else}
+                    <div class="example-list">
+                        {#each domainExamples as message}
+                            <div class="example-message">
+                                <div class="example-meta">
+                                    <strong
+                                        style={`color:${message.person_color}`}
+                                        >{message.person_name}</strong
+                                    >
+                                    <span>{message.channel_name}</span>
+                                    <time
+                                        >{message.ts
+                                            ? new Date(
+                                                  message.ts,
+                                              ).toLocaleString()
+                                            : "N/A"}</time
+                                    >
+                                    <button
+                                        type="button"
+                                        class="show-context"
+                                        on:click={() =>
+                                            openInContext(message.id)}
+                                    >
+                                        Show in context
+                                    </button>
+                                </div>
+                                {#if message.content && !isUrlOnlyMessage(message.content)}
+                                    <p>{message.content}</p>
+                                {/if}
+                                {#each extractMessageLinks(message.content) as link (link)}
+                                    <LinkPreview url={link} />
+                                {/each}
+                            </div>
+                        {/each}
+                    </div>
+                    {#if hasMoreDomainExamples}
+                        <button
+                            type="button"
+                            class="examples-toggle"
+                            on:click={showMoreDomainExamples}
+                            disabled={isAppendingDomainExamples}
+                        >
+                            {isAppendingDomainExamples
+                                ? "Loading..."
+                                : "Show 5 more messages"}
+                        </button>
+                    {/if}
+                {/if}
+            </div>
+        {/if}
     </section>
 
     <section
@@ -3429,13 +3718,49 @@
         background: #8b5cf6;
     }
 
-    .rank-name a {
-        color: inherit;
-        text-decoration: none;
+    button.rank-row {
+        all: unset;
+        cursor: pointer;
+        display: grid;
+        grid-template-columns: minmax(120px, 1fr) minmax(80px, 1.4fr) auto;
+        gap: 8px;
+        align-items: center;
+        font-size: 0.82rem;
+        padding: 4px 6px;
+        border-radius: 6px;
+        border: 1px solid transparent;
+        transition:
+            background 0.12s ease,
+            border-color 0.12s ease;
     }
 
-    .rank-name a:hover {
-        text-decoration: underline;
+    button.rank-row:hover {
+        background: rgba(99, 102, 241, 0.08);
+    }
+
+    button.rank-row.selected {
+        background: rgba(99, 102, 241, 0.14);
+        border-color: rgba(99, 102, 241, 0.45);
+    }
+
+    button.rank-row:focus-visible {
+        outline: 2px solid #6366f1;
+        outline-offset: 2px;
+    }
+
+    .domain-examples-panel {
+        grid-column: 1 / -1;
+    }
+
+    .domain-examples-panel .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+    }
+
+    .domain-examples-panel .panel-head a {
+        color: inherit;
     }
 
     .interactions-feed {
@@ -3609,38 +3934,6 @@
         font-size: 0.85rem;
     }
 
-    .youtube-embed {
-        margin-top: 10px;
-        aspect-ratio: 16 / 9;
-        width: min(100%, 520px);
-        border-radius: 14px;
-        overflow: hidden;
-        border: 1px solid #1f2937;
-        background: #020617;
-    }
-
-    .youtube-embed iframe {
-        width: 100%;
-        height: 100%;
-        border: 0;
-    }
-
-    .soundcloud-embed {
-        margin-top: 10px;
-        width: min(100%, 520px);
-        height: 166px;
-        border-radius: 14px;
-        overflow: hidden;
-        border: 1px solid #1f2937;
-        background: #020617;
-    }
-
-    .soundcloud-embed iframe {
-        width: 100%;
-        height: 100%;
-        border: 0;
-    }
-
     .platform-panel .panel-head {
         display: flex;
         flex-wrap: wrap;
@@ -3671,17 +3964,32 @@
         display: inline-block;
     }
 
-    .platform-stack {
+    .platform-line-chart {
+        margin-top: 16px;
         width: 100%;
-        display: flex;
-        flex-direction: column-reverse;
-        align-self: flex-end;
-        border-radius: 4px;
-        overflow: hidden;
     }
 
-    .platform-segment {
+    .platform-line-chart svg {
         width: 100%;
+        height: auto;
+        display: block;
+    }
+
+    .platform-line-chart .grid-line {
+        stroke: rgba(148, 163, 184, 0.18);
+        stroke-width: 1;
+        stroke-dasharray: 4 4;
+    }
+
+    .platform-line-chart .axis-label-x,
+    .platform-line-chart .axis-label-y {
+        fill: #94a3b8;
+        font-size: 11px;
+        font-family: inherit;
+    }
+
+    .platform-line-chart .platform-line {
+        filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
     }
 
     .hint {

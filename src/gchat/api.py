@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
+import socket
 import threading
+import time as _time
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlencode, urlparse
+from urllib.parse import unquote, urlencode, urljoin, urlparse
 
 import duckdb
+import httpx2 as httpx
 import uvicorn
 import yaml
 from bs4 import BeautifulSoup
@@ -124,6 +128,137 @@ COMMON_STOP_WORDS = {
 }
 _THEME_CHANNEL_IDS: dict[str, list[int]] = {}
 
+_LINK_PREVIEW_CACHE_LOCK = threading.Lock()
+_LINK_PREVIEW_CACHE: dict[str, dict[str, Any]] = {}
+_LINK_PREVIEW_TTL_SECONDS = 60 * 60 * 24 * 7  # cache successes for 7 days
+_LINK_PREVIEW_ERROR_TTL_SECONDS = 60 * 30  # cache failures for 30 minutes
+_LINK_PREVIEW_TIMEOUT_SECONDS = 6.0
+_LINK_PREVIEW_MAX_BYTES = 1024 * 1024  # only parse the first 1 MiB
+_LINK_PREVIEW_USER_AGENT = (
+    "Mozilla/5.0 (compatible; gchat-link-preview/1.0; +https://github.com/gchat)"
+)
+
+
+def _is_safe_link_host(host: str) -> bool:
+    """Reject obvious internal/loopback hosts to mitigate SSRF abuse."""
+    if not host:
+        return False
+    lowered = host.split(":")[0].strip().lower()
+    if lowered in {"localhost", "broadcasthost"} or lowered.endswith(".local"):
+        return False
+    try:
+        addresses = socket.getaddrinfo(lowered, None)
+    except OSError:
+        return False
+    for entry in addresses:
+        try:
+            ip = ipaddress.ip_address(entry[4][0])
+        except ValueError:
+            continue
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return False
+    return True
+
+
+def _select_link_preview_meta(
+    soup: BeautifulSoup, names: list[str]
+) -> str | None:
+    """Find the first matching <meta> tag content for the given property names."""
+    for name in names:
+        tag = soup.find("meta", attrs={"property": name})
+        if tag is None:
+            tag = soup.find("meta", attrs={"name": name})
+        if tag is None:
+            continue
+        content = tag.get("content")
+        if isinstance(content, str):
+            stripped = content.strip()
+            if stripped:
+                return stripped
+    return None
+
+
+def _fetch_link_preview(url: str) -> dict[str, Any]:
+    """Fetch the URL and parse OpenGraph/HTML metadata into a preview payload."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError("URL must be http(s) with a host")
+    if not _is_safe_link_host(parsed.netloc):
+        raise ValueError("Host is not allowed")
+
+    headers = {
+        "User-Agent": _LINK_PREVIEW_USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    with httpx.Client(
+        timeout=_LINK_PREVIEW_TIMEOUT_SECONDS,
+        follow_redirects=True,
+        headers=headers,
+    ) as client:
+        with client.stream("GET", url) as response:
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "")
+            if "html" not in content_type.lower():
+                raise ValueError(f"Unsupported content-type: {content_type}")
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in response.iter_bytes():
+                chunks.append(chunk)
+                total += len(chunk)
+                if total >= _LINK_PREVIEW_MAX_BYTES:
+                    break
+            raw = b"".join(chunks)[:_LINK_PREVIEW_MAX_BYTES]
+            final_url = str(response.url)
+            encoding = response.encoding or "utf-8"
+    try:
+        body = raw.decode(encoding, errors="replace")
+    except LookupError:
+        body = raw.decode("utf-8", errors="replace")
+    soup = BeautifulSoup(body, "html.parser")
+
+    title = _select_link_preview_meta(soup, ["og:title", "twitter:title"])
+    if not title:
+        title_tag = soup.find("title")
+        if title_tag is not None and title_tag.string:
+            title = title_tag.string.strip()
+    description = _select_link_preview_meta(
+        soup, ["og:description", "twitter:description", "description"]
+    )
+    image = _select_link_preview_meta(
+        soup, ["og:image", "og:image:url", "twitter:image", "twitter:image:src"]
+    )
+    if image:
+        image = urljoin(final_url, image)
+    site_name = _select_link_preview_meta(soup, ["og:site_name", "application-name"])
+    if not site_name:
+        site_name = urlparse(final_url).netloc
+    favicon: str | None = None
+    icon_link = soup.find(
+        "link", rel=lambda value: bool(value) and "icon" in value.lower()
+    )
+    if icon_link is not None:
+        href = icon_link.get("href")
+        if isinstance(href, str) and href.strip():
+            favicon = urljoin(final_url, href.strip())
+
+    return {
+        "url": url,
+        "resolved_url": final_url,
+        "title": title,
+        "description": description,
+        "image": image,
+        "site_name": site_name,
+        "favicon": favicon,
+    }
+
 
 def _default_db_path() -> Path:
     return Path(os.environ.get("GCHAT_DB_PATH", "data/gchat-db/gchat.duckdb"))
@@ -175,13 +310,17 @@ def _canonical_link_domain_expr(column: str) -> str:
 
 def _count_metric(metric: str) -> str:
     normalized = metric.strip().casefold()
-    if normalized not in {"messages", "words"}:
+    if normalized not in {"messages", "words", "conversations"}:
         raise HTTPException(status_code=400, detail="Invalid metric filter")
     return normalized
 
 
 def _count_metric_expr(metric: str) -> str:
-    return "SUM(word_count)" if metric == "words" else "COUNT(*)"
+    if metric == "words":
+        return "SUM(word_count)"
+    if metric == "conversations":
+        return "COUNT(DISTINCT m.conversation_id)"
+    return "COUNT(*)"
 
 
 def _word_count_expr() -> str:
@@ -1516,7 +1655,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words)$"),
+        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
     ) -> dict[str, Any]:
         metric = _count_metric(metric)
         filters = QueryFilters(
@@ -1561,6 +1700,31 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                         WHERE {where}
                     ) counted
                     JOIN people p ON p.id = counted.person_id
+                    GROUP BY p.id, p.display_name, p.color
+                    ORDER BY message_count DESC, p.display_name
+                    """,
+                    params,
+                ).fetchall()
+            elif metric == "conversations":
+                total = con.execute(
+                    f"""
+                    SELECT COUNT(DISTINCT m.conversation_id), MIN(m.ts), MAX(m.ts)
+                    FROM messages m
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    WHERE {where} AND m.conversation_id IS NOT NULL
+                    """,
+                    params,
+                ).fetchone()
+                people_rows = con.execute(
+                    f"""
+                    SELECT p.id, p.display_name, p.color,
+                           COUNT(DISTINCT m.conversation_id) AS message_count
+                    FROM messages m
+                    JOIN people p ON p.id = m.person_id
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    WHERE {where} AND m.conversation_id IS NOT NULL
                     GROUP BY p.id, p.display_name, p.color
                     ORDER BY message_count DESC, p.display_name
                     """,
@@ -1831,7 +1995,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words)$"),
+        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
     ) -> dict[str, Any]:
         metric = _count_metric(metric)
         filters = QueryFilters(
@@ -1857,6 +2021,20 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                         JOIN sources s ON c.source_id = s.id
                         WHERE {where}
                     )
+                    GROUP BY bucket
+                    ORDER BY bucket
+                    """,
+                    params,
+                ).fetchall()
+            elif metric == "conversations":
+                rows = con.execute(
+                    f"""
+                    SELECT date_trunc(?, m.ts) AS bucket,
+                           COUNT(DISTINCT m.conversation_id) AS message_count
+                    FROM messages m
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    WHERE {where} AND m.conversation_id IS NOT NULL
                     GROUP BY bucket
                     ORDER BY bucket
                     """,
@@ -1891,7 +2069,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words)$"),
+        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
     ) -> dict[str, Any]:
         """Per-platform message/word counts bucketed over time."""
         metric = _count_metric(metric)
@@ -1920,6 +2098,20 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     )
                     GROUP BY bucket, platform
                     ORDER BY bucket, platform
+                    """,
+                    params,
+                ).fetchall()
+            elif metric == "conversations":
+                rows = con.execute(
+                    f"""
+                    SELECT date_trunc(?, m.ts) AS bucket, s.platform,
+                           COUNT(DISTINCT m.conversation_id) AS count
+                    FROM messages m
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    WHERE {where} AND m.conversation_id IS NOT NULL
+                    GROUP BY bucket, s.platform
+                    ORDER BY bucket, s.platform
                     """,
                     params,
                 ).fetchall()
@@ -1971,7 +2163,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words)$"),
+        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
     ) -> dict[str, Any]:
         metric = _count_metric(metric)
         filters = QueryFilters(
@@ -1997,6 +2189,20 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                         JOIN sources s ON c.source_id = s.id
                         WHERE {where}
                     )
+                    GROUP BY day
+                    ORDER BY day
+                    """,
+                    params,
+                ).fetchall()
+            elif metric == "conversations":
+                rows = con.execute(
+                    f"""
+                    SELECT CAST(m.ts AS DATE) AS day,
+                           COUNT(DISTINCT m.conversation_id) AS message_count
+                    FROM messages m
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    WHERE {where} AND m.conversation_id IS NOT NULL
                     GROUP BY day
                     ORDER BY day
                     """,
@@ -2029,7 +2235,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words)$"),
+        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
     ) -> dict[str, Any]:
         metric = _count_metric(metric)
         filters = QueryFilters(
@@ -2055,6 +2261,21 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                         JOIN sources s ON c.source_id = s.id
                         WHERE {where}
                     )
+                    GROUP BY weekday, hour
+                    ORDER BY weekday, hour
+                    """,
+                    params,
+                ).fetchall()
+            elif metric == "conversations":
+                rows = con.execute(
+                    f"""
+                    SELECT EXTRACT(isodow FROM m.ts) AS weekday,
+                           EXTRACT(hour FROM m.ts) AS hour,
+                           COUNT(DISTINCT m.conversation_id) AS message_count
+                    FROM messages m
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    WHERE {where} AND m.conversation_id IS NOT NULL
                     GROUP BY weekday, hour
                     ORDER BY weekday, hour
                     """,
@@ -2092,7 +2313,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words)$"),
+        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
     ) -> dict[str, Any]:
         metric = _count_metric(metric)
         filters = QueryFilters(
@@ -2120,6 +2341,22 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                         WHERE {where}
                     ) counted
                     JOIN people p ON p.id = counted.person_id
+                    GROUP BY p.id, p.display_name, p.color
+                    ORDER BY message_count DESC, p.display_name
+                    LIMIT ?
+                    """,
+                    params,
+                ).fetchall()
+            elif metric == "conversations":
+                rows = con.execute(
+                    f"""
+                    SELECT p.id, p.display_name, p.color,
+                           COUNT(DISTINCT m.conversation_id) AS message_count
+                    FROM messages m
+                    JOIN people p ON p.id = m.person_id
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    WHERE {where} AND m.conversation_id IS NOT NULL
                     GROUP BY p.id, p.display_name, p.color
                     ORDER BY message_count DESC, p.display_name
                     LIMIT ?
@@ -2736,7 +2973,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words)$"),
+        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
     ) -> dict[str, Any]:
         """Top chats (channels) by message count."""
         metric = _count_metric(metric)
@@ -2767,6 +3004,22 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     JOIN channels c ON c.id = counted.channel_id
                     JOIN themes t ON t.id = c.theme_id
                     JOIN sources s ON c.source_id = s.id
+                    GROUP BY c.id, c.name, t.name, s.name
+                    ORDER BY message_count DESC, c.name
+                    LIMIT ?
+                    """,
+                    params,
+                ).fetchall()
+            elif metric == "conversations":
+                rows = con.execute(
+                    f"""
+                    SELECT c.id, c.name, t.name as theme_name, s.name as source_name,
+                           COUNT(DISTINCT m.conversation_id) AS message_count
+                    FROM messages m
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN themes t ON t.id = c.theme_id
+                    JOIN sources s ON c.source_id = s.id
+                    WHERE {where} AND m.conversation_id IS NOT NULL
                     GROUP BY c.id, c.name, t.name, s.name
                     ORDER BY message_count DESC, c.name
                     LIMIT ?
@@ -2808,7 +3061,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words)$"),
+        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
     ) -> dict[str, Any]:
         """Top configured themes by message count."""
         metric = _count_metric(metric)
@@ -2842,6 +3095,19 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     ) counted
                     JOIN channels c ON c.id = counted.channel_id
                     JOIN sources s ON s.id = c.source_id
+                    GROUP BY s.name, c.name
+                    """,
+                    params,
+                ).fetchall()
+            elif metric == "conversations":
+                rows = con.execute(
+                    f"""
+                    SELECT s.name, c.name,
+                           COUNT(DISTINCT m.conversation_id) as message_count
+                    FROM messages m
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    WHERE {where} AND m.conversation_id IS NOT NULL
                     GROUP BY s.name, c.name
                     """,
                     params,
@@ -3184,6 +3450,123 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
 
         return {"items": [{"domain": row[0], "count": int(row[1])} for row in rows]}
 
+    @app.get("/api/domain-examples")
+    def domain_examples(
+        domain: str,
+        limit: int = Query(default=6, ge=1, le=25),
+        offset: int = Query(default=0, ge=0, le=1000),
+        start: date | None = Query(default=None, alias="from"),
+        end: date | None = Query(default=None, alias="to"),
+        people: str | None = None,
+        themes: str | None = None,
+        platforms: str | None = None,
+    ) -> dict[str, Any]:
+        """A few example messages containing a link to the given domain."""
+        normalized = domain.strip().casefold()
+        if not normalized or len(normalized) > 255:
+            raise HTTPException(status_code=400, detail="Invalid domain")
+
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
+        params: list[Any] = []
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
+
+        with _connect(app.state.db_path) as con:
+            rows = con.execute(
+                f"""
+                WITH message_links AS (
+                    SELECT
+                        m.id AS message_id,
+                        m.ts,
+                        m.content,
+                        p.display_name AS person_name,
+                        p.color AS person_color,
+                        c.name AS channel_name,
+                        s.name AS source_name,
+                        {_canonical_link_domain_expr("t.link")} AS domain
+                    FROM messages m
+                    JOIN people p ON p.id = m.person_id
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    CROSS JOIN unnest(
+                        regexp_extract_all(coalesce(m.content, ''), 'https?://([^/?#\\s]+)', 1)
+                    ) AS t(link)
+                    WHERE {where} AND m.content IS NOT NULL AND m.content <> ''
+                )
+                SELECT DISTINCT message_id, ts, content, person_name, person_color, channel_name, source_name
+                FROM message_links
+                WHERE domain = ?
+                ORDER BY ts DESC, message_id DESC
+                LIMIT ? OFFSET ?
+                """,
+                [*params, normalized, limit, offset],
+            ).fetchall()
+
+        return {
+            "domain": normalized,
+            "has_more": len(rows) == limit,
+            "messages": [
+                {
+                    "id": row[0],
+                    "ts": row[1].isoformat() if row[1] else None,
+                    "content": row[2],
+                    "person_name": row[3],
+                    "person_color": row[4],
+                    "channel_name": _get_display_name(
+                        row[5], row[6], app.state.fb_chat_names
+                    ),
+                    "source_name": row[6],
+                }
+                for row in rows
+            ],
+        }
+
+    @app.get("/api/link-preview")
+    def link_preview(url: str) -> dict[str, Any]:
+        """Fetch OpenGraph metadata for an external URL with TTL caching.
+
+        Used by the frontend to render rich previews for any link, replacing the
+        platform-specific YouTube/SoundCloud iframe embeds. Failures are cached
+        briefly so the UI never blocks on the same broken link for long.
+        """
+        cleaned = (url or "").strip()
+        if not cleaned or len(cleaned) > 2048:
+            raise HTTPException(status_code=400, detail="Invalid URL")
+        now = _time.time()
+        with _LINK_PREVIEW_CACHE_LOCK:
+            cached = _LINK_PREVIEW_CACHE.get(cleaned)
+            if cached:
+                ttl = (
+                    _LINK_PREVIEW_ERROR_TTL_SECONDS
+                    if cached["data"].get("error")
+                    else _LINK_PREVIEW_TTL_SECONDS
+                )
+                if (now - cached["fetched_at"]) < ttl:
+                    return cached["data"]
+        try:
+            payload = _fetch_link_preview(cleaned)
+        except (
+            ValueError,
+            httpx.HTTPError,
+            httpx.TimeoutException,
+            httpx.HTTPStatusError,
+        ) as exc:
+            payload = {"url": cleaned, "error": str(exc)}
+        except Exception as exc:  # defensive: never raise from the cache
+            payload = {"url": cleaned, "error": f"unexpected: {exc}"}
+        with _LINK_PREVIEW_CACHE_LOCK:
+            if len(_LINK_PREVIEW_CACHE) > 5000:
+                _LINK_PREVIEW_CACHE.clear()
+            _LINK_PREVIEW_CACHE[cleaned] = {"fetched_at": now, "data": payload}
+        return payload
+
     @app.get("/api/links-by-author")
     def links_by_author(
         limit: int = Query(default=15, ge=1, le=100),
@@ -3444,7 +3827,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words)$"),
+        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
     ) -> dict[str, Any]:
         """Messages per month over all time."""
         metric = _count_metric(metric)
@@ -3471,6 +3854,20 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                         JOIN sources s ON c.source_id = s.id
                         WHERE {where}
                     )
+                    GROUP BY month
+                    ORDER BY month
+                    """,
+                    params,
+                ).fetchall()
+            elif metric == "conversations":
+                rows = con.execute(
+                    f"""
+                    SELECT date_trunc('month', m.ts) AS month,
+                           COUNT(DISTINCT m.conversation_id) AS message_count
+                    FROM messages m
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    WHERE {where} AND m.conversation_id IS NOT NULL
                     GROUP BY month
                     ORDER BY month
                     """,
@@ -3506,7 +3903,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words)$"),
+        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
     ) -> dict[str, Any]:
         """Messages by hour of day (0-23)."""
         metric = _count_metric(metric)
@@ -3533,6 +3930,20 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                         JOIN sources s ON c.source_id = s.id
                         WHERE {where}
                     )
+                    GROUP BY hour
+                    ORDER BY hour
+                    """,
+                    params,
+                ).fetchall()
+            elif metric == "conversations":
+                rows = con.execute(
+                    f"""
+                    SELECT EXTRACT(hour FROM m.ts) AS hour,
+                           COUNT(DISTINCT m.conversation_id) AS message_count
+                    FROM messages m
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    WHERE {where} AND m.conversation_id IS NOT NULL
                     GROUP BY hour
                     ORDER BY hour
                     """,

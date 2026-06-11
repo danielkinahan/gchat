@@ -84,6 +84,11 @@ class ApiTests(unittest.TestCase):
             word_series = client.get("/api/messages-by-month?metric=words").json()
             self.assertTrue(word_series["points"])
 
+            conv_series = client.get(
+                "/api/messages-by-month?metric=conversations"
+            ).json()
+            self.assertTrue(conv_series["points"])
+
             con = duckdb.connect(str(db_path))
             reacted_message_row = con.execute(
                 """

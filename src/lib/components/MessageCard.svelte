@@ -1,42 +1,50 @@
 <script lang="ts">
+    import LinkPreview from "$lib/LinkPreview.svelte";
+
     export let message: any;
     export let highlight: boolean = false;
     export let bare: boolean = false;
     export let showMeta: boolean = true;
-    export let large: boolean = false; // render larger media (used in modal)
+    // Kept for API stability with callers that still pass it; no longer used.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    export let large: boolean = false;
+    void large;
     export let resolveReactionImage:
         | ((source: string, imageUrl: string) => string | null)
         | null = null;
 
-    const YOUTUBE_ONLY_PATTERN =
-        /\s*(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)[^\s]+\s*/i;
+    const MESSAGE_URL_PATTERN = /\bhttps?:\/\/[^\s<>"']+/gi;
+    const PREVIEW_LINK_LIMIT = 2;
 
-    const youtubeEmbedUrl = (content: string | null): string | null => {
-        if (!content) return null;
-        // try to extract a YouTube id
-        const idMatch = content.match(
-            /(?:v=|youtu\.be\/|embed\/|shorts\/)([\w\-]{11})/,
-        );
-        if (idMatch) return `https://www.youtube.com/embed/${idMatch[1]}?rel=0`;
-        // try to extract full youtube url and parse v param
-        try {
-            const url = new URL(
-                content.indexOf("://") === -1 ? `https://${content}` : content,
-            );
-            if (url.hostname.includes("youtube.com")) {
-                const v = url.searchParams.get("v");
-                if (v) return `https://www.youtube.com/embed/${v}?rel=0`;
-            }
-        } catch (e) {
-            // ignore
+    function extractLinks(content: string | null): string[] {
+        const text = (content ?? "").trim();
+        if (!text) return [];
+        const matches = text.match(MESSAGE_URL_PATTERN);
+        if (!matches) return [];
+        const seen = new Set<string>();
+        const result: string[] = [];
+        for (const raw of matches) {
+            const cleaned = raw.replace(/[)\].,!?;:]+$/u, "");
+            if (cleaned.length < 8) continue;
+            if (seen.has(cleaned)) continue;
+            seen.add(cleaned);
+            result.push(cleaned);
+            if (result.length >= PREVIEW_LINK_LIMIT) break;
         }
-        return null;
-    };
+        return result;
+    }
 
-    const isYoutubeOnlyContent = (content: string | null) => {
-        if (!content) return false;
-        return YOUTUBE_ONLY_PATTERN.test(content.trim());
-    };
+    function isUrlOnlyMessage(content: string | null): boolean {
+        const text = (content ?? "").trim();
+        if (!text) return false;
+        const matches = text.match(MESSAGE_URL_PATTERN);
+        if (!matches || matches.length === 0) return false;
+        let stripped = text;
+        for (const match of matches) {
+            stripped = stripped.replace(match, "");
+        }
+        return stripped.replace(/[\s\u200b]+/g, "").length === 0;
+    }
 
     function attachmentKind(
         url: string | null,
@@ -132,55 +140,45 @@
         </div>
     {/if}
 
-    {#if youtubeEmbedUrl(message?.content || null) || youtubeEmbedUrl(message?.attachment_url || null) || youtubeEmbedUrl(message?.attachment_preview || null)}
-        <div class={`youtube-embed ${large ? "large" : ""}`}>
-            <iframe
-                src={youtubeEmbedUrl(message?.content || null) ||
-                    youtubeEmbedUrl(message?.attachment_url || null) ||
-                    youtubeEmbedUrl(message?.attachment_preview || null)!}
-                title="YouTube video"
-                loading="lazy"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                allowfullscreen
-            ></iframe>
-        </div>
-    {:else}
-        {#if message?.content && !isYoutubeOnlyContent(message.content)}
-            <p class="content">{message.content}</p>
-        {/if}
+    {#if message?.content && !isUrlOnlyMessage(message.content)}
+        <p class="content">{message.content}</p>
+    {/if}
 
-        {#if message?.attachment_url}
-            {#if attachmentKind(message.attachment_url) === "image"}
-                <img
-                    class="reaction-attachment-image"
-                    src={message.attachment_url}
-                    alt="attachment"
-                    loading="lazy"
-                />
-            {:else if attachmentKind(message.attachment_url) === "video"}
-                <!-- svelte-ignore a11y_media_has_caption -->
-                <video
-                    class="reaction-attachment-video"
-                    src={message.attachment_url}
-                    controls
-                    preload="metadata"
-                ></video>
-            {:else if attachmentKind(message.attachment_url) === "audio"}
-                <audio
-                    class="reaction-attachment-audio"
-                    src={message.attachment_url}
-                    controls
-                    preload="none"
-                ></audio>
-            {:else}
-                <p>
-                    <a
-                        href={message.attachment_url}
-                        target="_blank"
-                        rel="noreferrer">Attachment</a
-                    >
-                </p>
-            {/if}
+    {#each extractLinks(message?.content || null) as link (link)}
+        <LinkPreview url={link} />
+    {/each}
+
+    {#if message?.attachment_url}
+        {#if attachmentKind(message.attachment_url) === "image"}
+            <img
+                class="reaction-attachment-image"
+                src={message.attachment_url}
+                alt="attachment"
+                loading="lazy"
+            />
+        {:else if attachmentKind(message.attachment_url) === "video"}
+            <!-- svelte-ignore a11y_media_has_caption -->
+            <video
+                class="reaction-attachment-video"
+                src={message.attachment_url}
+                controls
+                preload="metadata"
+            ></video>
+        {:else if attachmentKind(message.attachment_url) === "audio"}
+            <audio
+                class="reaction-attachment-audio"
+                src={message.attachment_url}
+                controls
+                preload="none"
+            ></audio>
+        {:else}
+            <p>
+                <a
+                    href={message.attachment_url}
+                    target="_blank"
+                    rel="noreferrer">Attachment</a
+                >
+            </p>
         {/if}
     {/if}
 
@@ -254,17 +252,6 @@
     .reaction-attachment-audio {
         margin-top: 8px;
         width: min(100%, 380px);
-    }
-
-    .youtube-embed iframe {
-        width: 100%;
-        height: 260px;
-        border: 0;
-        border-radius: 8px;
-    }
-
-    .youtube-embed.large iframe {
-        height: 420px;
     }
 
     .reaction-pills {
