@@ -65,7 +65,7 @@
         target="_blank"
         rel="noreferrer"
     >
-        <span class="link-preview-skeleton" />
+        <span class="link-preview-skeleton"></span>
         <span class="link-preview-host">{hostFor(url)}</span>
     </a>
 {:else if hasContent(preview)}

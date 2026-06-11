@@ -323,6 +323,44 @@ def _count_metric_expr(metric: str) -> str:
     return "COUNT(*)"
 
 
+@dataclass(frozen=True)
+class _MetricSql:
+    """SQL fragments needed to render one of the messages/words/conversations metrics.
+
+    Endpoints render their queries as `SELECT {agg} ... FROM (SELECT ... {inner_select_suffix}
+    FROM messages m ... WHERE {where}{extra_where}) ...`. The inner subquery shape
+    is identical across metrics; only the projected `word_count` column and the
+    outer aggregate differ. This collapses the three-way if/elif/else blocks that
+    used to ship in every metric-aware endpoint.
+    """
+
+    aggregate: str
+    inner_select_suffix: str
+    extra_where: str
+
+
+def _metric_sql(metric: str) -> _MetricSql:
+    if metric == "words":
+        return _MetricSql(
+            aggregate="SUM(word_count)",
+            inner_select_suffix=(
+                f", m.conversation_id, {_word_count_expr()} AS word_count"
+            ),
+            extra_where="",
+        )
+    if metric == "conversations":
+        return _MetricSql(
+            aggregate="COUNT(DISTINCT conversation_id)",
+            inner_select_suffix=", m.conversation_id",
+            extra_where=" AND m.conversation_id IS NOT NULL",
+        )
+    return _MetricSql(
+        aggregate="COUNT(*)",
+        inner_select_suffix=", m.conversation_id",
+        extra_where="",
+    )
+
+
 def _word_count_expr() -> str:
     return "COALESCE(array_length(regexp_extract_all(replace(lower(coalesce(m.content, '')), chr(39), ''), '[a-z]{3,}')), 0)"
 
@@ -1674,86 +1712,38 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             if app.state.has_is_edited
             else "0"
         )
+        ms = _metric_sql(metric)
         with _connect(app.state.db_path) as con:
-            if metric == "words":
-                total = con.execute(
-                    f"""
-                    SELECT SUM(word_count), MIN(ts), MAX(ts)
-                    FROM (
-                        SELECT m.ts, {_word_count_expr()} AS word_count
-                        FROM messages m
-                        JOIN channels c ON c.id = m.channel_id
-                        JOIN sources s ON c.source_id = s.id
-                        WHERE {where}
-                    )
-                    """,
-                    params,
-                ).fetchone()
-                people_rows = con.execute(
-                    f"""
-                    SELECT p.id, p.display_name, p.color, SUM(word_count) AS message_count
-                    FROM (
-                        SELECT m.person_id, {_word_count_expr()} AS word_count
-                        FROM messages m
-                        JOIN channels c ON c.id = m.channel_id
-                        JOIN sources s ON c.source_id = s.id
-                        WHERE {where}
-                    ) counted
-                    JOIN people p ON p.id = counted.person_id
-                    GROUP BY p.id, p.display_name, p.color
-                    ORDER BY message_count DESC, p.display_name
-                    """,
-                    params,
-                ).fetchall()
-            elif metric == "conversations":
-                total = con.execute(
-                    f"""
-                    SELECT COUNT(DISTINCT m.conversation_id), MIN(m.ts), MAX(m.ts)
+            total = con.execute(
+                f"""
+                SELECT {ms.aggregate}, MIN(ts), MAX(ts)
+                FROM (
+                    SELECT m.ts{ms.inner_select_suffix}
                     FROM messages m
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
-                    WHERE {where} AND m.conversation_id IS NOT NULL
-                    """,
-                    params,
-                ).fetchone()
-                people_rows = con.execute(
-                    f"""
-                    SELECT p.id, p.display_name, p.color,
-                           COUNT(DISTINCT m.conversation_id) AS message_count
-                    FROM messages m
-                    JOIN people p ON p.id = m.person_id
-                    JOIN channels c ON c.id = m.channel_id
-                    JOIN sources s ON c.source_id = s.id
-                    WHERE {where} AND m.conversation_id IS NOT NULL
-                    GROUP BY p.id, p.display_name, p.color
-                    ORDER BY message_count DESC, p.display_name
-                    """,
-                    params,
-                ).fetchall()
-            else:
-                total = con.execute(
-                    f"""
-                    SELECT COUNT(*), MIN(m.ts), MAX(m.ts)
+                    WHERE {where}{ms.extra_where}
+                )
+                """,
+                params,
+            ).fetchone()
+            people_rows = con.execute(
+                f"""
+                SELECT p.id, p.display_name, p.color,
+                       {ms.aggregate} AS message_count
+                FROM (
+                    SELECT m.person_id{ms.inner_select_suffix}
                     FROM messages m
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
-                    WHERE {where}
-                    """,
-                    params,
-                ).fetchone()
-                people_rows = con.execute(
-                    f"""
-                    SELECT p.id, p.display_name, p.color, COUNT(*) AS message_count
-                    FROM messages m
-                    JOIN people p ON p.id = m.person_id
-                    JOIN channels c ON c.id = m.channel_id
-                    JOIN sources s ON c.source_id = s.id
-                    WHERE {where}
-                    GROUP BY p.id, p.display_name, p.color
-                    ORDER BY message_count DESC, p.display_name
-                    """,
-                    params,
-                ).fetchall()
+                    WHERE {where}{ms.extra_where}
+                ) counted
+                JOIN people p ON p.id = counted.person_id
+                GROUP BY p.id, p.display_name, p.color
+                ORDER BY message_count DESC, p.display_name
+                """,
+                params,
+            ).fetchall()
             message_stats_row = con.execute(
                 f"""
                 WITH filtered AS (
@@ -2009,50 +1999,24 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
+        ms = _metric_sql(metric)
         with _connect(app.state.db_path) as con:
-            if metric == "words":
-                rows = con.execute(
-                    f"""
-                    SELECT date_trunc(?, bucket_ts) AS bucket, SUM(word_count) AS message_count
-                    FROM (
-                        SELECT m.ts AS bucket_ts, {_word_count_expr()} AS word_count
-                        FROM messages m
-                        JOIN channels c ON c.id = m.channel_id
-                        JOIN sources s ON c.source_id = s.id
-                        WHERE {where}
-                    )
-                    GROUP BY bucket
-                    ORDER BY bucket
-                    """,
-                    params,
-                ).fetchall()
-            elif metric == "conversations":
-                rows = con.execute(
-                    f"""
-                    SELECT date_trunc(?, m.ts) AS bucket,
-                           COUNT(DISTINCT m.conversation_id) AS message_count
+            rows = con.execute(
+                f"""
+                SELECT date_trunc(?, bucket_ts) AS bucket,
+                       {ms.aggregate} AS message_count
+                FROM (
+                    SELECT m.ts AS bucket_ts{ms.inner_select_suffix}
                     FROM messages m
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
-                    WHERE {where} AND m.conversation_id IS NOT NULL
-                    GROUP BY bucket
-                    ORDER BY bucket
-                    """,
-                    params,
-                ).fetchall()
-            else:
-                rows = con.execute(
-                    f"""
-                    SELECT date_trunc(?, m.ts) AS bucket, COUNT(*) AS message_count
-                    FROM messages m
-                    JOIN channels c ON c.id = m.channel_id
-                    JOIN sources s ON c.source_id = s.id
-                    WHERE {where}
-                    GROUP BY bucket
-                    ORDER BY bucket
-                    """,
-                    params,
-                ).fetchall()
+                    WHERE {where}{ms.extra_where}
+                )
+                GROUP BY bucket
+                ORDER BY bucket
+                """,
+                params,
+            ).fetchall()
         return {
             "granularity": granularity,
             "points": [
@@ -2084,50 +2048,25 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
+        ms = _metric_sql(metric)
         with _connect(app.state.db_path) as con:
-            if metric == "words":
-                rows = con.execute(
-                    f"""
-                    SELECT date_trunc(?, bucket_ts) AS bucket, platform, SUM(word_count) AS count
-                    FROM (
-                        SELECT m.ts AS bucket_ts, s.platform AS platform, {_word_count_expr()} AS word_count
-                        FROM messages m
-                        JOIN channels c ON c.id = m.channel_id
-                        JOIN sources s ON c.source_id = s.id
-                        WHERE {where}
-                    )
-                    GROUP BY bucket, platform
-                    ORDER BY bucket, platform
-                    """,
-                    params,
-                ).fetchall()
-            elif metric == "conversations":
-                rows = con.execute(
-                    f"""
-                    SELECT date_trunc(?, m.ts) AS bucket, s.platform,
-                           COUNT(DISTINCT m.conversation_id) AS count
+            rows = con.execute(
+                f"""
+                SELECT date_trunc(?, bucket_ts) AS bucket, platform,
+                       {ms.aggregate} AS count
+                FROM (
+                    SELECT m.ts AS bucket_ts,
+                           s.platform AS platform{ms.inner_select_suffix}
                     FROM messages m
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
-                    WHERE {where} AND m.conversation_id IS NOT NULL
-                    GROUP BY bucket, s.platform
-                    ORDER BY bucket, s.platform
-                    """,
-                    params,
-                ).fetchall()
-            else:
-                rows = con.execute(
-                    f"""
-                    SELECT date_trunc(?, m.ts) AS bucket, s.platform, COUNT(*) AS count
-                    FROM messages m
-                    JOIN channels c ON c.id = m.channel_id
-                    JOIN sources s ON c.source_id = s.id
-                    WHERE {where}
-                    GROUP BY bucket, s.platform
-                    ORDER BY bucket, s.platform
-                    """,
-                    params,
-                ).fetchall()
+                    WHERE {where}{ms.extra_where}
+                )
+                GROUP BY bucket, platform
+                ORDER BY bucket, platform
+                """,
+                params,
+            ).fetchall()
 
         buckets_index: dict[str, dict[str, int]] = {}
         platforms_seen: set[str] = set()
@@ -2177,50 +2116,24 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
+        ms = _metric_sql(metric)
         with _connect(app.state.db_path) as con:
-            if metric == "words":
-                rows = con.execute(
-                    f"""
-                    SELECT CAST(bucket_ts AS DATE) AS day, SUM(word_count) AS message_count
-                    FROM (
-                        SELECT m.ts AS bucket_ts, {_word_count_expr()} AS word_count
-                        FROM messages m
-                        JOIN channels c ON c.id = m.channel_id
-                        JOIN sources s ON c.source_id = s.id
-                        WHERE {where}
-                    )
-                    GROUP BY day
-                    ORDER BY day
-                    """,
-                    params,
-                ).fetchall()
-            elif metric == "conversations":
-                rows = con.execute(
-                    f"""
-                    SELECT CAST(m.ts AS DATE) AS day,
-                           COUNT(DISTINCT m.conversation_id) AS message_count
+            rows = con.execute(
+                f"""
+                SELECT CAST(bucket_ts AS DATE) AS day,
+                       {ms.aggregate} AS message_count
+                FROM (
+                    SELECT m.ts AS bucket_ts{ms.inner_select_suffix}
                     FROM messages m
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
-                    WHERE {where} AND m.conversation_id IS NOT NULL
-                    GROUP BY day
-                    ORDER BY day
-                    """,
-                    params,
-                ).fetchall()
-            else:
-                rows = con.execute(
-                    f"""
-                    SELECT CAST(m.ts AS DATE) AS day, COUNT(*) AS message_count
-                    FROM messages m
-                    JOIN channels c ON c.id = m.channel_id
-                    JOIN sources s ON c.source_id = s.id
-                    WHERE {where}
-                    GROUP BY day
-                    ORDER BY day
-                    """,
-                    params,
-                ).fetchall()
+                    WHERE {where}{ms.extra_where}
+                )
+                GROUP BY day
+                ORDER BY day
+                """,
+                params,
+            ).fetchall()
         return {
             "points": [
                 {"day": row[0].isoformat(), "message_count": int(row[1])}
@@ -2249,51 +2162,25 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
+        ms = _metric_sql(metric)
         with _connect(app.state.db_path) as con:
-            if metric == "words":
-                rows = con.execute(
-                    f"""
-                    SELECT EXTRACT(isodow FROM bucket_ts) AS weekday, EXTRACT(hour FROM bucket_ts) AS hour, SUM(word_count) AS message_count
-                    FROM (
-                        SELECT m.ts AS bucket_ts, {_word_count_expr()} AS word_count
-                        FROM messages m
-                        JOIN channels c ON c.id = m.channel_id
-                        JOIN sources s ON c.source_id = s.id
-                        WHERE {where}
-                    )
-                    GROUP BY weekday, hour
-                    ORDER BY weekday, hour
-                    """,
-                    params,
-                ).fetchall()
-            elif metric == "conversations":
-                rows = con.execute(
-                    f"""
-                    SELECT EXTRACT(isodow FROM m.ts) AS weekday,
-                           EXTRACT(hour FROM m.ts) AS hour,
-                           COUNT(DISTINCT m.conversation_id) AS message_count
+            rows = con.execute(
+                f"""
+                SELECT EXTRACT(isodow FROM bucket_ts) AS weekday,
+                       EXTRACT(hour FROM bucket_ts) AS hour,
+                       {ms.aggregate} AS message_count
+                FROM (
+                    SELECT m.ts AS bucket_ts{ms.inner_select_suffix}
                     FROM messages m
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
-                    WHERE {where} AND m.conversation_id IS NOT NULL
-                    GROUP BY weekday, hour
-                    ORDER BY weekday, hour
-                    """,
-                    params,
-                ).fetchall()
-            else:
-                rows = con.execute(
-                    f"""
-                    SELECT EXTRACT(isodow FROM m.ts) AS weekday, EXTRACT(hour FROM m.ts) AS hour, COUNT(*) AS message_count
-                    FROM messages m
-                    JOIN channels c ON c.id = m.channel_id
-                    JOIN sources s ON c.source_id = s.id
-                    WHERE {where}
-                    GROUP BY weekday, hour
-                    ORDER BY weekday, hour
-                    """,
-                    params,
-                ).fetchall()
+                    WHERE {where}{ms.extra_where}
+                )
+                GROUP BY weekday, hour
+                ORDER BY weekday, hour
+                """,
+                params,
+            ).fetchall()
         return {
             "points": [
                 {
@@ -2328,56 +2215,26 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
         params.append(limit)
+        ms = _metric_sql(metric)
         with _connect(app.state.db_path) as con:
-            if metric == "words":
-                rows = con.execute(
-                    f"""
-                    SELECT p.id, p.display_name, p.color, SUM(word_count) AS message_count
-                    FROM (
-                        SELECT m.person_id, {_word_count_expr()} AS word_count
-                        FROM messages m
-                        JOIN channels c ON c.id = m.channel_id
-                        JOIN sources s ON c.source_id = s.id
-                        WHERE {where}
-                    ) counted
-                    JOIN people p ON p.id = counted.person_id
-                    GROUP BY p.id, p.display_name, p.color
-                    ORDER BY message_count DESC, p.display_name
-                    LIMIT ?
-                    """,
-                    params,
-                ).fetchall()
-            elif metric == "conversations":
-                rows = con.execute(
-                    f"""
-                    SELECT p.id, p.display_name, p.color,
-                           COUNT(DISTINCT m.conversation_id) AS message_count
+            rows = con.execute(
+                f"""
+                SELECT p.id, p.display_name, p.color,
+                       {ms.aggregate} AS message_count
+                FROM (
+                    SELECT m.person_id{ms.inner_select_suffix}
                     FROM messages m
-                    JOIN people p ON p.id = m.person_id
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
-                    WHERE {where} AND m.conversation_id IS NOT NULL
-                    GROUP BY p.id, p.display_name, p.color
-                    ORDER BY message_count DESC, p.display_name
-                    LIMIT ?
-                    """,
-                    params,
-                ).fetchall()
-            else:
-                rows = con.execute(
-                    f"""
-                    SELECT p.id, p.display_name, p.color, COUNT(*) AS message_count
-                    FROM messages m
-                    JOIN people p ON p.id = m.person_id
-                    JOIN channels c ON c.id = m.channel_id
-                    JOIN sources s ON c.source_id = s.id
-                    WHERE {where}
-                    GROUP BY p.id, p.display_name, p.color
-                    ORDER BY message_count DESC, p.display_name
-                    LIMIT ?
-                    """,
-                    params,
-                ).fetchall()
+                    WHERE {where}{ms.extra_where}
+                ) counted
+                JOIN people p ON p.id = counted.person_id
+                GROUP BY p.id, p.display_name, p.color
+                ORDER BY message_count DESC, p.display_name
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
         return {
             "items": [
                 {
@@ -2989,58 +2846,28 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
         params.append(limit)
+        ms = _metric_sql(metric)
         with _connect(app.state.db_path) as con:
-            if metric == "words":
-                rows = con.execute(
-                    f"""
-                    SELECT c.id, c.name, t.name as theme_name, s.name as source_name, SUM(word_count) AS message_count
-                    FROM (
-                        SELECT m.channel_id, {_word_count_expr()} AS word_count
-                        FROM messages m
-                        JOIN channels c ON c.id = m.channel_id
-                        JOIN sources s ON c.source_id = s.id
-                        WHERE {where}
-                    ) counted
-                    JOIN channels c ON c.id = counted.channel_id
-                    JOIN themes t ON t.id = c.theme_id
-                    JOIN sources s ON c.source_id = s.id
-                    GROUP BY c.id, c.name, t.name, s.name
-                    ORDER BY message_count DESC, c.name
-                    LIMIT ?
-                    """,
-                    params,
-                ).fetchall()
-            elif metric == "conversations":
-                rows = con.execute(
-                    f"""
-                    SELECT c.id, c.name, t.name as theme_name, s.name as source_name,
-                           COUNT(DISTINCT m.conversation_id) AS message_count
+            rows = con.execute(
+                f"""
+                SELECT c.id, c.name, t.name as theme_name, s.name as source_name,
+                       {ms.aggregate} AS message_count
+                FROM (
+                    SELECT m.channel_id{ms.inner_select_suffix}
                     FROM messages m
                     JOIN channels c ON c.id = m.channel_id
-                    JOIN themes t ON t.id = c.theme_id
                     JOIN sources s ON c.source_id = s.id
-                    WHERE {where} AND m.conversation_id IS NOT NULL
-                    GROUP BY c.id, c.name, t.name, s.name
-                    ORDER BY message_count DESC, c.name
-                    LIMIT ?
-                    """,
-                    params,
-                ).fetchall()
-            else:
-                rows = con.execute(
-                    f"""
-                    SELECT c.id, c.name, t.name as theme_name, s.name as source_name, COUNT(*) AS message_count
-                    FROM messages m
-                    JOIN channels c ON c.id = m.channel_id
-                    JOIN themes t ON t.id = c.theme_id
-                    JOIN sources s ON c.source_id = s.id
-                    WHERE {where}
-                    GROUP BY c.id, c.name, t.name, s.name
-                    ORDER BY message_count DESC, c.name
-                    LIMIT ?
-                    """,
-                    params,
-                ).fetchall()
+                    WHERE {where}{ms.extra_where}
+                ) counted
+                JOIN channels c ON c.id = counted.channel_id
+                JOIN themes t ON t.id = c.theme_id
+                JOIN sources s ON c.source_id = s.id
+                GROUP BY c.id, c.name, t.name, s.name
+                ORDER BY message_count DESC, c.name
+                LIMIT ?
+                """,
+                params,
+            ).fetchall()
         return {
             "items": [
                 {
@@ -3081,49 +2908,24 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
 
+        ms = _metric_sql(metric)
         with _connect(app.state.db_path) as con:
-            if metric == "words":
-                rows = con.execute(
-                    f"""
-                    SELECT s.name, c.name, SUM(word_count) as message_count
-                    FROM (
-                        SELECT m.channel_id, {_word_count_expr()} AS word_count
-                        FROM messages m
-                        JOIN channels c ON c.id = m.channel_id
-                        JOIN sources s ON c.source_id = s.id
-                        WHERE {where}
-                    ) counted
-                    JOIN channels c ON c.id = counted.channel_id
-                    JOIN sources s ON s.id = c.source_id
-                    GROUP BY s.name, c.name
-                    """,
-                    params,
-                ).fetchall()
-            elif metric == "conversations":
-                rows = con.execute(
-                    f"""
-                    SELECT s.name, c.name,
-                           COUNT(DISTINCT m.conversation_id) as message_count
+            rows = con.execute(
+                f"""
+                SELECT s.name, c.name, {ms.aggregate} as message_count
+                FROM (
+                    SELECT m.channel_id{ms.inner_select_suffix}
                     FROM messages m
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
-                    WHERE {where} AND m.conversation_id IS NOT NULL
-                    GROUP BY s.name, c.name
-                    """,
-                    params,
-                ).fetchall()
-            else:
-                rows = con.execute(
-                    f"""
-                    SELECT s.name, c.name, COUNT(*) as message_count
-                    FROM messages m
-                    JOIN channels c ON c.id = m.channel_id
-                    JOIN sources s ON c.source_id = s.id
-                    WHERE {where}
-                    GROUP BY s.name, c.name
-                    """,
-                    params,
-                ).fetchall()
+                    WHERE {where}{ms.extra_where}
+                ) counted
+                JOIN channels c ON c.id = counted.channel_id
+                JOIN sources s ON s.id = c.source_id
+                GROUP BY s.name, c.name
+                """,
+                params,
+            ).fetchall()
 
             theme_counts = {}
             for source_name, channel_name, count in rows:
@@ -3842,50 +3644,24 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
+        ms = _metric_sql(metric)
         with _connect(app.state.db_path) as con:
-            if metric == "words":
-                rows = con.execute(
-                    f"""
-                    SELECT date_trunc('month', bucket_ts) AS month, SUM(word_count) AS message_count
-                    FROM (
-                        SELECT m.ts AS bucket_ts, {_word_count_expr()} AS word_count
-                        FROM messages m
-                        JOIN channels c ON c.id = m.channel_id
-                        JOIN sources s ON c.source_id = s.id
-                        WHERE {where}
-                    )
-                    GROUP BY month
-                    ORDER BY month
-                    """,
-                    params,
-                ).fetchall()
-            elif metric == "conversations":
-                rows = con.execute(
-                    f"""
-                    SELECT date_trunc('month', m.ts) AS month,
-                           COUNT(DISTINCT m.conversation_id) AS message_count
+            rows = con.execute(
+                f"""
+                SELECT date_trunc('month', bucket_ts) AS month,
+                       {ms.aggregate} AS message_count
+                FROM (
+                    SELECT m.ts AS bucket_ts{ms.inner_select_suffix}
                     FROM messages m
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
-                    WHERE {where} AND m.conversation_id IS NOT NULL
-                    GROUP BY month
-                    ORDER BY month
-                    """,
-                    params,
-                ).fetchall()
-            else:
-                rows = con.execute(
-                    f"""
-                    SELECT date_trunc('month', m.ts) AS month, COUNT(*) AS message_count
-                    FROM messages m
-                    JOIN channels c ON c.id = m.channel_id
-                    JOIN sources s ON c.source_id = s.id
-                    WHERE {where}
-                    GROUP BY month
-                    ORDER BY month
-                    """,
-                    params,
-                ).fetchall()
+                    WHERE {where}{ms.extra_where}
+                )
+                GROUP BY month
+                ORDER BY month
+                """,
+                params,
+            ).fetchall()
         return {
             "points": [
                 {
@@ -3918,50 +3694,24 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
+        ms = _metric_sql(metric)
         with _connect(app.state.db_path) as con:
-            if metric == "words":
-                rows = con.execute(
-                    f"""
-                    SELECT EXTRACT(hour FROM bucket_ts) AS hour, SUM(word_count) AS message_count
-                    FROM (
-                        SELECT m.ts AS bucket_ts, {_word_count_expr()} AS word_count
-                        FROM messages m
-                        JOIN channels c ON c.id = m.channel_id
-                        JOIN sources s ON c.source_id = s.id
-                        WHERE {where}
-                    )
-                    GROUP BY hour
-                    ORDER BY hour
-                    """,
-                    params,
-                ).fetchall()
-            elif metric == "conversations":
-                rows = con.execute(
-                    f"""
-                    SELECT EXTRACT(hour FROM m.ts) AS hour,
-                           COUNT(DISTINCT m.conversation_id) AS message_count
+            rows = con.execute(
+                f"""
+                SELECT EXTRACT(hour FROM bucket_ts) AS hour,
+                       {ms.aggregate} AS message_count
+                FROM (
+                    SELECT m.ts AS bucket_ts{ms.inner_select_suffix}
                     FROM messages m
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
-                    WHERE {where} AND m.conversation_id IS NOT NULL
-                    GROUP BY hour
-                    ORDER BY hour
-                    """,
-                    params,
-                ).fetchall()
-            else:
-                rows = con.execute(
-                    f"""
-                    SELECT EXTRACT(hour FROM m.ts) AS hour, COUNT(*) AS message_count
-                    FROM messages m
-                    JOIN channels c ON c.id = m.channel_id
-                    JOIN sources s ON c.source_id = s.id
-                    WHERE {where}
-                    GROUP BY hour
-                    ORDER BY hour
-                    """,
-                    params,
-                ).fetchall()
+                    WHERE {where}{ms.extra_where}
+                )
+                GROUP BY hour
+                ORDER BY hour
+                """,
+                params,
+            ).fetchall()
         return {
             "points": [
                 {"hour": int(row[0]), "message_count": int(row[1])} for row in rows
