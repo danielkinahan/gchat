@@ -15,14 +15,8 @@
         type TimePoint,
         type TopPeople,
     } from "$lib/api";
-    import {
-        formatRuntimeMtime,
-        selectedCountLabel,
-    } from "$lib/formatters";
-    import {
-        toReactionImageUrl,
-        toDisplayAttachmentUrl,
-    } from "$lib/mediaUrls";
+    import { formatRuntimeMtime, selectedCountLabel } from "$lib/formatters";
+    import { toReactionImageUrl, toDisplayAttachmentUrl } from "$lib/mediaUrls";
     import "$lib/dashboard.css";
 
     type NicknameChange = {
@@ -298,7 +292,6 @@
         activeTab = "links";
     }
 
-
     function openInteractionsTab() {
         activeTab = "interactions";
     }
@@ -561,7 +554,7 @@
         <div class="filter-group filter-card filter-card-compact">
             <fieldset class="date-range-fieldset">
                 <legend>
-                    <span>Top N</span>
+                    <span>Limit</span>
                     <small>{topLimit}</small>
                 </legend>
                 <input
@@ -659,7 +652,6 @@
         }}
     />
 
-
     <LanguageTab
         active={activeTab === "language"}
         {filterSignature}
@@ -685,15 +677,9 @@
         resolveReactionImage={toReactionImageUrl}
     />
 
-    <ChatsTab
-        chats={data.nameHistory.chats}
-        active={activeTab === "chats"}
-    />
+    <ChatsTab chats={data.nameHistory.chats} active={activeTab === "chats"} />
 
-    <NicknamesTab
-        people={nicknamePeople}
-        active={activeTab === "nicknames"}
-    />
+    <NicknamesTab people={nicknamePeople} active={activeTab === "nicknames"} />
     {#if snippetModalVisible}
         <div
             class="snippet-modal-backdrop"
@@ -754,4 +740,3 @@
         </span>
     </div>
 </footer>
-
