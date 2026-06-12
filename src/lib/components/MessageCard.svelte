@@ -103,6 +103,19 @@
 >
     {#if showMeta}
         <div class="meta">
+            {#if message?.avatar_url}
+                <img
+                    class="meta-avatar"
+                    src={message.avatar_url}
+                    alt={message?.person_name_canonical || message?.person_name || ""}
+                    loading="lazy"
+                />
+            {:else if message?.person_color}
+                <span
+                    class="meta-avatar meta-avatar-initials"
+                    style={`background:${message.person_color}`}
+                >{(message?.person_name_canonical || message?.person_name || "?").charAt(0).toUpperCase()}</span>
+            {/if}
             <strong style={`color:${message?.person_color || "#fff"}`}
                 >{message?.person_name || "Unknown"}</strong
             >
@@ -196,6 +209,23 @@
         display: flex;
         gap: 8px;
         align-items: center;
+    }
+
+    .meta-avatar {
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        flex-shrink: 0;
+        object-fit: cover;
+    }
+
+    .meta-avatar-initials {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.65rem;
+        font-weight: 700;
+        color: #fff;
     }
 
     .content {

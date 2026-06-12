@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac as _hmac
 import ipaddress
 import json
 import os
@@ -17,9 +19,9 @@ import httpx2 as httpx
 import uvicorn
 import yaml
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .reconciliation import load_reconciliation
 
@@ -1066,6 +1068,62 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             global _THEME_CHANNEL_IDS
             _THEME_CHANNEL_IDS = app.state.theme_to_channel_ids
 
+    # ── Password auth ────────────────────────────────────────────────────────
+    # Set GCHAT_PASSWORD in the environment to enable. Leave unset for open access.
+    _password = os.environ.get("GCHAT_PASSWORD", "").strip()
+    _COOKIE_NAME = "gchat_auth"
+    _COOKIE_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
+
+    def _auth_token() -> str:
+        return hashlib.sha256(f"gchat:{_password}".encode()).hexdigest()
+
+    def _is_authenticated(request: Request) -> bool:
+        if not _password:
+            return True
+        token = request.cookies.get(_COOKIE_NAME, "")
+        return _hmac.compare_digest(token, _auth_token())
+
+    @app.middleware("http")
+    async def auth_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
+        if request.url.path.startswith("/api/auth/"):
+            return await call_next(request)
+        if not _is_authenticated(request):
+            return JSONResponse({"error": "Unauthorized"}, status_code=401)
+        return await call_next(request)
+
+    @app.get("/api/auth/status")
+    def auth_status(request: Request) -> dict[str, bool]:
+        return {
+            "required": bool(_password),
+            "authenticated": _is_authenticated(request),
+        }
+
+    @app.post("/api/auth/login")
+    async def auth_login(request: Request, response: Response) -> dict[str, bool]:
+        body: dict[str, Any] = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+        submitted = str(body.get("password", "")).strip()
+        if _password and not _hmac.compare_digest(submitted, _password):
+            raise HTTPException(status_code=401, detail="Incorrect password")
+        response.set_cookie(
+            _COOKIE_NAME,
+            _auth_token(),
+            httponly=True,
+            samesite="strict",
+            max_age=_COOKIE_MAX_AGE,
+        )
+        return {"ok": True}
+
+    @app.post("/api/auth/logout")
+    def auth_logout(response: Response) -> dict[str, bool]:
+        response.delete_cookie(_COOKIE_NAME, samesite="strict")
+        return {"ok": True}
+
+    # ─────────────────────────────────────────────────────────────────────────
+
     @app.middleware("http")
     async def refresh_runtime_state(request, call_next):  # type: ignore[no-untyped-def]
         _refresh_runtime_state()
@@ -1617,7 +1675,10 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         with _connect(app.state.db_path) as con:
             row = con.execute(
                 """
-                SELECT m.id, m.ts, m.content, m.attachment_preview, m.attachment_count, m.reaction_count, m.reaction_summary, m.reaction_details_json, m.channel_id, c.platform_channel_id, s.platform, s.name, p.display_name, p.color
+                SELECT m.id, m.ts, m.content, m.attachment_preview, m.attachment_count,
+                       m.reaction_count, m.reaction_summary, m.reaction_details_json,
+                       m.channel_id, c.platform_channel_id, s.id, s.platform, s.name,
+                       p.display_name, p.color, c.name
                 FROM messages m
                 JOIN channels c ON c.id = m.channel_id
                 JOIN sources s ON s.id = c.source_id
@@ -1639,15 +1700,19 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 msg_reaction_details,
                 msg_channel_id,
                 platform_channel_id,
+                source_id,
                 platform,
                 source_name,
                 person_name,
                 person_color,
+                channel_initial_name,
             ) = row
 
             channel_rows = con.execute(
                 """
-                SELECT m.id, m.ts, m.content, m.attachment_preview, m.attachment_count, m.reaction_count, m.reaction_summary, m.reaction_details_json, p.display_name, p.color
+                SELECT m.id, m.ts, m.content, m.attachment_preview, m.attachment_count,
+                       m.reaction_count, m.reaction_summary, m.reaction_details_json,
+                       p.display_name, p.color, m.person_id
                 FROM messages m
                 LEFT JOIN people p ON p.id = m.person_id
                 WHERE m.channel_id = ?
@@ -1663,22 +1728,67 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             if idx is None:
                 selected = [
                     (
-                        msg_id,
-                        msg_ts,
-                        msg_content,
-                        msg_attach_preview,
-                        msg_attach_count,
-                        msg_reaction_count,
-                        msg_reaction_summary,
-                        msg_reaction_details,
-                        person_name,
-                        person_color,
+                        msg_id, msg_ts, msg_content, msg_attach_preview, msg_attach_count,
+                        msg_reaction_count, msg_reaction_summary, msg_reaction_details,
+                        person_name, person_color, None,
                     )
                 ]
             else:
                 start = max(0, idx - context)
                 end = min(len(channel_rows), idx + context + 1)
                 selected = channel_rows[start:end]
+
+            # Channel name at the time of the target message
+            channel_name_row = con.execute(
+                """
+                SELECT new_name FROM channel_name_changes
+                WHERE channel_id = ? AND ts <= ?
+                ORDER BY ts DESC LIMIT 1
+                """,
+                [msg_channel_id, msg_ts],
+            ).fetchone()
+            channel_name_at_time = _get_display_name(
+                channel_name_row[0] if channel_name_row
+                else (channel_initial_name or source_name),
+                source_name,
+                app.state.fb_chat_names,
+            )
+
+            # Nickname timeline for this channel: person_id -> [(ts, new_name), ...]
+            nickname_rows = con.execute(
+                """
+                SELECT person_id, new_name, ts
+                FROM person_name_changes
+                WHERE source_id = ?
+                  AND json_extract_string(payload_json, '$.chatId') = ?
+                ORDER BY person_id, ts
+                """,
+                [source_id, platform_channel_id],
+            ).fetchall()
+
+        nickname_timeline: dict[int, list[tuple[Any, str]]] = {}
+        for r_pid, r_name, r_ts in nickname_rows:
+            nickname_timeline.setdefault(int(r_pid), []).append((r_ts, r_name))
+
+        def _nickname_at(person_id: int | None, ts: Any) -> str | None:
+            if person_id is None:
+                return None
+            timeline = nickname_timeline.get(int(person_id), [])
+            result = None
+            for change_ts, name in timeline:
+                if change_ts <= ts:
+                    result = name
+                else:
+                    break
+            return result
+
+        # Avatar URL map: display_name -> url (from YAML config)
+        people_extra = _load_people_extra()
+        avatar_by_name: dict[str, str] = {
+            name: meta["avatar"]
+            for name, meta in people_extra.items()
+            if meta.get("avatar")
+        }
 
         # Build JSON payload
         items: list[dict[str, object]] = []
@@ -1694,6 +1804,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 r_reaction_details,
                 r_person_name,
                 r_person_color,
+                r_person_id,
             ) = r
             attach_url = (
                 _resolve_local_attachment_url(
@@ -1705,6 +1816,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 if r_attach_preview
                 else None
             )
+            nickname = _nickname_at(r_person_id, r_ts) if r_ts else None
             items.append(
                 {
                     "id": r_id,
@@ -1718,14 +1830,21 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     "reaction_details": json.loads(r_reaction_details)
                     if r_reaction_details
                     else None,
-                    "person_name": r_person_name,
+                    "person_name": nickname or r_person_name,
+                    "person_name_canonical": r_person_name,
                     "person_color": r_person_color,
+                    "avatar_url": avatar_by_name.get(r_person_name or "", "") or None,
                     "channel_id": msg_channel_id,
                     "platform": platform,
                     "source_name": source_name,
                 }
             )
-        return {"items": items}
+        return {
+            "channel_name": channel_name_at_time,
+            "platform": platform,
+            "source_name": source_name,
+            "items": items,
+        }
 
     @app.get("/api/overview")
     def overview(

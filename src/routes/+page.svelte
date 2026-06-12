@@ -221,12 +221,18 @@
     let snippetModalVisible = false;
     let snippetLoading = false;
     let snippetError = "";
+    let snippetChannelName: string | null = null;
+    let snippetPlatform: string | null = null;
+    let snippetSourceName: string | null = null;
 
     function closeSnippetModal() {
         snippetModalVisible = false;
         snippetMessages = [];
         snippetTargetId = null;
         snippetError = "";
+        snippetChannelName = null;
+        snippetPlatform = null;
+        snippetSourceName = null;
     }
 
     async function openInContext(messageId: string) {
@@ -251,6 +257,9 @@
                         m.attachment_preview,
                     ) || m.attachment_url,
             }));
+            snippetChannelName = data.channel_name || null;
+            snippetPlatform = data.platform || null;
+            snippetSourceName = data.source_name || null;
             snippetTargetId = messageId;
             snippetModalVisible = true;
             snippetLoading = false;
@@ -734,9 +743,20 @@
                 on:click|stopPropagation
                 on:keydown|stopPropagation
             >
-                <button class="close" on:click={closeSnippetModal}
-                    >Close ✕</button
-                >
+                <div class="snippet-modal-header">
+                    {#if snippetChannelName}
+                        <div class="snippet-channel-info">
+                            {#if snippetPlatform}
+                                <span class="platform-chip-icon snippet-platform-icon" data-platform={snippetPlatform}></span>
+                            {/if}
+                            <strong class="snippet-channel-name">{snippetChannelName}</strong>
+                            {#if snippetSourceName && snippetSourceName !== snippetChannelName}
+                                <span class="muted snippet-source-name">{snippetSourceName}</span>
+                            {/if}
+                        </div>
+                    {/if}
+                    <button class="close" on:click={closeSnippetModal}>✕</button>
+                </div>
                 {#if snippetLoading}
                     <p class="muted">Loading...</p>
                 {:else if snippetError}

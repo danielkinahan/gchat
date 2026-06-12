@@ -484,17 +484,63 @@ input[type="checkbox"] {
     border-radius: 10px;
     padding: 16px;
 }
+.snippet-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #1f2937;
+}
+
+.snippet-channel-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.snippet-platform-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+.snippet-channel-name {
+    font-size: 1rem;
+    color: #f1f5f9;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.snippet-source-name {
+    font-size: 0.8rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .snippet-modal .close {
-    float: right;
+    flex-shrink: 0;
     background: transparent;
     border: none;
-    color: #cbd5e1;
+    color: #94a3b8;
     cursor: pointer;
-    font-size: 0.95rem;
-    padding: 6px 10px;
+    font-size: 1rem;
+    padding: 4px 8px;
+    border-radius: 6px;
+    transition: color 120ms ease, background 120ms ease;
 }
+
+.snippet-modal .close:hover {
+    color: #f1f5f9;
+    background: rgba(255,255,255,0.06);
+}
+
 .snippet-modal .snippet-body {
-    margin-top: 8px;
+    margin-top: 0;
 }
 
 .example-message p {
