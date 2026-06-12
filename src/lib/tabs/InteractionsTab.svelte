@@ -77,6 +77,8 @@
     let mentionSearch = "";
     let mostMentioned: Array<{ mention: string; count: number }> = [];
     let topReactedMessages: ReactionMessage[] = [];
+    let hasMoreReacted = false;
+    let isLoadingMoreReacted = false;
     let reactionAuthors: ReactionAuthor[] = [];
     let removedEvents: MemberEventBucket = EMPTY_BUCKET;
     let leftEvents: MemberEventBucket = EMPTY_BUCKET;
@@ -114,7 +116,7 @@
                     fetchJson<{
                         items: Array<{ mention: string; count: number }>;
                     }>(`/api/most-mentioned?${mentionsParams.toString()}`),
-                    fetchJson<{ items: Omit<ReactionMessage, "attachment_display_url">[] }>(
+                    fetchJson<{ has_more: boolean; items: Omit<ReactionMessage, "attachment_display_url">[] }>(
                         `/api/top-reacted-messages?${reactedParams.toString()}`,
                     ),
                     fetchJson<{ items: ReactionAuthor[] }>(
@@ -136,6 +138,7 @@
                     message.attachment_preview,
                 ),
             }));
+            hasMoreReacted = reactedMessages.has_more ?? false;
             reactionAuthors = authors.items;
             removedEvents = removedResp;
             leftEvents = leftResp;
@@ -144,6 +147,34 @@
         } finally {
             loadedFilterKey = filterKey;
             isLoading = false;
+        }
+    }
+
+    async function loadMoreReacted() {
+        if (isLoadingMoreReacted) return;
+        isLoadingMoreReacted = true;
+        try {
+            const baseParams = currentFilterParams();
+            baseParams.set("limit", String(topLimit));
+            baseParams.set("offset", String(topReactedMessages.length));
+            const resp = await fetchJson<{
+                has_more: boolean;
+                items: Omit<ReactionMessage, "attachment_display_url">[];
+            }>(`/api/top-reacted-messages?${baseParams.toString()}`);
+            const mapped = resp.items.map((m) => ({
+                ...m,
+                attachment_url: toMediaUrl(m.attachment_url),
+                attachment_display_url: toDisplayAttachmentUrl(
+                    m.attachment_url,
+                    m.attachment_preview,
+                ),
+            }));
+            topReactedMessages = [...topReactedMessages, ...mapped];
+            hasMoreReacted = resp.has_more ?? false;
+        } catch {
+            // silently ignore
+        } finally {
+            isLoadingMoreReacted = false;
         }
     }
 
@@ -192,6 +223,8 @@
         <h2>Top reacted messages (total)</h2>
         {#if isLoading}
             <p class="muted">Loading interactions...</p>
+        {:else if topReactedMessages.length === 0}
+            <p class="muted">No reacted messages found.</p>
         {:else}
             <div class="reaction-list">
                 {#each topReactedMessages as message}
@@ -249,6 +282,16 @@
                     </article>
                 {/each}
             </div>
+            {#if hasMoreReacted}
+                <button
+                    type="button"
+                    class="examples-toggle"
+                    on:click={loadMoreReacted}
+                    disabled={isLoadingMoreReacted}
+                >
+                    {isLoadingMoreReacted ? "Loading..." : "Show more"}
+                </button>
+            {/if}
         {/if}
     </div>
 

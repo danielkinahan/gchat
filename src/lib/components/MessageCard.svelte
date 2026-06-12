@@ -1,5 +1,10 @@
 <script lang="ts">
     import LinkPreview from "$lib/LinkPreview.svelte";
+    import {
+        extractMessageLinks,
+        isUrlOnlyMessage,
+        stripPreviewedLinks,
+    } from "$lib/messageLinks";
 
     export let message: any;
     export let highlight: boolean = false;
@@ -12,39 +17,6 @@
     export let resolveReactionImage:
         | ((source: string, imageUrl: string) => string | null)
         | null = null;
-
-    const MESSAGE_URL_PATTERN = /\bhttps?:\/\/[^\s<>"']+/gi;
-    const PREVIEW_LINK_LIMIT = 2;
-
-    function extractLinks(content: string | null): string[] {
-        const text = (content ?? "").trim();
-        if (!text) return [];
-        const matches = text.match(MESSAGE_URL_PATTERN);
-        if (!matches) return [];
-        const seen = new Set<string>();
-        const result: string[] = [];
-        for (const raw of matches) {
-            const cleaned = raw.replace(/[)\].,!?;:]+$/u, "");
-            if (cleaned.length < 8) continue;
-            if (seen.has(cleaned)) continue;
-            seen.add(cleaned);
-            result.push(cleaned);
-            if (result.length >= PREVIEW_LINK_LIMIT) break;
-        }
-        return result;
-    }
-
-    function isUrlOnlyMessage(content: string | null): boolean {
-        const text = (content ?? "").trim();
-        if (!text) return false;
-        const matches = text.match(MESSAGE_URL_PATTERN);
-        if (!matches || matches.length === 0) return false;
-        let stripped = text;
-        for (const match of matches) {
-            stripped = stripped.replace(match, "");
-        }
-        return stripped.replace(/[\s\u200b]+/g, "").length === 0;
-    }
 
     function attachmentKind(
         url: string | null,
@@ -114,6 +86,8 @@
         return out;
     }
 
+    $: contentLinks = extractMessageLinks(message?.content || null);
+    $: displayContent = stripPreviewedLinks(message?.content || null, contentLinks);
     $: reactions = normalizeReactions(
         message?.reaction_details,
         message?.reaction_summary || null,
@@ -140,23 +114,24 @@
         </div>
     {/if}
 
-    {#if message?.content && !isUrlOnlyMessage(message.content)}
-        <p class="content">{message.content}</p>
+    {#if displayContent && !isUrlOnlyMessage(message?.content || null)}
+        <p class="content">{displayContent}</p>
     {/if}
 
-    {#each extractLinks(message?.content || null) as link (link)}
+    {#each contentLinks as link (link)}
         <LinkPreview url={link} />
     {/each}
 
     {#if message?.attachment_url}
-        {#if attachmentKind(message.attachment_url) === "image"}
+        {@const attachKind = attachmentKind(message.attachment_url)}
+        {#if attachKind === "image"}
             <img
                 class="reaction-attachment-image"
                 src={message.attachment_url}
                 alt="attachment"
                 loading="lazy"
             />
-        {:else if attachmentKind(message.attachment_url) === "video"}
+        {:else if attachKind === "video"}
             <!-- svelte-ignore a11y_media_has_caption -->
             <video
                 class="reaction-attachment-video"
@@ -164,21 +139,15 @@
                 controls
                 preload="metadata"
             ></video>
-        {:else if attachmentKind(message.attachment_url) === "audio"}
+        {:else if attachKind === "audio"}
             <audio
                 class="reaction-attachment-audio"
                 src={message.attachment_url}
                 controls
                 preload="none"
             ></audio>
-        {:else}
-            <p>
-                <a
-                    href={message.attachment_url}
-                    target="_blank"
-                    rel="noreferrer">Attachment</a
-                >
-            </p>
+        {:else if !contentLinks.includes(message.attachment_url)}
+            <LinkPreview url={message.attachment_url} />
         {/if}
     {/if}
 

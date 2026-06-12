@@ -551,6 +551,47 @@ def _load_configured_people_names() -> set[str]:
     return names
 
 
+def _load_people_extra() -> dict[str, dict[str, str]]:
+    """Return {name: {avatar, color}} from people.yaml for metadata enrichment."""
+    config_path = _default_config_dir() / "people.yaml"
+    if not config_path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    result: dict[str, dict[str, str]] = {}
+    for person in data.get("people", []):
+        if not isinstance(person, dict) or "name" not in person:
+            continue
+        name = str(person["name"])
+        result[name] = {
+            "color": str(person.get("color") or ""),
+            "avatar": str(person.get("avatar") or ""),
+        }
+    return result
+
+
+def _load_themes_extra() -> dict[str, str]:
+    """Return {theme_name: emoji} from themes.yaml."""
+    config_path = _default_config_dir() / "themes.yaml"
+    if not config_path.exists():
+        return {}
+    try:
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    result: dict[str, str] = {}
+    for theme in data.get("themes", []):
+        if not isinstance(theme, dict) or "name" not in theme:
+            continue
+        name = str(theme["name"])
+        emoji = str(theme.get("emoji") or "")
+        if emoji:
+            result[name] = emoji
+    return result
+
+
 def _load_primary_person_name() -> str | None:
     config_path = _default_config_dir() / "people.yaml"
     if not config_path.exists():
@@ -2252,7 +2293,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         """Get available filters from the database and reconciliation config."""
         with _connect(app.state.db_path) as con:
             people = con.execute(
-                "SELECT id, display_name FROM people ORDER BY display_name, id"
+                "SELECT id, display_name, color FROM people ORDER BY display_name, id"
             ).fetchall()
             platforms = con.execute(
                 "SELECT DISTINCT platform FROM sources ORDER BY platform"
@@ -2263,10 +2304,25 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 row for row in people if row[1] in app.state.configured_people_names
             ]
 
+        people_extra = _load_people_extra()
+        themes_extra = _load_themes_extra()
+
         return {
-            "people": [{"id": int(row[0]), "name": row[1]} for row in people],
+            "people": [
+                {
+                    "id": int(row[0]),
+                    "name": row[1],
+                    "color": row[2] or people_extra.get(row[1], {}).get("color", ""),
+                    "avatar": people_extra.get(row[1], {}).get("avatar", ""),
+                }
+                for row in people
+            ],
             "themes": [
-                {"id": int(theme_id), "name": theme_name}
+                {
+                    "id": int(theme_id),
+                    "name": theme_name,
+                    "emoji": themes_extra.get(theme_name, ""),
+                }
                 for theme_id, theme_name in sorted(app.state.theme_id_to_name.items())
             ],
             "platforms": [row[0] for row in platforms],
@@ -2752,14 +2808,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             by_actor_rows = con.execute(
                 f"""
                 SELECT
-                    p.id, p.display_name, p.color, COUNT(*) AS count
+                    MIN(p.id) AS id,
+                    ANY_VALUE(p.display_name) AS display_name,
+                    ANY_VALUE(p.color) AS color,
+                    COUNT(*) AS count
                 FROM member_events e
                 JOIN channels c ON c.id = e.channel_id
                 JOIN sources s ON s.id = c.source_id
                 JOIN people p ON p.id = e.actor_person_id
                 WHERE {where} AND e.actor_person_id IS NOT NULL
-                GROUP BY p.id, p.display_name, p.color
-                ORDER BY count DESC, p.display_name
+                GROUP BY LOWER(TRIM(p.display_name))
+                ORDER BY count DESC, MIN(p.display_name)
                 LIMIT ?
                 """,
                 [*params, limit],
@@ -2767,14 +2826,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             by_target_rows = con.execute(
                 f"""
                 SELECT
-                    p.id, p.display_name, p.color, COUNT(*) AS count
+                    MIN(p.id) AS id,
+                    ANY_VALUE(p.display_name) AS display_name,
+                    ANY_VALUE(p.color) AS color,
+                    COUNT(*) AS count
                 FROM member_events e
                 JOIN channels c ON c.id = e.channel_id
                 JOIN sources s ON s.id = c.source_id
                 JOIN people p ON p.id = e.target_person_id
                 WHERE {where}
-                GROUP BY p.id, p.display_name, p.color
-                ORDER BY count DESC, p.display_name
+                GROUP BY LOWER(TRIM(p.display_name))
+                ORDER BY count DESC, MIN(p.display_name)
                 LIMIT ?
                 """,
                 [*params, limit],
@@ -3495,6 +3557,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     @app.get("/api/top-reacted-messages")
     def top_reacted_messages(
         limit: int = Query(default=6, ge=1, le=50),
+        offset: int = Query(default=0, ge=0),
         start: date | None = Query(default=None, alias="from"),
         end: date | None = Query(default=None, alias="to"),
         people: str | None = None,
@@ -3547,12 +3610,16 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 JOIN sources s ON s.id = c.source_id
                 WHERE {where} AND m.reaction_count > 0
                 ORDER BY m.reaction_count DESC, m.ts DESC, m.id DESC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                [*params, limit],
+                [*params, limit + 1, offset],
             ).fetchall()
 
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+
         return {
+            "has_more": has_more,
             "items": [
                 {
                     "id": row[0],

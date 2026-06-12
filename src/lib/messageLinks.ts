@@ -19,6 +19,22 @@ export function extractMessageLinks(content: string | null): string[] {
     return result;
 }
 
+/**
+ * Returns content with the given URLs stripped out (for display when the URLs
+ * are already rendered as link preview cards beneath the text).
+ */
+export function stripPreviewedLinks(
+    content: string | null,
+    links: string[],
+): string {
+    if (!links.length) return content ?? "";
+    let result = content ?? "";
+    for (const link of links) {
+        result = result.split(link).join("");
+    }
+    return result.replace(/\s{2,}/g, " ").trim();
+}
+
 export function isUrlOnlyMessage(content: string | null): boolean {
     const text = (content ?? "").trim();
     if (!text) return false;

@@ -58,8 +58,8 @@ export const load = async ({ url, fetch }) => {
       fetch,
     ),
     fetchJson<{
-      people: Array<{ id: number; name: string }>;
-      themes: Array<{ id: number; name: string }>;
+      people: Array<{ id: number; name: string; color: string; avatar: string }>;
+      themes: Array<{ id: number; name: string; emoji: string }>;
       platforms: string[];
     }>(`/api/metadata`, fetch),
     fetchJson<{

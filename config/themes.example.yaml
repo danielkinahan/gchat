@@ -1,5 +1,7 @@
 themes:
   - name: Main group chat
+    # Optional: emoji shown in the Themes filter chip
+    emoji: "💬"
     channels:
       - source: "Discord: Example Server"
         channel: general
@@ -9,6 +11,7 @@ themes:
         channel: "Example Chat"
 
   - name: Random
+    emoji: "🎲"
     channels:
       - source: "Discord: Example Server"
         channel: random

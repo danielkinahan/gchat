@@ -45,9 +45,9 @@ h1 {
 }
 
 .filters {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
     background: linear-gradient(
         180deg,
         rgba(17, 24, 39, 0.96),
@@ -142,31 +142,47 @@ input[type="checkbox"] {
     margin-right: 10px;
 }
 
-.dropdown-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 8px;
-    max-height: 220px;
-    overflow-y: auto;
+/* First row: all non-theme filter cards side by side */
+.filter-row {
+    display: flex;
+    gap: 12px;
 }
 
+.filter-row > .filter-card {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+/* Themes row: full-width, no card border — sits flush inside the filters panel */
+.filter-themes-row {
+    border-top: 1px solid #1f2937;
+    padding-top: 12px;
+}
+
+.filter-themes-row .date-range-fieldset legend {
+    margin-bottom: 8px;
+}
+
+
+/* Unified chip container used by all filter sections */
+.chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+/* Year / limit still use grid for equal-width columns */
 .year-list {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
-    gap: 8px;
-    max-height: 220px;
-    overflow-y: auto;
+    grid-template-columns: repeat(auto-fit, minmax(60px, 1fr));
+    gap: 6px;
 }
 
-.themes-scroll {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 8px;
-    max-height: 240px;
-    overflow-y: auto;
-    border: 0;
-    border-radius: 0;
-    padding: 0;
+/* Platform chips override to flex so variable-width labels don't clip */
+.platform-chips {
+    display: flex !important;
+    flex-wrap: wrap;
+    gap: 6px;
 }
 
 .checkbox-label {
@@ -229,6 +245,156 @@ input[type="checkbox"] {
     background: #1d4ed8;
     border-color: #2563eb;
     color: #fff;
+}
+
+.platform-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid #1f2937;
+    border-radius: 999px;
+    background: rgba(11, 18, 32, 0.88);
+    color: #e2e8f0;
+    padding: 6px 12px;
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition:
+        background 120ms ease,
+        border-color 120ms ease,
+        transform 120ms ease;
+    white-space: nowrap;
+}
+
+.platform-chip:hover {
+    background: rgba(15, 23, 42, 0.98);
+    border-color: #475569;
+    transform: translateY(-1px);
+}
+
+.platform-chip.selected {
+    border-color: var(--platform-color, #2563eb);
+    background: color-mix(in srgb, var(--platform-color, #2563eb) 20%, transparent);
+    color: #fff;
+}
+
+.platform-chip-icon {
+    width: 16px;
+    height: 16px;
+    display: inline-block;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    flex-shrink: 0;
+}
+
+/* Platform-specific icon colors using CSS masks for brand SVGs */
+.platform-chip-icon[data-platform="discord"] {
+    background-color: #5865f2;
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z'/%3E%3C/svg%3E");
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z'/%3E%3C/svg%3E");
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
+}
+
+.platform-chip-icon[data-platform="facebook"] {
+    background-color: #1877f2;
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z'/%3E%3C/svg%3E");
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z'/%3E%3C/svg%3E");
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
+}
+
+.platform-chip-icon[data-platform="signal"] {
+    background-color: #3a76f0;
+    -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm0 4a8 8 0 1 1 0 16A8 8 0 0 1 12 4zm-1 3v2H9v2h2v6h2v-6h2V9h-2V7h-2z'/%3E%3C/svg%3E");
+    mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm0 4a8 8 0 1 1 0 16A8 8 0 0 1 12 4zm-1 3v2H9v2h2v6h2v-6h2V9h-2V7h-2z'/%3E%3C/svg%3E");
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    -webkit-mask-position: center;
+    mask-position: center;
+}
+
+/* Person chips */
+.person-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid #1f2937;
+    border-radius: 999px;
+    background: rgba(11, 18, 32, 0.88);
+    color: #e2e8f0;
+    padding: 4px 10px 4px 4px;
+    font: inherit;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition:
+        background 120ms ease,
+        border-color 120ms ease,
+        transform 120ms ease;
+    white-space: nowrap;
+}
+
+.person-chip:hover {
+    background: rgba(15, 23, 42, 0.98);
+    border-color: #475569;
+    transform: translateY(-1px);
+}
+
+.person-chip.selected {
+    border-color: var(--person-color, #475569);
+    background: color-mix(in srgb, var(--person-color, #475569) 18%, transparent);
+    color: #fff;
+}
+
+.person-chip-avatar {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    object-fit: cover;
+}
+
+.person-chip-initials {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #fff;
+    text-transform: uppercase;
+}
+
+/* Theme chips */
+.theme-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    font-size: 0.78rem;
+    white-space: nowrap;
+}
+
+.theme-chip-emoji {
+    font-size: 0.85rem;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.theme-chip-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .overview-top {
@@ -995,26 +1161,6 @@ button.rank-row:focus-visible {
     margin-bottom: 8px;
 }
 
-.top-limit-input {
-    width: 100%;
-    box-sizing: border-box;
-    background: #0b1220;
-    color: #e2e8f0;
-    border: 1px solid #1f2937;
-    border-radius: 8px;
-    padding: 6px 10px;
-    font-size: 0.95rem;
-    margin-top: 8px;
-}
-
-.top-limit-input:focus {
-    outline: none;
-    border-color: #2563eb;
-}
-
-.filter-card-compact {
-    max-width: 140px;
-}
 
 .history-list {
     display: grid;
@@ -1051,8 +1197,8 @@ button.rank-row:focus-visible {
         display: grid;
     }
 
-    .filters {
-        grid-template-columns: 1fr;
+    .filter-row {
+        flex-direction: column;
     }
 
     .language,

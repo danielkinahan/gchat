@@ -1,6 +1,8 @@
 people:
   - name: Alice
     color: "#E24B4A"
+    # Optional: URL to a profile photo shown in the People filter
+    # avatar: "https://cdn.discordapp.com/avatars/123456789012345678/abc123.png"
     identities:
       - platform: discord
         id: "123456789012345678"
@@ -11,6 +13,7 @@ people:
 
   - name: Bob
     color: "#4A90E2"
+    # avatar: "https://cdn.discordapp.com/avatars/234567890123456789/def456.png"
     identities:
       - platform: discord
         id: "234567890123456789"

@@ -4,6 +4,7 @@
     import {
         extractMessageLinks,
         isUrlOnlyMessage,
+        stripPreviewedLinks,
     } from "$lib/messageLinks";
 
     type DomainExample = {
@@ -263,6 +264,8 @@
             {:else}
                 <div class="example-list">
                     {#each domainExamples as message}
+                        {@const links = extractMessageLinks(message.content)}
+                        {@const displayText = stripPreviewedLinks(message.content, links)}
                         <div class="example-message">
                             <div class="example-meta">
                                 <strong
@@ -286,10 +289,10 @@
                                     Show in context
                                 </button>
                             </div>
-                            {#if message.content && !isUrlOnlyMessage(message.content)}
-                                <p>{message.content}</p>
+                            {#if displayText && !isUrlOnlyMessage(message.content)}
+                                <p>{displayText}</p>
                             {/if}
-                            {#each extractMessageLinks(message.content) as link (link)}
+                            {#each links as link (link)}
                                 <LinkPreview url={link} />
                             {/each}
                         </div>

@@ -40,6 +40,8 @@
     type PeopleFilterOption = {
         name: string;
         ids: number[];
+        color: string;
+        avatar: string;
     };
     export let data: {
         overview: Overview;
@@ -96,8 +98,8 @@
             items: Array<{ id: number; name: string; message_count: number }>;
         };
         metadata: {
-            people: Array<{ id: number; name: string }>;
-            themes: Array<{ id: number; name: string }>;
+            people: Array<{ id: number; name: string; color: string; avatar: string }>;
+            themes: Array<{ id: number; name: string; emoji: string }>;
             platforms: string[];
         };
         runtimeState: {
@@ -439,7 +441,12 @@
             if (existing) {
                 existing.ids.push(person.id);
             } else {
-                grouped.set(key, { name: person.name, ids: [person.id] });
+                grouped.set(key, {
+                    name: person.name,
+                    ids: [person.id],
+                    color: person.color || "",
+                    avatar: person.avatar || "",
+                });
             }
         }
         return [...grouped.values()]
@@ -468,6 +475,7 @@
     </header>
 
     <section class="filters">
+        <div class="filter-row">
         <div class="filter-group filter-card">
             <fieldset class="date-range-fieldset">
                 <legend>
@@ -508,16 +516,22 @@
                         )}</small
                     >
                 </legend>
-                <div class="dropdown-list">
+                <div class="year-list platform-chips">
                     {#each data.metadata.platforms as platform}
-                        <label class="checkbox-label">
-                            <input
-                                type="checkbox"
-                                checked={selectedPlatforms.includes(platform)}
-                                on:change={() => togglePlatform(platform)}
-                            />
-                            <span>{platform}</span>
-                        </label>
+                        {@const isSelected = selectedPlatforms.includes(platform)}
+                        {@const platformColor = { discord: "#5865f2", facebook: "#1877f2", signal: "#3a76f0" }[platform] ?? "#2563eb"}
+                        <button
+                            type="button"
+                            class="platform-chip"
+                            class:selected={isSelected}
+                            style="--platform-color: {platformColor}"
+                            on:click={() => togglePlatform(platform)}
+                            aria-pressed={isSelected}
+                            title={platform}
+                        >
+                            <span class="platform-chip-icon" data-platform={platform}></span>
+                            <span class="platform-chip-name">{platform}</span>
+                        </button>
                     {/each}
                 </div>
             </fieldset>
@@ -534,47 +548,59 @@
                         )}</small
                     >
                 </legend>
-                <div class="dropdown-list">
+                <div class="chip-list">
                     {#each peopleFilterOptions as person}
-                        <label class="checkbox-label">
-                            <input
-                                type="checkbox"
-                                checked={person.ids.some((id) =>
-                                    selectedPeople.includes(id),
-                                )}
-                                on:change={() => togglePerson(person.ids)}
-                            />
-                            <span>{person.name}</span>
-                        </label>
+                        {@const isSelected = person.ids.some((id) => selectedPeople.includes(id))}
+                        <button
+                            type="button"
+                            class="person-chip"
+                            class:selected={isSelected}
+                            style="--person-color: {person.color || '#94a3b8'}"
+                            on:click={() => togglePerson(person.ids)}
+                            aria-pressed={isSelected}
+                        >
+                            {#if person.avatar}
+                                <img
+                                    class="person-chip-avatar"
+                                    src={person.avatar}
+                                    alt={person.name}
+                                    loading="lazy"
+                                />
+                            {:else}
+                                <span
+                                    class="person-chip-avatar person-chip-initials"
+                                    style="background: {person.color || '#475569'}"
+                                >{person.name.charAt(0).toUpperCase()}</span>
+                            {/if}
+                            <span class="person-chip-name">{person.name}</span>
+                        </button>
                     {/each}
                 </div>
             </fieldset>
         </div>
 
-        <div class="filter-group filter-card filter-card-compact">
+        <div class="filter-group filter-card">
             <fieldset class="date-range-fieldset">
                 <legend>
                     <span>Limit</span>
                     <small>{topLimit}</small>
                 </legend>
-                <input
-                    type="number"
-                    class="top-limit-input"
-                    min="1"
-                    max="100"
-                    bind:value={topLimit}
-                    on:change={() => {
-                        if (!Number.isFinite(topLimit) || topLimit < 1) {
-                            topLimit = 1;
-                        } else if (topLimit > 100) {
-                            topLimit = 100;
-                        }
-                    }}
-                />
+                <div class="year-list">
+                    {#each [5, 10, 25, 50] as n}
+                        <button
+                            type="button"
+                            class="year-chip"
+                            class:selected={topLimit === n}
+                            on:click={() => (topLimit = n)}
+                        >{n}</button>
+                    {/each}
+                </div>
             </fieldset>
         </div>
 
-        <div class="filter-group filter-card">
+        </div><!-- /.filter-row -->
+
+        <div class="filter-themes-row">
             <fieldset class="date-range-fieldset">
                 <legend>
                     <span>Themes</span>
@@ -585,16 +611,22 @@
                         )}</small
                     >
                 </legend>
-                <div class="themes-scroll">
+                <div class="chip-list">
                     {#each data.metadata.themes as theme}
-                        <label class="checkbox-label">
-                            <input
-                                type="checkbox"
-                                checked={selectedThemes.includes(theme.id)}
-                                on:change={() => toggleTheme(theme.id)}
-                            />
-                            <span>{theme.name}</span>
-                        </label>
+                        {@const isSelected = selectedThemes.includes(theme.id)}
+                        <button
+                            type="button"
+                            class="year-chip theme-chip"
+                            class:selected={isSelected}
+                            on:click={() => toggleTheme(theme.id)}
+                            aria-pressed={isSelected}
+                            title={theme.name}
+                        >
+                            {#if theme.emoji}
+                                <span class="theme-chip-emoji">{theme.emoji}</span>
+                            {/if}
+                            <span class="theme-chip-name">{theme.name}</span>
+                        </button>
                     {/each}
                 </div>
             </fieldset>
