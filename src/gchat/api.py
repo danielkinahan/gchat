@@ -1085,7 +1085,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
 
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
-        if request.url.path.startswith("/api/auth/"):
+        # Auth endpoints and the internal scheduler restart endpoint are exempt.
+        path = request.url.path
+        if path.startswith("/api/auth/") or path == "/api/restart":
             return await call_next(request)
         if not _is_authenticated(request):
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
@@ -1666,7 +1668,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
 
     @app.get("/api/message-window")
     def message_window(
-        message_id: str, context: int = Query(default=10, ge=0, le=50)
+        message_id: str,
+        context: int = Query(default=10, ge=0, le=500),
+        full: bool = False,
     ) -> dict[str, object]:
         """Return a JSON window of messages around the given message id.
 
@@ -1734,9 +1738,15 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     )
                 ]
             else:
-                start = max(0, idx - context)
-                end = min(len(channel_rows), idx + context + 1)
+                if full:
+                    start = 0
+                    end = len(channel_rows)
+                else:
+                    start = max(0, idx - context)
+                    end = min(len(channel_rows), idx + context + 1)
                 selected = channel_rows[start:end]
+
+            total_in_channel = len(channel_rows)
 
             # Channel name at the time of the target message
             channel_name_row = con.execute(
@@ -1817,6 +1827,21 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 else None
             )
             nickname = _nickname_at(r_person_id, r_ts) if r_ts else None
+            # For system-like messages (e.g. "Alice changed the group photo"),
+            # the content begins with the canonical name. Applying a nickname
+            # there creates a confusing header/content mismatch, so prefer the
+            # canonical name when the content starts with it.
+            content_starts_with_canonical = bool(
+                nickname
+                and r_person_name
+                and r_content
+                and r_content.casefold().startswith(r_person_name.casefold() + " ")
+            )
+            resolved_name = (
+                r_person_name
+                if content_starts_with_canonical
+                else (nickname or r_person_name)
+            )
             items.append(
                 {
                     "id": r_id,
@@ -1830,7 +1855,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     "reaction_details": json.loads(r_reaction_details)
                     if r_reaction_details
                     else None,
-                    "person_name": nickname or r_person_name,
+                    "person_name": resolved_name,
                     "person_name_canonical": r_person_name,
                     "person_color": r_person_color,
                     "avatar_url": avatar_by_name.get(r_person_name or "", "") or None,
@@ -1844,6 +1869,8 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             "platform": platform,
             "source_name": source_name,
             "items": items,
+            "total_in_channel": total_in_channel,
+            "is_full": full or (len(selected) == total_in_channel),
         }
 
     @app.get("/api/overview")
@@ -3346,9 +3373,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
 
-        with _connect(app.state.db_path) as con:
-            rows = con.execute(
-                f"""
+        _word_cte = f"""
                 WITH tokens AS (
                     SELECT
                         m.id AS message_id,
@@ -3370,6 +3395,24 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     JOIN sources s ON s.id = c.source_id
                     WHERE {where} AND m.content IS NOT NULL AND m.content <> ''
                 )
+                """
+
+        def _msg_dict(row: Any) -> dict[str, Any]:
+            return {
+                "id": row[0],
+                "ts": row[1].isoformat() if row[1] else None,
+                "content": row[2],
+                "person_name": row[3],
+                "person_color": row[4],
+                "channel_name": _get_display_name(
+                    row[5], row[6], app.state.fb_chat_names
+                ),
+                "source_name": row[6],
+            }
+
+        with _connect(app.state.db_path) as con:
+            rows = con.execute(
+                _word_cte + """
                 SELECT DISTINCT message_id, ts, content, person_name, person_color, channel_name, source_name
                 FROM tokens
                 WHERE token = ?
@@ -3379,23 +3422,23 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 [*params, normalized, limit, offset],
             ).fetchall()
 
+            # First (chronologically earliest) usage of the word
+            first_row = con.execute(
+                _word_cte + """
+                SELECT DISTINCT message_id, ts, content, person_name, person_color, channel_name, source_name
+                FROM tokens
+                WHERE token = ?
+                ORDER BY ts ASC, message_id ASC
+                LIMIT 1
+                """,
+                [*params, normalized],
+            ).fetchone()
+
         return {
             "word": normalized,
             "has_more": len(rows) == limit,
-            "messages": [
-                {
-                    "id": row[0],
-                    "ts": row[1].isoformat() if row[1] else None,
-                    "content": row[2],
-                    "person_name": row[3],
-                    "person_color": row[4],
-                    "channel_name": _get_display_name(
-                        row[5], row[6], app.state.fb_chat_names
-                    ),
-                    "source_name": row[6],
-                }
-                for row in rows
-            ],
+            "first_message": _msg_dict(first_row) if first_row else None,
+            "messages": [_msg_dict(row) for row in rows],
         }
 
     @app.get("/api/linked-domains")
@@ -3915,6 +3958,159 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             "points": [
                 {"hour": int(row[0]), "message_count": int(row[1])} for row in rows
             ]
+        }
+
+    @app.get("/api/emoji-usage")
+    def emoji_usage(
+        limit: int = Query(default=30, ge=1, le=100),
+        start: date | None = Query(default=None, alias="from"),
+        end: date | None = Query(default=None, alias="to"),
+        people: str | None = None,
+        themes: str | None = None,
+        platforms: str | None = None,
+    ) -> dict[str, Any]:
+        """Aggregate reaction emoji counts across all matching messages."""
+        import json as _json
+        from collections import Counter
+
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
+        params: list[Any] = []
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
+
+        with _connect(app.state.db_path) as con:
+            rows = con.execute(
+                f"""
+                SELECT m.reaction_details_json, m.reaction_summary, s.name
+                FROM messages m
+                JOIN channels c ON c.id = m.channel_id
+                JOIN sources s ON c.source_id = s.id
+                WHERE {where}
+                  AND m.reaction_count > 0
+                """,
+                params,
+            ).fetchall()
+
+        emoji_counts: Counter[str] = Counter()
+        emoji_image: dict[str, str] = {}
+
+        for details_json, summary, src_name in rows:
+            if details_json:
+                try:
+                    details = _json.loads(details_json) if isinstance(details_json, str) else details_json
+                    for item in (details if isinstance(details, list) else []):
+                        name = str(item.get("name") or "").strip()
+                        count = int(item.get("count") or 0)
+                        if name and count > 0:
+                            emoji_counts[name] += count
+                            img = str(item.get("image_url") or "").strip()
+                            if img and name not in emoji_image:
+                                emoji_image[name] = img
+                except Exception:
+                    pass
+            elif summary:
+                # Parse "👍×3 😂×2" text format
+                for token in str(summary).split():
+                    if "×" in token:
+                        emoji_part, _, count_str = token.partition("×")
+                        e = emoji_part.strip()
+                        try:
+                            emoji_counts[e] += int(count_str)
+                        except ValueError:
+                            pass
+
+        top = emoji_counts.most_common(limit)
+        return {
+            "items": [
+                {
+                    "name": name,
+                    "count": count,
+                    "image_url": emoji_image.get(name),
+                }
+                for name, count in top
+            ]
+        }
+
+    @app.get("/api/search")
+    def search(
+        q: str = Query(min_length=1, max_length=500),
+        limit: int = Query(default=20, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
+        start: date | None = Query(default=None, alias="from"),
+        end: date | None = Query(default=None, alias="to"),
+        people: str | None = None,
+        themes: str | None = None,
+        platforms: str | None = None,
+    ) -> dict[str, Any]:
+        """Full-text search across message content."""
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
+        params: list[Any] = []
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
+
+        search_param = f"%{q}%"
+        with _connect(app.state.db_path) as con:
+            total_row = con.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM messages m
+                JOIN channels c ON c.id = m.channel_id
+                JOIN sources s ON c.source_id = s.id
+                LEFT JOIN people p ON p.id = m.person_id
+                WHERE {where}
+                  AND m.content ILIKE ?
+                """,
+                params + [search_param],
+            ).fetchone()
+            total = int(total_row[0]) if total_row else 0
+
+            rows = con.execute(
+                f"""
+                SELECT m.id, m.ts, m.content,
+                       p.display_name, p.color,
+                       c.name, s.name, s.platform
+                FROM messages m
+                JOIN channels c ON c.id = m.channel_id
+                JOIN sources s ON c.source_id = s.id
+                LEFT JOIN people p ON p.id = m.person_id
+                WHERE {where}
+                  AND m.content ILIKE ?
+                ORDER BY m.ts DESC
+                LIMIT ? OFFSET ?
+                """,
+                params + [search_param, limit, offset],
+            ).fetchall()
+
+        return {
+            "total": total,
+            "has_more": (offset + limit) < total,
+            "items": [
+                {
+                    "id": str(r[0]),
+                    "ts": r[1].isoformat() if hasattr(r[1], "isoformat") else str(r[1]),
+                    "content": r[2],
+                    "person_name": r[3],
+                    "person_color": r[4],
+                    "channel_name": r[5],
+                    "source_name": r[6],
+                    "platform": r[7],
+                }
+                for r in rows
+            ],
         }
 
     return app

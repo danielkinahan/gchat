@@ -25,7 +25,7 @@
         const u = url.toLowerCase();
         if (u.match(/\.(png|jpe?g|gif|webp)(?:$|\?)/)) return "image";
         if (u.match(/\.(mp4|webm|ogg|mov)(?:$|\?)/)) return "video";
-        if (u.match(/\.(mp3|wav|m4a|flac|ogg)(?:$|\?)/)) return "audio";
+        if (u.match(/\.(mp3|wav|m4a|flac|ogg|aac)(?:$|\?)/)) return "audio";
         return "link";
     }
 
@@ -117,7 +117,7 @@
                 >{(message?.person_name_canonical || message?.person_name || "?").charAt(0).toUpperCase()}</span>
             {/if}
             <strong style={`color:${message?.person_color || "#fff"}`}
-                >{message?.person_name || "Unknown"}</strong
+                >{message?.person_name || "Unknown"}{#if message?.person_name_canonical && message.person_name_canonical !== message.person_name}&nbsp;<span class="meta-real-name">({message.person_name_canonical})</span>{/if}</strong
             >
             <time
                 >{message?.ts
@@ -226,6 +226,12 @@
         font-size: 0.65rem;
         font-weight: 700;
         color: #fff;
+    }
+
+    .meta-real-name {
+        font-weight: 400;
+        font-size: 0.82em;
+        color: #94a3b8;
     }
 
     .content {

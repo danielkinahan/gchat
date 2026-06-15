@@ -57,7 +57,7 @@ export function attachmentKind(
     if (/\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/.test(normalized))
         return "image";
     if (/\.(mp4|mov|webm|m4v)(\?|#|$)/.test(normalized)) return "video";
-    if (/\.(mp3|wav|ogg|m4a)(\?|#|$)/.test(normalized)) return "audio";
+    if (/\.(mp3|wav|ogg|m4a|aac|flac)(\?|#|$)/.test(normalized)) return "audio";
     if (hasProtocol) return "link";
     return "label";
 }

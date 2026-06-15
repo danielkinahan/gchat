@@ -8,6 +8,8 @@
     import LinksTab from "$lib/tabs/LinksTab.svelte";
     import LanguageTab from "$lib/tabs/LanguageTab.svelte";
     import MessagesTab from "$lib/tabs/MessagesTab.svelte";
+    import EmojiTab from "$lib/tabs/EmojiTab.svelte";
+    import SearchTab from "$lib/tabs/SearchTab.svelte";
     import {
         apiUrl,
         fetchJson,
@@ -167,7 +169,9 @@
         | "chats"
         | "nicknames"
         | "links"
-        | "interactions" = "overview";
+        | "interactions"
+        | "emoji"
+        | "search" = "overview";
     let peopleFilterOptions: PeopleFilterOption[] = [];
     let nicknamePeople: NicknamePersonGroup[] = [];
     let runtimeState = data.runtimeState;
@@ -220,10 +224,14 @@
     let snippetTargetId: string | null = null;
     let snippetModalVisible = false;
     let snippetLoading = false;
+    let snippetExpandLoading = false;
     let snippetError = "";
     let snippetChannelName: string | null = null;
     let snippetPlatform: string | null = null;
     let snippetSourceName: string | null = null;
+    let snippetIsFull = false;
+    let snippetTotalInChannel = 0;
+    let snippetContext = 10;
 
     function closeSnippetModal() {
         snippetModalVisible = false;
@@ -233,11 +241,47 @@
         snippetChannelName = null;
         snippetPlatform = null;
         snippetSourceName = null;
+        snippetIsFull = false;
+        snippetTotalInChannel = 0;
+        snippetContext = 10;
+    }
+
+    function _mapSnippetMessages(items: any[]) {
+        return items.map((m: any) => ({
+            ...m,
+            attachment_url:
+                toDisplayAttachmentUrl(m.attachment_url, m.attachment_preview) ||
+                m.attachment_url,
+        }));
+    }
+
+    async function expandContext(full: boolean) {
+        if (!snippetTargetId) return;
+        snippetExpandLoading = true;
+        try {
+            const newContext = full ? 500 : snippetContext + 25;
+            const qs = `message_id=${encodeURIComponent(snippetTargetId)}&context=${newContext}${full ? "&full=true" : ""}`;
+            const res = await fetch(apiUrl(`/api/message-window?${qs}`));
+            if (!res.ok) return;
+            const data = await res.json();
+            snippetMessages = _mapSnippetMessages(data.items || []);
+            snippetIsFull = data.is_full ?? false;
+            snippetTotalInChannel = data.total_in_channel ?? 0;
+            if (!full) snippetContext = newContext;
+            await tick();
+            const el = document.getElementById(
+                `chatlog__message-container-${snippetTargetId}`,
+            );
+            if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+        } finally {
+            snippetExpandLoading = false;
+        }
     }
 
     async function openInContext(messageId: string) {
         if (!messageId) return;
         snippetLoading = true;
+        snippetContext = 10;
         snippetError = "";
         try {
             // Try DB-driven JSON window (fast and reliable)
@@ -248,18 +292,12 @@
             );
             if (!res.ok) throw new Error(`Request failed: ${res.status}`);
             const data = await res.json();
-            // normalize attachment display URLs for MessageCard
-            snippetMessages = (data.items || []).map((m: any) => ({
-                ...m,
-                attachment_url:
-                    toDisplayAttachmentUrl(
-                        m.attachment_url,
-                        m.attachment_preview,
-                    ) || m.attachment_url,
-            }));
+            snippetMessages = _mapSnippetMessages(data.items || []);
             snippetChannelName = data.channel_name || null;
             snippetPlatform = data.platform || null;
             snippetSourceName = data.source_name || null;
+            snippetIsFull = data.is_full ?? false;
+            snippetTotalInChannel = data.total_in_channel ?? 0;
             snippetTargetId = messageId;
             snippetModalVisible = true;
             snippetLoading = false;
@@ -673,6 +711,16 @@
             type="button"
             on:click={openInteractionsTab}>Interactions</button
         >
+        <button
+            class:active={activeTab === "emoji"}
+            type="button"
+            on:click={() => (activeTab = "emoji")}>Emoji</button
+        >
+        <button
+            class:active={activeTab === "search"}
+            type="button"
+            on:click={() => (activeTab = "search")}>Search</button
+        >
     </section>
 
     <MessagesTab
@@ -721,6 +769,19 @@
     <ChatsTab chats={data.nameHistory.chats} active={activeTab === "chats"} />
 
     <NicknamesTab people={nicknamePeople} active={activeTab === "nicknames"} />
+
+    <EmojiTab
+        active={activeTab === "emoji"}
+        {filterSignature}
+        {currentFilterParams}
+        {topLimit}
+    />
+
+    <SearchTab
+        active={activeTab === "search"}
+        {currentFilterParams}
+        {openInContext}
+    />
     {#if snippetModalVisible}
         <div
             class="snippet-modal-backdrop"
@@ -772,6 +833,26 @@
                             />
                         {/each}
                     </div>
+                    {#if !snippetIsFull}
+                        <div class="snippet-expand-row">
+                            <button
+                                type="button"
+                                class="snippet-expand-btn"
+                                on:click={() => expandContext(false)}
+                                disabled={snippetExpandLoading}
+                            >
+                                {snippetExpandLoading ? "Loading…" : "Show more context"}
+                            </button>
+                            <button
+                                type="button"
+                                class="snippet-expand-btn"
+                                on:click={() => expandContext(true)}
+                                disabled={snippetExpandLoading}
+                            >
+                                Show full conversation ({snippetTotalInChannel} messages)
+                            </button>
+                        </div>
+                    {/if}
                 {/if}
             </div>
         </div>

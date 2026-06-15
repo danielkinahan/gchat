@@ -16,6 +16,8 @@
         source_name: string;
     };
 
+    type FirstMessage = WordExample | null;
+
     type WordBreakdown = {
         word: string;
         people: Array<{
@@ -54,6 +56,7 @@
     let isAppendingExamples = false;
     let wordExamples: WordExample[] = [];
     let hasMoreWordExamples = false;
+    let wordFirstMessage: FirstMessage = null;
 
     $: normalizedWordSearch = wordSearch.trim().toLowerCase();
     $: filteredWords = normalizedWordSearch
@@ -125,6 +128,7 @@
         showWordExamples = false;
         wordExamples = [];
         hasMoreWordExamples = false;
+        wordFirstMessage = null;
         await loadWordBreakdown(word);
     }
 
@@ -149,6 +153,7 @@
             const response = await fetchJson<{
                 word: string;
                 has_more: boolean;
+                first_message: FirstMessage;
                 messages: WordExample[];
             }>(`/api/word-examples?${params.toString()}`);
             if (response.word === selectedWord) {
@@ -156,6 +161,7 @@
                     ? [...wordExamples, ...response.messages]
                     : response.messages;
                 hasMoreWordExamples = response.has_more;
+                if (!append) wordFirstMessage = response.first_message ?? null;
             }
         } catch (err) {
             error =
@@ -304,55 +310,72 @@
             {#if showWordExamples}
                 {#if isLoadingExamples && !isAppendingExamples}
                     <p class="muted">Loading examples...</p>
-                {:else if wordExamples.length > 0}
-                    <div class="example-list">
-                        {#each wordExamples as message}
-                            <div class="example-message">
-                                <div class="example-meta">
-                                    <strong
-                                        style={`color:${message.person_color}`}
-                                        >{message.person_name}</strong
-                                    >
-                                    <span>{message.channel_name}</span>
-                                    <time
-                                        >{message.ts
-                                            ? new Date(
-                                                  message.ts,
-                                              ).toLocaleString()
-                                            : "N/A"}</time
-                                    >
-                                    <button
-                                        type="button"
-                                        class="show-context"
-                                        on:click={() =>
-                                            openInContext(message.id)}
-                                    >
-                                        Show in context
-                                    </button>
-                                </div>
-                                {#if message.content && !isUrlOnlyMessage(message.content)}
-                                    <p>{message.content}</p>
-                                {/if}
-                                {#each extractMessageLinks(message.content) as link (link)}
-                                    <LinkPreview url={link} />
-                                {/each}
-                            </div>
-                        {/each}
-                    </div>
-                    {#if hasMoreWordExamples}
-                        <button
-                            type="button"
-                            class="examples-toggle"
-                            on:click={showMoreWordExamples}
-                            disabled={isAppendingExamples}
-                        >
-                            {isAppendingExamples
-                                ? "Loading..."
-                                : "Show 5 more messages"}
-                        </button>
-                    {/if}
                 {:else}
-                    <p class="muted">No example messages found.</p>
+                    {#if wordFirstMessage}
+                        <div class="first-usage-banner">
+                            <span class="first-usage-label">First usage</span>
+                            <div class="example-meta">
+                                <strong style={`color:${wordFirstMessage.person_color}`}>{wordFirstMessage.person_name}</strong>
+                                <span>{wordFirstMessage.channel_name}</span>
+                                <time>{wordFirstMessage.ts ? new Date(wordFirstMessage.ts).toLocaleString() : "N/A"}</time>
+                                <button type="button" class="show-context" on:click={() => openInContext(wordFirstMessage!.id)}>Show in context</button>
+                            </div>
+                            {#if wordFirstMessage.content && !isUrlOnlyMessage(wordFirstMessage.content)}
+                                <p>{wordFirstMessage.content}</p>
+                            {/if}
+                        </div>
+                    {/if}
+                    {#if wordExamples.length === 0 && !wordFirstMessage}
+                        <p class="muted">No example messages found.</p>
+                    {/if}
+                    {#if wordExamples.length > 0}
+                        <div class="example-list">
+                            {#each wordExamples as message}
+                                <div class="example-message">
+                                    <div class="example-meta">
+                                        <strong
+                                            style={`color:${message.person_color}`}
+                                            >{message.person_name}</strong
+                                        >
+                                        <span>{message.channel_name}</span>
+                                        <time
+                                            >{message.ts
+                                                ? new Date(
+                                                      message.ts,
+                                                  ).toLocaleString()
+                                                : "N/A"}</time
+                                        >
+                                        <button
+                                            type="button"
+                                            class="show-context"
+                                            on:click={() =>
+                                                openInContext(message.id)}
+                                        >
+                                            Show in context
+                                        </button>
+                                    </div>
+                                    {#if message.content && !isUrlOnlyMessage(message.content)}
+                                        <p>{message.content}</p>
+                                    {/if}
+                                    {#each extractMessageLinks(message.content) as link (link)}
+                                        <LinkPreview url={link} />
+                                    {/each}
+                                </div>
+                            {/each}
+                        </div>
+                        {#if hasMoreWordExamples}
+                            <button
+                                type="button"
+                                class="examples-toggle"
+                                on:click={showMoreWordExamples}
+                                disabled={isAppendingExamples}
+                            >
+                                {isAppendingExamples
+                                    ? "Loading..."
+                                    : "Show 5 more messages"}
+                            </button>
+                        {/if}
+                    {/if}
                 {/if}
             {/if}
         {/if}
