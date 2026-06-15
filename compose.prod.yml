@@ -2,6 +2,7 @@ services:
   api:
     image: ghcr.io/danielkinahan/gchat-api:latest
     container_name: gchat-api
+    env_file: .env
     volumes:
       - ./data:/data:ro
       - ./config:/config:ro
@@ -38,8 +39,6 @@ services:
       - HARDEN_OPENBOX=true
     volumes:
       - ./data/signal:/config
-    ports:
-      - 3001:3001
     shm_size: "1gb"
     restart: always
 

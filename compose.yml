@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Containerfile.api
+    env_file: .env
     volumes:
       - ./data:/data:ro
       - ./config:/config:ro
