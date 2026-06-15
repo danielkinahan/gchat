@@ -1712,17 +1712,31 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 channel_initial_name,
             ) = row
 
+            # Fetch all messages in the channel, resolving each person's active
+            # nickname at the exact message timestamp via a correlated subquery.
+            # Doing the timestamp comparison in SQL (DuckDB native types) avoids
+            # any Python-level type-mismatch that could return a future nickname.
             channel_rows = con.execute(
                 """
                 SELECT m.id, m.ts, m.content, m.attachment_preview, m.attachment_count,
                        m.reaction_count, m.reaction_summary, m.reaction_details_json,
-                       p.display_name, p.color, m.person_id
+                       p.display_name, p.color, m.person_id,
+                       (
+                           SELECT pnc.new_name
+                           FROM person_name_changes pnc
+                           WHERE pnc.person_id = m.person_id
+                             AND pnc.source_id = ?
+                             AND json_extract_string(pnc.payload_json, '$.chatId') = ?
+                             AND pnc.ts <= m.ts
+                           ORDER BY pnc.ts DESC
+                           LIMIT 1
+                       ) AS nickname_at_time
                 FROM messages m
                 LEFT JOIN people p ON p.id = m.person_id
                 WHERE m.channel_id = ?
                 ORDER BY m.ts ASC, m.id ASC
                 """,
-                [msg_channel_id],
+                [source_id, platform_channel_id, msg_channel_id],
             ).fetchall()
             idx = None
             for i, r in enumerate(channel_rows):
@@ -1734,7 +1748,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     (
                         msg_id, msg_ts, msg_content, msg_attach_preview, msg_attach_count,
                         msg_reaction_count, msg_reaction_summary, msg_reaction_details,
-                        person_name, person_color, None,
+                        person_name, person_color, None, None,
                     )
                 ]
             else:
@@ -1764,34 +1778,6 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 app.state.fb_chat_names,
             )
 
-            # Nickname timeline for this channel: person_id -> [(ts, new_name), ...]
-            nickname_rows = con.execute(
-                """
-                SELECT person_id, new_name, ts
-                FROM person_name_changes
-                WHERE source_id = ?
-                  AND json_extract_string(payload_json, '$.chatId') = ?
-                ORDER BY person_id, ts
-                """,
-                [source_id, platform_channel_id],
-            ).fetchall()
-
-        nickname_timeline: dict[int, list[tuple[Any, str]]] = {}
-        for r_pid, r_name, r_ts in nickname_rows:
-            nickname_timeline.setdefault(int(r_pid), []).append((r_ts, r_name))
-
-        def _nickname_at(person_id: int | None, ts: Any) -> str | None:
-            if person_id is None:
-                return None
-            timeline = nickname_timeline.get(int(person_id), [])
-            result = None
-            for change_ts, name in timeline:
-                if change_ts <= ts:
-                    result = name
-                else:
-                    break
-            return result
-
         # Avatar URL map: display_name -> url (from YAML config)
         people_extra = _load_people_extra()
         avatar_by_name: dict[str, str] = {
@@ -1815,6 +1801,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 r_person_name,
                 r_person_color,
                 r_person_id,
+                r_nickname,  # resolved by SQL correlated subquery
             ) = r
             attach_url = (
                 _resolve_local_attachment_url(
@@ -1826,13 +1813,12 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 if r_attach_preview
                 else None
             )
-            nickname = _nickname_at(r_person_id, r_ts) if r_ts else None
             # For system-like messages (e.g. "Alice changed the group photo"),
             # the content begins with the canonical name. Applying a nickname
             # there creates a confusing header/content mismatch, so prefer the
             # canonical name when the content starts with it.
             content_starts_with_canonical = bool(
-                nickname
+                r_nickname
                 and r_person_name
                 and r_content
                 and r_content.casefold().startswith(r_person_name.casefold() + " ")
@@ -1840,7 +1826,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             resolved_name = (
                 r_person_name
                 if content_starts_with_canonical
-                else (nickname or r_person_name)
+                else (r_nickname or r_person_name)
             )
             items.append(
                 {
