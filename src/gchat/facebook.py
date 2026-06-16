@@ -106,6 +106,28 @@ def _content(node) -> tuple[str, int, str | None]:
         reaction_list.decompose()
 
     text = _text(node)
+
+    # Normalize common FB placeholders so we don't keep the "X sent a link/attachment"
+    # prefix in stored content.
+    link_placeholder = re.match(
+        r"^.+ sent a link\.\s*(https?://\S+)\s*$", text, re.IGNORECASE
+    )
+    if link_placeholder:
+        text = link_placeholder.group(1).strip()
+
+    attachment_placeholder = re.match(
+        r"^.+ sent an attachment\.\s*download file:\s*(messages/\S+)\s*$",
+        text,
+        re.IGNORECASE,
+    )
+    if attachment_placeholder:
+        text = attachment_placeholder.group(1).strip()
+
+    # Collapse duplicate same-link text like "URL URL"
+    duplicate_url = re.match(r"^(https?://\S+)\s+\1$", text, re.IGNORECASE)
+    if duplicate_url:
+        text = duplicate_url.group(1).strip()
+
     attachments = []
     for attachment in node.find_all(["video", "audio", "img", "a"], recursive=True):
         if attachment.name in {"img", "a"}:
@@ -148,6 +170,11 @@ def _content(node) -> tuple[str, int, str | None]:
             not text
             or _is_attachment_only_message(text)
             or _is_attachment_label_text(text, labels)
+            or (
+                preview is not None
+                and normalize_whitespace(text).casefold()
+                == normalize_whitespace(preview).casefold()
+            )
         ):
             return "", len(attachments), preview
         return text, len(attachments), preview
@@ -587,12 +614,13 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
                         ),
                     )
                     alias_to_raw_id.setdefault(_name_key(target_name), target_raw_id)
-                    payload = {
+                    member_payload: dict[str, str] = {
                         "actor_name": actor_name,
-                        "actor_raw_id": actor_raw_id,
                         "target_name": target_name,
                         "chatId": channel.raw_id,
                     }
+                    if actor_raw_id:
+                        member_payload["actor_raw_id"] = actor_raw_id
                     member_events.append(
                         MemberEventSeed(
                             source_name=source.name,
@@ -604,7 +632,7 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
                             actor_display_name=actor_name,
                             target_display_name=target_name,
                             ts=ts,
-                            payload_json=json.dumps(payload, ensure_ascii=False),
+                            payload_json=json.dumps(member_payload, ensure_ascii=False),
                         )
                     )
             if nickname_data := _extract_nickname_change(content or _text(container)):
