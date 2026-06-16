@@ -268,11 +268,6 @@
             snippetIsFull = data.is_full ?? false;
             snippetTotalInChannel = data.total_in_channel ?? 0;
             if (!full) snippetContext = newContext;
-            await tick();
-            const el = document.getElementById(
-                `chatlog__message-container-${snippetTargetId}`,
-            );
-            if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
         } finally {
             snippetExpandLoading = false;
         }
@@ -833,14 +828,6 @@
                                 disabled={snippetExpandLoading}
                             >
                                 {snippetExpandLoading ? "Loading…" : "Show more context"}
-                            </button>
-                            <button
-                                type="button"
-                                class="snippet-expand-btn"
-                                on:click={() => expandContext(true)}
-                                disabled={snippetExpandLoading}
-                            >
-                                Show full conversation ({snippetTotalInChannel} messages)
                             </button>
                         </div>
                     {/if}

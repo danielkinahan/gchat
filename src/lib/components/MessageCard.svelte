@@ -4,6 +4,7 @@
         extractMessageLinks,
         isUrlOnlyMessage,
         stripPreviewedLinks,
+        canonicalUrlKey,
     } from "$lib/messageLinks";
 
     export let message: any;
@@ -193,7 +194,7 @@
                 controls
                 preload="none"
             ></audio>
-        {:else if !contentLinks.includes(message.attachment_url)}
+        {:else if !contentLinks.some((l) => canonicalUrlKey(l) === canonicalUrlKey(message.attachment_url))}
             <LinkPreview url={message.attachment_url} />
         {/if}
     {/if}

@@ -278,8 +278,12 @@ _FACEBOOK_EXTRA_SYSTEM_PATTERNS = (
     re.compile(r"^.+ changed the group's? (icon|cover|avatar)\.?$", re.IGNORECASE),
     re.compile(r"^.+ created a poll[.:]", re.IGNORECASE),
     re.compile(r"^.+ (voted in|answered) (a )?poll", re.IGNORECASE),
+    re.compile(r"^.+ voted for .+ in the poll[.:]?$", re.IGNORECASE),
+    re.compile(r"^.+ removed their vote for .+ in the poll[.:]?$", re.IGNORECASE),
     re.compile(r"^.+ set the (group )?theme to .+\.?$", re.IGNORECASE),
     re.compile(r"^.+ changed the (group )?theme\.?$", re.IGNORECASE),
+    re.compile(r"^.+ set the emoji to .+$", re.IGNORECASE),
+    re.compile(r"^.+ changed the (chat|group) colou?rs?\.?$", re.IGNORECASE),
     re.compile(r"^.+ turned off (link previews|notifications)\.?$", re.IGNORECASE),
     re.compile(r"^.+ turned on (link previews|notifications)\.?$", re.IGNORECASE),
     re.compile(r"^.+ pinned a message\.?$", re.IGNORECASE),
@@ -289,6 +293,13 @@ _FACEBOOK_EXTRA_SYSTEM_PATTERNS = (
         re.IGNORECASE,
     ),
     re.compile(r"^.+ created (the|this) group\.?$", re.IGNORECASE),
+    re.compile(r"^.+ scored \d+ points? playing \w+\.?$", re.IGNORECASE),
+    re.compile(r"^.+ set the new high score of \d+ points? playing \w+\.?$", re.IGNORECASE),
+    # Plans feature
+    re.compile(r"^Plan created: .+$", re.IGNORECASE),
+    re.compile(r"^.+ created a plan\.?$", re.IGNORECASE),
+    re.compile(r"^.+ named the plan .+\.?$", re.IGNORECASE),
+    re.compile(r"^.+ responded .+\.?$", re.IGNORECASE),
 )
 
 
@@ -708,6 +719,11 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
                     target.reaction_summary, emoji
                 ),
             )
+            # Keep as its own system message so it appears in the chat
+            # timeline, but do NOT advance last_message_idx so that any
+            # subsequent emoji message still reacts to the same original
+            # non-emoji message.
+            folded.append(replace(msg, is_system=True))
             continue
         folded.append(msg)
         last_message_idx = len(folded) - 1

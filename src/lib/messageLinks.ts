@@ -1,6 +1,31 @@
 export const MESSAGE_URL_PATTERN = /\bhttps?:\/\/[^\s<>"']+/gi;
 const PREVIEW_LINK_LIMIT = 2;
 
+/**
+ * Returns a canonical key for a URL so that equivalent URLs (e.g. a YouTube
+ * short link and its full counterpart) are treated as duplicates.
+ * Falls back to the URL itself when no known normalization applies.
+ */
+export function canonicalUrlKey(url: string): string {
+    try {
+        const u = new URL(url);
+        const host = u.hostname.replace(/^www\./, "");
+
+        // youtu.be/VIDEO_ID  ↔  youtube.com/watch?v=VIDEO_ID
+        if (host === "youtu.be") {
+            const id = u.pathname.slice(1).split("/")[0];
+            if (id) return `youtube:${id}`;
+        }
+        if (host === "youtube.com" || host === "m.youtube.com") {
+            const id = u.searchParams.get("v");
+            if (id) return `youtube:${id}`;
+        }
+    } catch {
+        // not a valid URL — fall through
+    }
+    return url;
+}
+
 export function extractMessageLinks(content: string | null): string[] {
     const text = (content ?? "").trim();
     if (!text) return [];
@@ -11,8 +36,9 @@ export function extractMessageLinks(content: string | null): string[] {
     for (const raw of matches) {
         const cleaned = raw.replace(/[)\].,!?;:]+$/u, "");
         if (cleaned.length < 8) continue;
-        if (seen.has(cleaned)) continue;
-        seen.add(cleaned);
+        const key = canonicalUrlKey(cleaned);
+        if (seen.has(key)) continue;
+        seen.add(key);
         result.push(cleaned);
         if (result.length >= PREVIEW_LINK_LIMIT) break;
     }

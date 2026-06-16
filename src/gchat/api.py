@@ -341,14 +341,15 @@ class _MetricSql:
     extra_where: str
 
 
-def _metric_sql(metric: str) -> _MetricSql:
+def _metric_sql(metric: str, has_is_system: bool = False) -> _MetricSql:
+    is_system_filter = " AND NOT m.is_system" if has_is_system else ""
     if metric == "words":
         return _MetricSql(
             aggregate="SUM(word_count)",
             inner_select_suffix=(
                 f", m.conversation_id, {_word_count_expr()} AS word_count"
             ),
-            extra_where="",
+            extra_where=is_system_filter,
         )
     if metric == "conversations":
         return _MetricSql(
@@ -359,7 +360,7 @@ def _metric_sql(metric: str) -> _MetricSql:
     return _MetricSql(
         aggregate="COUNT(*)",
         inner_select_suffix=", m.conversation_id",
-        extra_where="",
+        extra_where=is_system_filter,
     )
 
 
@@ -1903,7 +1904,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             if app.state.has_is_edited
             else "0"
         )
-        ms = _metric_sql(metric)
+        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
         with _connect(app.state.db_path) as con:
             total = con.execute(
                 f"""
@@ -2190,7 +2191,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
-        ms = _metric_sql(metric)
+        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -2239,7 +2240,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
-        ms = _metric_sql(metric)
+        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -2307,7 +2308,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
-        ms = _metric_sql(metric)
+        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -2353,7 +2354,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
-        ms = _metric_sql(metric)
+        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -2406,7 +2407,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
         params.append(limit)
-        ms = _metric_sql(metric)
+        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -3071,7 +3072,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
         params.append(limit)
-        ms = _metric_sql(metric)
+        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -3133,7 +3134,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
 
-        ms = _metric_sql(metric)
+        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -3894,7 +3895,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
-        ms = _metric_sql(metric)
+        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -3944,7 +3945,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
-        ms = _metric_sql(metric)
+        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -4070,6 +4071,10 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
 
+        # Use case-sensitive LIKE for queries containing non-ASCII characters
+        # (e.g. emoji) since ILIKE case-folding can mangle multi-byte Unicode.
+        has_non_ascii = any(ord(ch) > 127 for ch in q)
+        like_op = "LIKE" if has_non_ascii else "ILIKE"
         search_param = f"%{q}%"
         with _connect(app.state.db_path) as con:
             total_row = con.execute(
@@ -4080,7 +4085,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 JOIN sources s ON c.source_id = s.id
                 LEFT JOIN people p ON p.id = m.person_id
                 WHERE {where}
-                  AND m.content ILIKE ?
+                  AND m.content {like_op} ?
                 """,
                 params + [search_param],
             ).fetchone()
@@ -4096,7 +4101,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 JOIN sources s ON c.source_id = s.id
                 LEFT JOIN people p ON p.id = m.person_id
                 WHERE {where}
-                  AND m.content ILIKE ?
+                  AND m.content {like_op} ?
                 ORDER BY m.ts DESC
                 LIMIT ? OFFSET ?
                 """,
