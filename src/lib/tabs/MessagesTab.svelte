@@ -722,7 +722,7 @@
 
     <section class="overview-bottom" class:tab-hidden={!active}>
         <div class="panel split-panel">
-            <h2>{overviewMetricTitle} by week day & hour (split)</h2>
+            <h2>{overviewMetricTitle} by week day & hour</h2>
             <div class="weekday-chart">
                 {#each weekdayLabels as label, i}
                     <div class="weekday-bar-wrap">
@@ -822,7 +822,7 @@
     <section class="overview-bottom-secondary" class:tab-hidden={!active}>
         <div class="panel timeline-panel platform-panel">
             <div class="panel-head">
-                <h2>Platform usage over time (monthly)</h2>
+                <h2>Platform usage over time</h2>
                 <div class="platform-legend">
                     {#each baseData.platformOverTime.platforms as platform}
                         <span class="legend-item">

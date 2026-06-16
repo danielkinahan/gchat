@@ -511,15 +511,6 @@
 </svelte:head>
 
 <main class="page">
-    <header class="hero">
-        <div>
-            <p class="eyebrow">gChat</p>
-            <h1>Multi-platform chat analytics</h1>
-            <p class="lede">
-                A private dashboard for Discord, Facebook, and Signal history.
-            </p>
-        </div>
-    </header>
 
     <section class="filters">
         <div class="filter-row">

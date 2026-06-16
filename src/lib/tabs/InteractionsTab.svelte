@@ -220,7 +220,7 @@
     </div>
 
     <div class="panel interactions-feed">
-        <h2>Top reacted messages (total)</h2>
+        <h2>Top reacted messages</h2>
         {#if isLoading}
             <p class="muted">Loading interactions...</p>
         {:else if topReactedMessages.length === 0}
@@ -324,7 +324,7 @@
 
     {#if removedEvents.by_actor.length || removedEvents.by_target.length || removedEvents.by_chat.length}
         <div class="panel rank-panel">
-            <h2>Top kickers (removed others from chats)</h2>
+            <h2>Top kickers</h2>
             <div class="rank-list">
                 {#each removedEvents.by_actor as person}
                     <div class="rank-row">
@@ -347,7 +347,7 @@
         </div>
 
         <div class="panel rank-panel">
-            <h2>Most kicked (removed from chats)</h2>
+            <h2>Most kicked</h2>
             <div class="rank-list">
                 {#each removedEvents.by_target as person}
                     <div class="rank-row">
@@ -390,7 +390,7 @@
 
     {#if leftEvents.by_target.length}
         <div class="panel rank-panel">
-            <h2>Most departures (left a chat themselves)</h2>
+            <h2>Most departures</h2>
             <div class="rank-list">
                 {#each leftEvents.by_target as person}
                     <div class="rank-row">
