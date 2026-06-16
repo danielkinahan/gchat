@@ -87,7 +87,28 @@
     }
 
     $: contentLinks = extractMessageLinks(message?.content || null);
-    $: displayContent = stripPreviewedLinks(message?.content || null, contentLinks);
+    $: displayContent = stripPreviewedLinks(
+        message?.content || null,
+        contentLinks,
+    );
+
+    function isAttachmentPlaceholder(text: string | null): boolean {
+        if (!text) return false;
+        const s = String(text).toLowerCase();
+        return (
+            /sent (an |a )?(attachment|link)/.test(s) ||
+            s.includes("one or more media attachments were removed") ||
+            /download file:/.test(s) ||
+            /sent an attachment\.?$/.test(s) ||
+            /sent a link\.?$/.test(s)
+        );
+    }
+
+    $: showContent =
+        Boolean(displayContent) &&
+        !isUrlOnlyMessage(message?.content || null) &&
+        !(message?.attachment_url && isAttachmentPlaceholder(message?.content));
+
     $: reactions = normalizeReactions(
         message?.reaction_details,
         message?.reaction_summary || null,
@@ -107,17 +128,30 @@
                 <img
                     class="meta-avatar"
                     src={message.avatar_url}
-                    alt={message?.person_name_canonical || message?.person_name || ""}
+                    alt={message?.person_name_canonical ||
+                        message?.person_name ||
+                        ""}
                     loading="lazy"
                 />
             {:else if message?.person_color}
                 <span
                     class="meta-avatar meta-avatar-initials"
                     style={`background:${message.person_color}`}
-                >{(message?.person_name_canonical || message?.person_name || "?").charAt(0).toUpperCase()}</span>
+                    >{(
+                        message?.person_name_canonical ||
+                        message?.person_name ||
+                        "?"
+                    )
+                        .charAt(0)
+                        .toUpperCase()}</span
+                >
             {/if}
             <strong style={`color:${message?.person_color || "#fff"}`}
-                >{message?.person_name || "Unknown"}{#if message?.person_name_canonical && message.person_name_canonical !== message.person_name}&nbsp;<span class="meta-real-name">({message.person_name_canonical})</span>{/if}</strong
+                >{message?.person_name ||
+                    "Unknown"}{#if message?.person_name_canonical && message.person_name_canonical !== message.person_name}&nbsp;<span
+                        class="meta-real-name"
+                        >({message.person_name_canonical})</span
+                    >{/if}</strong
             >
             <time
                 >{message?.ts
@@ -127,7 +161,7 @@
         </div>
     {/if}
 
-    {#if displayContent && !isUrlOnlyMessage(message?.content || null)}
+    {#if showContent}
         <p class="content">{displayContent}</p>
     {/if}
 

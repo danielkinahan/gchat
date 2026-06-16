@@ -17,7 +17,12 @@ from .models import (
     PersonSeed,
     SourceSeed,
 )
-from .util import fix_facebook_mojibake, hash_message, message_counts, normalize_whitespace
+from .util import (
+    fix_facebook_mojibake,
+    hash_message,
+    message_counts,
+    normalize_whitespace,
+)
 
 
 @dataclass(frozen=True)
@@ -123,9 +128,63 @@ def _content(node) -> tuple[str, int, str | None]:
             if preview is None and attachment_preview:
                 preview = attachment_preview
             labels.append(_attachment_label(attachment, attachment_preview))
-        if not text or _is_attachment_only_message(text) or _is_attachment_label_text(text, labels):
+
+        # If the text contains a common removed-attachments placeholder, strip it
+        # so we can treat the message as an attachment-only message.
+        if text:
+            cleaned = text
+            removed_phrase = "One or more media attachments were removed"
+            if removed_phrase.lower() in cleaned.lower():
+                # remove that phrase and any surrounding punctuation
+                cleaned = re.sub(
+                    r"\bOne or more media attachments were removed\b[.]*",
+                    "",
+                    cleaned,
+                    flags=re.IGNORECASE,
+                ).strip()
+                text = cleaned
+
+        if (
+            not text
+            or _is_attachment_only_message(text)
+            or _is_attachment_label_text(text, labels)
+        ):
             return "", len(attachments), preview
         return text, len(attachments), preview
+
+    # No attachment nodes found. Some exports put a placeholder text like
+    # "X sent an attachment" or "One or more media attachments were removed" or
+    # "X sent a link" while the actual link may still be in text or an <a> tag.
+    if text:
+        normalized = normalize_whitespace(text).strip()
+        # Try to extract an explicit URL in the text (http/https)
+        url_match = re.search(r"(https?://[^\s]+)", text)
+        # Try to extract a local file path (messages/...) often used for FB attachments
+        file_match = re.search(r"(messages/[^\s]+)", text)
+
+        # Conditions where we should treat the message as attachment-only and prefer the URL/file
+        is_placeholder = (
+            _is_attachment_only_message(text)
+            or re.search(r"sent (an |a )?(attachment|link)", normalized, re.IGNORECASE)
+            or "one or more media attachments were removed" in normalized.casefold()
+            or re.search(r"^https?://", normalized, re.IGNORECASE)
+        )
+
+        if is_placeholder:
+            # Prefer explicit <a> href if present
+            a = node.find("a")
+            if a is not None:
+                href = _attachment_preview(a)
+                if href:
+                    return "", 1, href
+            # Prefer an inline URL if present
+            if url_match:
+                return "", 1, url_match.group(1).strip()
+            # Prefer a local messages/ path if present
+            if file_match:
+                return "", 1, file_match.group(1).strip()
+            # otherwise return as attachment-only with no preview
+            return "", 0, None
     if text:
         return text, 0, None
     return "", 0, None
@@ -133,13 +192,46 @@ def _content(node) -> tuple[str, int, str | None]:
 
 _NAME_CHANGE_PATTERNS = (
     re.compile(r"^(?P<actor>.+?) named the group (?P<name>.+?)\.?$", re.IGNORECASE),
-    re.compile(r"^(?P<actor>.+?) renamed the group(?: to)? (?P<name>.+?)\.?$", re.IGNORECASE),
-    re.compile(r"^(?P<actor>.+?) changed the group name(?: to)? (?P<name>.+?)\.?$", re.IGNORECASE),
-    re.compile(r"^(?P<actor>.+?) changed the chat name(?: to)? (?P<name>.+?)\.?$", re.IGNORECASE),
-    re.compile(r"^(?P<actor>.+?) set the chat name(?: to)? (?P<name>.+?)\.?$", re.IGNORECASE),
-    re.compile(r"^(?P<actor>.+?) changed the group name from .+? to (?P<name>.+?)\.?$", re.IGNORECASE),
-    re.compile(r"^(?P<actor>.+?) changed the chat name from .+? to (?P<name>.+?)\.?$", re.IGNORECASE),
-    re.compile(r"^(?P<actor>.+?) updated the group name(?: to)? (?P<name>.+?)\.?$", re.IGNORECASE),
+    re.compile(
+        r"^(?P<actor>.+?) renamed the group(?: to)? (?P<name>.+?)\.?$", re.IGNORECASE
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) changed the group name(?: to)? (?P<name>.+?)\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) changed the chat name(?: to)? (?P<name>.+?)\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) set the chat name(?: to)? (?P<name>.+?)\.?$", re.IGNORECASE
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) changed the group name from .+? to (?P<name>.+?)\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) changed the chat name from .+? to (?P<name>.+?)\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) updated the group name(?: to)? (?P<name>.+?)\.?$",
+        re.IGNORECASE,
+    ),
+)
+
+# Patterns for detecting photo/avatar updates and other system changes
+_PHOTO_CHANGE_PATTERNS = (
+    re.compile(
+        r"^(?P<actor>.+?) changed the group (?:photo|avatar|picture)(?: to)?\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) updated the group (?:photo|avatar|picture)\.?$", re.IGNORECASE
+    ),
+    re.compile(
+        r"^(?P<actor>.+?) changed the profile picture for the group\.?$", re.IGNORECASE
+    ),
 )
 
 
@@ -165,7 +257,10 @@ _FACEBOOK_EXTRA_SYSTEM_PATTERNS = (
     re.compile(r"^.+ turned on (link previews|notifications)\.?$", re.IGNORECASE),
     re.compile(r"^.+ pinned a message\.?$", re.IGNORECASE),
     re.compile(r"^.+ (started|ended) a (live )?video(?: call)?\.?$", re.IGNORECASE),
-    re.compile(r"^.+ (started|answered|declined|missed) (an? )?(audio|video) call\.?$", re.IGNORECASE),
+    re.compile(
+        r"^.+ (started|answered|declined|missed) (an? )?(audio|video) call\.?$",
+        re.IGNORECASE,
+    ),
     re.compile(r"^.+ created (the|this) group\.?$", re.IGNORECASE),
 )
 
@@ -224,8 +319,13 @@ def _is_attachment_label_text(text: str, labels: list[str]) -> bool:
     normalized_text = normalize_whitespace(text).casefold()
     if not normalized_text:
         return False
-    normalized_labels = [normalize_whitespace(label).casefold() for label in labels if label]
-    return normalized_text in normalized_labels or normalized_text == normalize_whitespace(" ".join(labels)).casefold()
+    normalized_labels = [
+        normalize_whitespace(label).casefold() for label in labels if label
+    ]
+    return (
+        normalized_text in normalized_labels
+        or normalized_text == normalize_whitespace(" ".join(labels)).casefold()
+    )
 
 
 _NICKNAME_SET_PATTERNS = (
@@ -299,7 +399,10 @@ def _reaction_count(node) -> int:
     reactions = node.find_all(
         lambda tag: bool(
             tag.get("class")
-            and any("reaction" in str(class_name).lower() for class_name in tag.get("class", []))
+            and any(
+                "reaction" in str(class_name).lower()
+                for class_name in tag.get("class", [])
+            )
         )
     )
     if reactions:
@@ -310,7 +413,9 @@ def _reaction_count(node) -> int:
     if match:
         return int(match.group(1))
 
-    reaction_entries = [li for ul in node.select("ul._tqp") for li in ul.find_all("li", recursive=False)]
+    reaction_entries = [
+        li for ul in node.select("ul._tqp") for li in ul.find_all("li", recursive=False)
+    ]
     if reaction_entries:
         return len(reaction_entries)
 
@@ -430,7 +535,9 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
     message_event_indices: list[int] = []
     seen_message_ids: set[str] = set()
     rename_events: list[tuple[datetime, int, str, str | None, str | None]] = []
-    nickname_events: list[tuple[datetime, int, str, str, str | None, str | None, bool]] = []
+    nickname_events: list[
+        tuple[datetime, int, str, str, str | None, str | None, bool]
+    ] = []
     member_events: list[MemberEventSeed] = []
     event_index = 0
 
@@ -457,11 +564,11 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
             if rename_data := _extract_group_name_change(content or _text(container)):
                 rename, actor_name = rename_data
                 actor_raw_id = (
-                    alias_to_raw_id.get(_name_key(actor_name))
-                    if actor_name
-                    else None
+                    alias_to_raw_id.get(_name_key(actor_name)) if actor_name else None
                 )
-                rename_events.append((ts, event_index, rename, actor_name, actor_raw_id))
+                rename_events.append(
+                    (ts, event_index, rename, actor_name, actor_raw_id)
+                )
             if member_event := _extract_member_event(content or _text(container)):
                 event_kind, actor_name, target_names = member_event
                 actor_raw_id = alias_to_raw_id.get(_name_key(actor_name))
@@ -513,9 +620,7 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
                 )
                 alias_to_raw_id.setdefault(_name_key(target_name), target_raw_id)
                 actor_raw_id = (
-                    alias_to_raw_id.get(_name_key(actor_name))
-                    if actor_name
-                    else None
+                    alias_to_raw_id.get(_name_key(actor_name)) if actor_name else None
                 )
                 nickname_events.append(
                     (
@@ -565,10 +670,7 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
     folded: list[MessageSeed] = []
     last_message_idx: int | None = None
     for _, msg in indexed_messages:
-        if (
-            last_message_idx is not None
-            and _looks_like_reaction_message(msg.content)
-        ):
+        if last_message_idx is not None and _looks_like_reaction_message(msg.content):
             target = folded[last_message_idx]
             emoji = normalize_whitespace(msg.content)
             folded[last_message_idx] = replace(
@@ -600,7 +702,9 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
 
     name_changes: list[NameChangeSeed] = []
     last_name: str | None = None
-    for ts, _, new_name, actor_name, actor_raw_id in sorted(rename_events, key=lambda item: (item[0], item[1], item[2].casefold())):
+    for ts, _, new_name, actor_name, actor_raw_id in sorted(
+        rename_events, key=lambda item: (item[0], item[1], item[2].casefold())
+    ):
         if new_name == last_name:
             continue
         payload: dict[str, str] = {}
@@ -618,13 +722,23 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
                 new_name=new_name,
                 ts=ts,
                 kind="channel-title-change",
-                payload_json=json.dumps(payload, ensure_ascii=False) if payload else None,
+                payload_json=json.dumps(payload, ensure_ascii=False)
+                if payload
+                else None,
             )
         )
         last_name = new_name
 
     nickname_state: dict[str, str | None] = {}
-    for ts, _, target_raw_id, new_nickname, actor_name, actor_raw_id, is_cleared in sorted(
+    for (
+        ts,
+        _,
+        target_raw_id,
+        new_nickname,
+        actor_name,
+        actor_raw_id,
+        is_cleared,
+    ) in sorted(
         nickname_events,
         key=lambda item: (item[0], item[1], item[2].casefold(), item[3].casefold()),
     ):

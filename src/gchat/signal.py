@@ -17,12 +17,26 @@ from .reconciliation import ReconciliationConfig
 from .util import to_utc_naive
 
 _SIGNAL_SYSTEM_PATTERNS = (
-    re.compile(r"^.+ (named|changed|updated) the group (name|title|description|avatar|photo|icon)(?: to .+)?[.!?]?$", re.IGNORECASE),
-    re.compile(r"^(you|.+?) (added|removed|invited) .+ (to|from) the (group|chat)[.!?]?$", re.IGNORECASE),
+    re.compile(
+        r"^.+ (named|changed|updated) the group (name|title|description|avatar|photo|icon)(?: to .+)?[.!?]?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(you|.+?) (added|removed|invited) .+ (to|from) the (group|chat)[.!?]?$",
+        re.IGNORECASE,
+    ),
     re.compile(r"^.+ (left|joined) the (group|chat)[.!?]?$", re.IGNORECASE),
-    re.compile(r"^(you )?(were|was) (removed|added) (from|to) the (group|chat)[.!?]?$", re.IGNORECASE),
-    re.compile(r"^(you )?changed the (group|chat) (name|description|avatar|photo|icon)(?: to .+)?[.!?]?$", re.IGNORECASE),
-    re.compile(r"^(you )?updated the (group|cover) (photo|avatar|icon)[.!?]?$", re.IGNORECASE),
+    re.compile(
+        r"^(you )?(were|was) (removed|added) (from|to) the (group|chat)[.!?]?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(you )?changed the (group|chat) (name|description|avatar|photo|icon)(?: to .+)?[.!?]?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"^(you )?updated the (group|cover) (photo|avatar|icon)[.!?]?$", re.IGNORECASE
+    ),
     re.compile(r"^missed (voice|video) call[.!?]?$", re.IGNORECASE),
     re.compile(r"^(voice|video) call[.!?]?$", re.IGNORECASE),
     re.compile(r"^(you )?accepted a request to join[.!?]?$", re.IGNORECASE),
@@ -511,23 +525,82 @@ def normalize_backup(
                     )
             group_change = update.get("groupChange") or {}
             for change in group_change.get("updates") or []:
-                if not isinstance(change, dict) or "groupNameUpdate" not in change:
+                if not isinstance(change, dict):
                     continue
-                title_update = change["groupNameUpdate"] or {}
-                new_title = str(title_update.get("newGroupName") or "").strip()
-                if not new_title:
-                    continue
-                old_title = str(title_update.get("oldGroupName") or "").strip() or None
-                group_title_updates.setdefault(chat_id, []).append(
-                    (
-                        to_utc_naive(
-                            datetime.fromtimestamp(int(item["dateSent"]) / 1000.0)
-                        ),
-                        old_title,
-                        new_title,
-                        item,
+                # Handle group name updates
+                if "groupNameUpdate" in change:
+                    title_update = change["groupNameUpdate"] or {}
+                    new_title = str(title_update.get("newGroupName") or "").strip()
+                    if not new_title:
+                        continue
+                    old_title = (
+                        str(title_update.get("oldGroupName") or "").strip() or None
                     )
-                )
+                    group_title_updates.setdefault(chat_id, []).append(
+                        (
+                            to_utc_naive(
+                                datetime.fromtimestamp(int(item["dateSent"]) / 1000.0)
+                            ),
+                            None,
+                            new_title,
+                            item,
+                        )
+                    )
+                    continue
+                # Handle group icon/photo updates
+                if "groupIconUpdate" in change or "groupPhotoUpdate" in change:
+                    icon_update = (
+                        change.get("groupIconUpdate")
+                        or change.get("groupPhotoUpdate")
+                        or {}
+                    )
+                    group_title_updates.setdefault(chat_id, []).append(
+                        (
+                            to_utc_naive(
+                                datetime.fromtimestamp(int(item["dateSent"]) / 1000.0)
+                            ),
+                            None,
+                            "(photo changed)",
+                            item,
+                        )
+                    )
+                    continue
+                # Handle group emoji updates
+                if "groupEmojiUpdate" in change or "groupReactionUpdate" in change:
+                    emoji_update = (
+                        change.get("groupEmojiUpdate")
+                        or change.get("groupReactionUpdate")
+                        or {}
+                    )
+                    emoji = (
+                        emoji_update.get("emoji")
+                        or emoji_update.get("reaction")
+                        or None
+                    )
+                    group_title_updates.setdefault(chat_id, []).append(
+                        (
+                            to_utc_naive(
+                                datetime.fromtimestamp(int(item["dateSent"]) / 1000.0)
+                            ),
+                            None,
+                            str(emoji) if emoji else "(emoji changed)",
+                            item,
+                        )
+                    )
+                    continue
+                # Handle polls or other updates generically
+                if "poll" in change or "pollUpdate" in change:
+                    group_title_updates.setdefault(chat_id, []).append(
+                        (
+                            to_utc_naive(
+                                datetime.fromtimestamp(int(item["dateSent"]) / 1000.0)
+                            ),
+                            None,
+                            "(poll)",
+                            item,
+                        )
+                    )
+                    continue
 
         content = _extract_message_content(item)
         text_title = _extract_group_name_from_text(content)

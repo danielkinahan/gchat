@@ -24,6 +24,32 @@ _NICKNAME_RENAME_PATTERNS = (
     re.compile(r"set their nickname to (?P<name>.+)$", re.IGNORECASE),
 )
 
+# Patterns to detect system-like changes (photo/avatar, emoji/poll)
+_PHOTO_CHANGE_PATTERNS = (
+    re.compile(
+        r"(?P<actor>.+?) changed the (?:server|group|channel) (?:icon|photo|avatar)(?: to)?\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?P<actor>.+?) updated the (?:server|group|channel) (?:icon|photo|avatar)\.?$",
+        re.IGNORECASE,
+    ),
+)
+
+_EMOJI_SET_PATTERNS = (
+    re.compile(
+        r"(?P<actor>.+?) added (?:the )?(?:emoji|reaction) (?P<emoji>.+)\.?$",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?P<actor>.+?) set the group emoji to (?P<emoji>.+)\.?$", re.IGNORECASE
+    ),
+)
+
+_POLL_PATTERNS = (
+    re.compile(r"(?P<actor>.+?) created a poll(?:[:\s].+)?$", re.IGNORECASE),
+)
+
 
 @dataclass(frozen=True)
 class DiscordExport:
@@ -290,6 +316,81 @@ def _extract_name_change(
                 )
             )
         return changes
+
+    # detect photo/avatar changes
+    for pattern in _PHOTO_CHANGE_PATTERNS:
+        match = pattern.search(stripped)
+        if match:
+            actor = (
+                match.group("actor").strip()
+                if match.groupdict().get("actor")
+                else person.display_name
+            )
+            changes.append(
+                NameChangeSeed(
+                    source_name=source.name,
+                    platform="discord",
+                    entity_kind="channel",
+                    entity_raw_id=channel_seed.raw_id,
+                    previous_name=None,
+                    new_name="photo-changed",
+                    ts=ts,
+                    kind="channel-photo-change",
+                    payload_json=json.dumps({"actor_name": actor}, ensure_ascii=False),
+                )
+            )
+            return changes
+
+    # detect emoji/poll changes
+    for pattern in _EMOJI_SET_PATTERNS:
+        match = pattern.search(stripped)
+        if match:
+            actor = (
+                match.group("actor").strip()
+                if match.groupdict().get("actor")
+                else person.display_name
+            )
+            emoji = match.groupdict().get("emoji") or ""
+            changes.append(
+                NameChangeSeed(
+                    source_name=source.name,
+                    platform="discord",
+                    entity_kind="channel",
+                    entity_raw_id=channel_seed.raw_id,
+                    previous_name=None,
+                    new_name=(emoji or "emoji-changed"),
+                    ts=ts,
+                    kind="channel-emoji-change",
+                    payload_json=json.dumps(
+                        {"actor_name": actor, "emoji": emoji}, ensure_ascii=False
+                    ),
+                )
+            )
+            return changes
+
+    for pattern in _POLL_PATTERNS:
+        match = pattern.search(stripped)
+        if match:
+            actor = (
+                match.group("actor").strip()
+                if match.groupdict().get("actor")
+                else person.display_name
+            )
+            changes.append(
+                NameChangeSeed(
+                    source_name=source.name,
+                    platform="discord",
+                    entity_kind="channel",
+                    entity_raw_id=channel_seed.raw_id,
+                    previous_name=None,
+                    new_name="poll-created",
+                    ts=ts,
+                    kind="channel-poll",
+                    payload_json=json.dumps({"actor_name": actor}, ensure_ascii=False),
+                )
+            )
+            return changes
+
     return changes
 
 
