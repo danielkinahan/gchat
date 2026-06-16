@@ -169,9 +169,7 @@ def _is_safe_link_host(host: str) -> bool:
     return True
 
 
-def _select_link_preview_meta(
-    soup: BeautifulSoup, names: list[str]
-) -> str | None:
+def _select_link_preview_meta(soup: BeautifulSoup, names: list[str]) -> str | None:
     """Find the first matching <meta> tag content for the given property names."""
     for name in names:
         tag = soup.find("meta", attrs={"property": name})
@@ -341,15 +339,28 @@ class _MetricSql:
     extra_where: str
 
 
-def _metric_sql(metric: str, has_is_system: bool = False) -> _MetricSql:
+def _excluded_ids_sql(excluded_ids: frozenset[str]) -> str:
+    """Return a WHERE fragment excluding specific message IDs, or empty string."""
+    if not excluded_ids:
+        return ""
+    ids_literal = ", ".join(f"'{id_}'" for id_ in sorted(excluded_ids))
+    return f" AND m.id NOT IN ({ids_literal})"
+
+
+def _metric_sql(
+    metric: str,
+    has_is_system: bool = False,
+    excluded_ids: frozenset[str] | None = None,
+) -> _MetricSql:
     is_system_filter = " AND NOT m.is_system" if has_is_system else ""
+    excluded_filter = _excluded_ids_sql(excluded_ids or frozenset())
     if metric == "words":
         return _MetricSql(
             aggregate="SUM(word_count)",
             inner_select_suffix=(
                 f", m.conversation_id, {_word_count_expr()} AS word_count"
             ),
-            extra_where=is_system_filter,
+            extra_where=f"{is_system_filter}{excluded_filter}",
         )
     if metric == "conversations":
         return _MetricSql(
@@ -360,7 +371,7 @@ def _metric_sql(metric: str, has_is_system: bool = False) -> _MetricSql:
     return _MetricSql(
         aggregate="COUNT(*)",
         inner_select_suffix=", m.conversation_id",
-        extra_where=is_system_filter,
+        extra_where=f"{is_system_filter}{excluded_filter}",
     )
 
 
@@ -514,6 +525,20 @@ def _csv_strings(value: str | None) -> list[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _load_excluded_message_ids() -> frozenset[str]:
+    """Load message IDs to exclude from language/word-count stats."""
+    config_path = _default_config_dir() / "excluded_messages.yaml"
+    if not config_path.exists():
+        return frozenset()
+    try:
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        return frozenset()
+    if not isinstance(data, list):
+        return frozenset()
+    return frozenset(str(item).strip() for item in data if item and str(item).strip())
 
 
 def _load_configured_theme_names() -> list[str]:
@@ -765,7 +790,12 @@ def _config_signature(
 ) -> tuple[tuple[str, tuple[int, int] | None], ...]:
     return tuple(
         (name, _path_signature(config_dir / name))
-        for name in ("people.yaml", "themes.yaml", "fb_chat_names.json")
+        for name in (
+            "people.yaml",
+            "themes.yaml",
+            "fb_chat_names.json",
+            "excluded_messages.yaml",
+        )
     )
 
 
@@ -988,6 +1018,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     app.state.reconciliation = load_reconciliation(config_dir=app.state.config_dir)
     app.state.configured_people_names = _load_configured_people_names()
     app.state.primary_person_name = _load_primary_person_name()
+    app.state.excluded_message_ids = _load_excluded_message_ids()
     configured_theme_names = _load_configured_theme_names()
     if not configured_theme_names:
         configured_theme_names = _load_db_theme_names(app.state.db_path)
@@ -1039,6 +1070,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             )
             app.state.configured_people_names = _load_configured_people_names()
             app.state.primary_person_name = _load_primary_person_name()
+            app.state.excluded_message_ids = _load_excluded_message_ids()
             configured_theme_names = _load_configured_theme_names()
             if not configured_theme_names:
                 configured_theme_names = _load_db_theme_names(app.state.db_path)
@@ -1737,9 +1769,19 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             if target_pos_row is None or total_in_channel == 0:
                 selected = [
                     (
-                        msg_id, msg_ts, msg_content, msg_attach_preview, msg_attach_count,
-                        msg_reaction_count, msg_reaction_summary, msg_reaction_details,
-                        person_name, person_color, None, None, False,
+                        msg_id,
+                        msg_ts,
+                        msg_content,
+                        msg_attach_preview,
+                        msg_attach_count,
+                        msg_reaction_count,
+                        msg_reaction_summary,
+                        msg_reaction_details,
+                        person_name,
+                        person_color,
+                        None,
+                        None,
+                        False,
                     )
                 ]
             else:
@@ -1776,7 +1818,13 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     ORDER BY m.ts ASC, m.id ASC
                     LIMIT ? OFFSET ?
                     """,
-                    [source_id, platform_channel_id, msg_channel_id, fetch_limit, fetch_offset],
+                    [
+                        source_id,
+                        platform_channel_id,
+                        msg_channel_id,
+                        fetch_limit,
+                        fetch_offset,
+                    ],
                 ).fetchall()
 
             # Channel name at the time of the target message
@@ -1789,8 +1837,11 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 [msg_channel_id, msg_ts],
             ).fetchone()
             channel_name_at_time = _get_display_name(
-                channel_name_row[0] if channel_name_row
-                else (channel_initial_name or source_name),
+                (
+                    channel_name_row[0]
+                    if channel_name_row
+                    else (channel_initial_name or source_name)
+                ),
                 source_name,
                 app.state.fb_chat_names,
             )
@@ -1818,7 +1869,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 r_person_name,
                 r_person_color,
                 r_person_id,
-                r_nickname,     # resolved by SQL correlated subquery
+                r_nickname,  # resolved by SQL correlated subquery
                 r_is_system,
             ) = r
             attach_url = (
@@ -1856,9 +1907,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     "attachment_count": r_attach_count,
                     "reaction_count": r_reaction_count,
                     "reaction_summary": r_reaction_summary,
-                    "reaction_details": json.loads(r_reaction_details)
-                    if r_reaction_details
-                    else None,
+                    "reaction_details": (
+                        json.loads(r_reaction_details) if r_reaction_details else None
+                    ),
                     "person_name": resolved_name,
                     "person_name_canonical": r_person_name,
                     "person_color": r_person_color,
@@ -1885,7 +1936,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
+        metric: str = Query(
+            default="messages", pattern="^(messages|words|conversations)$"
+        ),
     ) -> dict[str, Any]:
         metric = _count_metric(metric)
         filters = QueryFilters(
@@ -1904,7 +1957,11 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             if app.state.has_is_edited
             else "0"
         )
-        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
+        ms = _metric_sql(
+            metric,
+            has_is_system=app.state.has_is_system,
+            excluded_ids=app.state.excluded_message_ids,
+        )
         with _connect(app.state.db_path) as con:
             total = con.execute(
                 f"""
@@ -2084,8 +2141,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             ).fetchone()
             conversations_row = (None, None, None)
             if app.state.has_conversation_id:
-                conversations_row = con.execute(
-                    f"""
+                conversations_row = (
+                    con.execute(
+                        f"""
                     SELECT
                         COUNT(DISTINCT m.conversation_id) AS conversation_count,
                         AVG(per_conversation.message_count) AS avg_messages,
@@ -2101,8 +2159,10 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     ) per_conversation ON per_conversation.conversation_id = m.conversation_id
                     WHERE {where} AND m.conversation_id IS NOT NULL
                     """,
-                    params,
-                ).fetchone() or (None, None, None)
+                        params,
+                    ).fetchone()
+                    or (None, None, None)
+                )
         total_messages = int(total[0] or 0)
         start_ts = total[1]
         end_ts = total[2]
@@ -2131,27 +2191,27 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 "longest_period_without_messages_seconds": int(longest_gap_row[0] or 0),
                 "longest_active_conversation_seconds": int(longest_active_row[0] or 0),
                 "most_active_year": {
-                    "bucket": most_active_year[0].isoformat()
-                    if most_active_year
-                    else None,
+                    "bucket": (
+                        most_active_year[0].isoformat() if most_active_year else None
+                    ),
                     "count": int(most_active_year[1]) if most_active_year else 0,
                 },
                 "most_active_month": {
-                    "bucket": most_active_month[0].isoformat()
-                    if most_active_month
-                    else None,
+                    "bucket": (
+                        most_active_month[0].isoformat() if most_active_month else None
+                    ),
                     "count": int(most_active_month[1]) if most_active_month else 0,
                 },
                 "most_active_day": {
-                    "bucket": most_active_day[0].isoformat()
-                    if most_active_day
-                    else None,
+                    "bucket": (
+                        most_active_day[0].isoformat() if most_active_day else None
+                    ),
                     "count": int(most_active_day[1]) if most_active_day else 0,
                 },
                 "most_active_hour": {
-                    "bucket": most_active_hour[0].isoformat()
-                    if most_active_hour
-                    else None,
+                    "bucket": (
+                        most_active_hour[0].isoformat() if most_active_hour else None
+                    ),
                     "count": int(most_active_hour[1]) if most_active_hour else 0,
                 },
                 "conversation_count": int(conversations_row[0] or 0),
@@ -2177,7 +2237,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
+        metric: str = Query(
+            default="messages", pattern="^(messages|words|conversations)$"
+        ),
     ) -> dict[str, Any]:
         metric = _count_metric(metric)
         filters = QueryFilters(
@@ -2191,7 +2253,11 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
-        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
+        ms = _metric_sql(
+            metric,
+            has_is_system=app.state.has_is_system,
+            excluded_ids=app.state.excluded_message_ids,
+        )
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -2225,7 +2291,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
+        metric: str = Query(
+            default="messages", pattern="^(messages|words|conversations)$"
+        ),
     ) -> dict[str, Any]:
         """Per-platform message/word counts bucketed over time."""
         metric = _count_metric(metric)
@@ -2240,7 +2308,11 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
-        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
+        ms = _metric_sql(
+            metric,
+            has_is_system=app.state.has_is_system,
+            excluded_ids=app.state.excluded_message_ids,
+        )
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -2294,7 +2366,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
+        metric: str = Query(
+            default="messages", pattern="^(messages|words|conversations)$"
+        ),
     ) -> dict[str, Any]:
         metric = _count_metric(metric)
         filters = QueryFilters(
@@ -2308,7 +2382,11 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
-        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
+        ms = _metric_sql(
+            metric,
+            has_is_system=app.state.has_is_system,
+            excluded_ids=app.state.excluded_message_ids,
+        )
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -2340,7 +2418,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
+        metric: str = Query(
+            default="messages", pattern="^(messages|words|conversations)$"
+        ),
     ) -> dict[str, Any]:
         metric = _count_metric(metric)
         filters = QueryFilters(
@@ -2354,7 +2434,11 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
-        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
+        ms = _metric_sql(
+            metric,
+            has_is_system=app.state.has_is_system,
+            excluded_ids=app.state.excluded_message_ids,
+        )
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -2392,7 +2476,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
+        metric: str = Query(
+            default="messages", pattern="^(messages|words|conversations)$"
+        ),
     ) -> dict[str, Any]:
         metric = _count_metric(metric)
         filters = QueryFilters(
@@ -2407,7 +2493,11 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
         params.append(limit)
-        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
+        ms = _metric_sql(
+            metric,
+            has_is_system=app.state.has_is_system,
+            excluded_ids=app.state.excluded_message_ids,
+        )
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -2928,17 +3018,14 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             params.extend(filters.platforms)
         if filters.themes:
             theme_names = {
-                app.state.theme_id_to_name.get(theme_id)
-                for theme_id in filters.themes
+                app.state.theme_id_to_name.get(theme_id) for theme_id in filters.themes
             }
             theme_names.discard(None)
             channel_ids = sorted(
                 {
                     channel_id
                     for theme_name in theme_names
-                    for channel_id in app.state.theme_to_channel_ids.get(
-                        theme_name, []
-                    )
+                    for channel_id in app.state.theme_to_channel_ids.get(theme_name, [])
                 }
             )
             if not channel_ids:
@@ -3056,7 +3143,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
+        metric: str = Query(
+            default="messages", pattern="^(messages|words|conversations)$"
+        ),
     ) -> dict[str, Any]:
         """Top chats (channels) by message count."""
         metric = _count_metric(metric)
@@ -3072,7 +3161,11 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
         params.append(limit)
-        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
+        ms = _metric_sql(
+            metric,
+            has_is_system=app.state.has_is_system,
+            excluded_ids=app.state.excluded_message_ids,
+        )
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -3114,7 +3207,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
+        metric: str = Query(
+            default="messages", pattern="^(messages|words|conversations)$"
+        ),
     ) -> dict[str, Any]:
         """Top configured themes by message count."""
         metric = _count_metric(metric)
@@ -3134,7 +3229,11 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
 
-        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
+        ms = _metric_sql(
+            metric,
+            has_is_system=app.state.has_is_system,
+            excluded_ids=app.state.excluded_message_ids,
+        )
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -3225,7 +3324,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
                     WHERE {where} AND m.content IS NOT NULL AND m.content <> ''
-                      {"AND NOT m.is_system" if app.state.has_is_system else ""}
+                      {"AND NOT m.is_system" if app.state.has_is_system else ""}{_excluded_ids_sql(app.state.excluded_message_ids)}
                 )
                 SELECT word, COUNT(*) AS usage_count
                 FROM tokens
@@ -3286,7 +3385,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
                     WHERE {where} AND m.content IS NOT NULL AND m.content <> ''
-                      {"AND NOT m.is_system" if app.state.has_is_system else ""}
+                      {"AND NOT m.is_system" if app.state.has_is_system else ""}{_excluded_ids_sql(app.state.excluded_message_ids)}
                 )
                 SELECT p.id, p.display_name, p.color, COUNT(*) AS usage_count
                 FROM tokens t
@@ -3317,7 +3416,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
                     WHERE {where} AND m.content IS NOT NULL AND m.content <> ''
-                      {"AND NOT m.is_system" if app.state.has_is_system else ""}
+                      {"AND NOT m.is_system" if app.state.has_is_system else ""}{_excluded_ids_sql(app.state.excluded_message_ids)}
                 )
                 SELECT channel_id, channel_name, source_name, COUNT(*) AS usage_count
                 FROM tokens
@@ -3402,7 +3501,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON s.id = c.source_id
                     WHERE {where} AND m.content IS NOT NULL AND m.content <> ''
-                      {"AND NOT m.is_system" if app.state.has_is_system else ""}
+                      {"AND NOT m.is_system" if app.state.has_is_system else ""}{_excluded_ids_sql(app.state.excluded_message_ids)}
                 )
                 """
 
@@ -3421,7 +3520,8 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
 
         with _connect(app.state.db_path) as con:
             rows = con.execute(
-                _word_cte + """
+                _word_cte
+                + """
                 SELECT DISTINCT message_id, ts, content, person_name, person_color, channel_name, source_name
                 FROM tokens
                 WHERE token = ?
@@ -3433,7 +3533,8 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
 
             # First (chronologically earliest) usage of the word
             first_row = con.execute(
-                _word_cte + """
+                _word_cte
+                + """
                 SELECT DISTINCT message_id, ts, content, person_name, person_color, channel_name, source_name
                 FROM tokens
                 WHERE token = ?
@@ -3819,7 +3920,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     ),
                 }
                 for row in rows
-            ]
+            ],
         }
 
     @app.get("/api/reaction-authors")
@@ -3880,7 +3981,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
+        metric: str = Query(
+            default="messages", pattern="^(messages|words|conversations)$"
+        ),
     ) -> dict[str, Any]:
         """Messages per month over all time."""
         metric = _count_metric(metric)
@@ -3895,7 +3998,11 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
-        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
+        ms = _metric_sql(
+            metric,
+            has_is_system=app.state.has_is_system,
+            excluded_ids=app.state.excluded_message_ids,
+        )
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -3930,7 +4037,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
-        metric: str = Query(default="messages", pattern="^(messages|words|conversations)$"),
+        metric: str = Query(
+            default="messages", pattern="^(messages|words|conversations)$"
+        ),
     ) -> dict[str, Any]:
         """Messages by hour of day (0-23)."""
         metric = _count_metric(metric)
@@ -3945,7 +4054,11 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         where = _filters_clause(
             filters, params, app.state.reconciliation, app.state.theme_id_to_name
         )
-        ms = _metric_sql(metric, has_is_system=app.state.has_is_system)
+        ms = _metric_sql(
+            metric,
+            has_is_system=app.state.has_is_system,
+            excluded_ids=app.state.excluded_message_ids,
+        )
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
@@ -4013,8 +4126,12 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         for details_json, summary, src_name in rows:
             if details_json:
                 try:
-                    details = _json.loads(details_json) if isinstance(details_json, str) else details_json
-                    for item in (details if isinstance(details, list) else []):
+                    details = (
+                        _json.loads(details_json)
+                        if isinstance(details_json, str)
+                        else details_json
+                    )
+                    for item in details if isinstance(details, list) else []:
                         name = str(item.get("name") or "").strip()
                         count = int(item.get("count") or 0)
                         if name and count > 0:
