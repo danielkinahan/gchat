@@ -1006,6 +1006,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         app.state.db_path, "reaction_details_json"
     )
     app.state.has_is_edited = _messages_has_column(app.state.db_path, "is_edited")
+    app.state.has_is_system = _messages_has_column(app.state.db_path, "is_system")
     app.state.has_conversation_id = _messages_has_column(
         app.state.db_path, "conversation_id"
     )
@@ -1712,55 +1713,70 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 channel_initial_name,
             ) = row
 
-            # Fetch all messages in the channel, resolving each person's active
-            # nickname at the exact message timestamp via a correlated subquery.
-            # Doing the timestamp comparison in SQL (DuckDB native types) avoids
-            # any Python-level type-mismatch that could return a future nickname.
-            channel_rows = con.execute(
+            # Use COUNT queries to locate the target message's position in channel
+            # order without loading all rows into Python. This keeps memory use
+            # proportional to the window size (2*context+1) rather than the channel.
+            total_in_channel = int(
+                con.execute(
+                    "SELECT COUNT(*) FROM messages WHERE channel_id = ?",
+                    [msg_channel_id],
+                ).fetchone()[0]
+            )
+
+            # 0-based position of the target message (rows that sort before it).
+            target_pos_row = con.execute(
                 """
-                SELECT m.id, m.ts, m.content, m.attachment_preview, m.attachment_count,
-                       m.reaction_count, m.reaction_summary, m.reaction_details_json,
-                       p.display_name, p.color, m.person_id,
-                       (
-                           SELECT pnc.new_name
-                           FROM person_name_changes pnc
-                           WHERE pnc.person_id = m.person_id
-                             AND pnc.source_id = ?
-                             AND json_extract_string(pnc.payload_json, '$.chatId') = ?
-                             AND pnc.ts <= m.ts
-                           ORDER BY pnc.ts DESC
-                           LIMIT 1
-                       ) AS nickname_at_time
-                FROM messages m
-                LEFT JOIN people p ON p.id = m.person_id
-                WHERE m.channel_id = ?
-                ORDER BY m.ts ASC, m.id ASC
+                SELECT COUNT(*) FROM messages
+                WHERE channel_id = ?
+                  AND (ts < ? OR (ts = ? AND id < ?))
                 """,
-                [source_id, platform_channel_id, msg_channel_id],
-            ).fetchall()
-            idx = None
-            for i, r in enumerate(channel_rows):
-                if str(r[0]) == str(msg_id):
-                    idx = i
-                    break
-            if idx is None:
+                [msg_channel_id, msg_ts, msg_ts, msg_id],
+            ).fetchone()
+            # Fallback: if the message somehow isn't in the channel, use it alone.
+            if target_pos_row is None or total_in_channel == 0:
                 selected = [
                     (
                         msg_id, msg_ts, msg_content, msg_attach_preview, msg_attach_count,
                         msg_reaction_count, msg_reaction_summary, msg_reaction_details,
-                        person_name, person_color, None, None,
+                        person_name, person_color, None, None, False,
                     )
                 ]
             else:
+                idx = int(target_pos_row[0])
                 if full:
-                    start = 0
-                    end = len(channel_rows)
+                    fetch_offset = 0
+                    fetch_limit = total_in_channel
                 else:
-                    start = max(0, idx - context)
-                    end = min(len(channel_rows), idx + context + 1)
-                selected = channel_rows[start:end]
+                    fetch_offset = max(0, idx - context)
+                    fetch_end = min(total_in_channel, idx + context + 1)
+                    fetch_limit = fetch_end - fetch_offset
 
-            total_in_channel = len(channel_rows)
+                # Fetch only the window; nickname correlated subquery runs once per row
+                # in the window (typically ≤21 rows) rather than for every channel message.
+                selected = con.execute(
+                    f"""
+                    SELECT m.id, m.ts, m.content, m.attachment_preview, m.attachment_count,
+                           m.reaction_count, m.reaction_summary, m.reaction_details_json,
+                           p.display_name, p.color, m.person_id,
+                           (
+                               SELECT pnc.new_name
+                               FROM person_name_changes pnc
+                               WHERE pnc.person_id = m.person_id
+                                 AND pnc.source_id = ?
+                                 AND json_extract_string(pnc.payload_json, '$.chatId') = ?
+                                 AND pnc.ts <= m.ts
+                               ORDER BY pnc.ts DESC
+                               LIMIT 1
+                           ) AS nickname_at_time,
+                           {"m.is_system" if app.state.has_is_system else "FALSE"} AS is_system
+                    FROM messages m
+                    LEFT JOIN people p ON p.id = m.person_id
+                    WHERE m.channel_id = ?
+                    ORDER BY m.ts ASC, m.id ASC
+                    LIMIT ? OFFSET ?
+                    """,
+                    [source_id, platform_channel_id, msg_channel_id, fetch_limit, fetch_offset],
+                ).fetchall()
 
             # Channel name at the time of the target message
             channel_name_row = con.execute(
@@ -1801,7 +1817,8 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 r_person_name,
                 r_person_color,
                 r_person_id,
-                r_nickname,  # resolved by SQL correlated subquery
+                r_nickname,     # resolved by SQL correlated subquery
+                r_is_system,
             ) = r
             attach_url = (
                 _resolve_local_attachment_url(
@@ -1845,6 +1862,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     "person_name_canonical": r_person_name,
                     "person_color": r_person_color,
                     "avatar_url": avatar_by_name.get(r_person_name or "", "") or None,
+                    "is_system": bool(r_is_system),
                     "channel_id": msg_channel_id,
                     "platform": platform,
                     "source_name": source_name,
@@ -1856,7 +1874,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             "source_name": source_name,
             "items": items,
             "total_in_channel": total_in_channel,
-            "is_full": full or (len(selected) == total_in_channel),
+            "is_full": full or (len(items) >= total_in_channel),
         }
 
     @app.get("/api/overview")
@@ -3206,6 +3224,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
                     WHERE {where} AND m.content IS NOT NULL AND m.content <> ''
+                      {"AND NOT m.is_system" if app.state.has_is_system else ""}
                 )
                 SELECT word, COUNT(*) AS usage_count
                 FROM tokens
@@ -3266,6 +3285,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
                     WHERE {where} AND m.content IS NOT NULL AND m.content <> ''
+                      {"AND NOT m.is_system" if app.state.has_is_system else ""}
                 )
                 SELECT p.id, p.display_name, p.color, COUNT(*) AS usage_count
                 FROM tokens t
@@ -3296,6 +3316,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
                     WHERE {where} AND m.content IS NOT NULL AND m.content <> ''
+                      {"AND NOT m.is_system" if app.state.has_is_system else ""}
                 )
                 SELECT channel_id, channel_name, source_name, COUNT(*) AS usage_count
                 FROM tokens
@@ -3380,6 +3401,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON s.id = c.source_id
                     WHERE {where} AND m.content IS NOT NULL AND m.content <> ''
+                      {"AND NOT m.is_system" if app.state.has_is_system else ""}
                 )
                 """
 

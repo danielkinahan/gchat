@@ -16,6 +16,34 @@ from .models import ChannelSeed, MessageSeed, NameChangeSeed, PersonSeed, Source
 from .reconciliation import ReconciliationConfig
 from .util import to_utc_naive
 
+_SIGNAL_SYSTEM_PATTERNS = (
+    re.compile(r"^.+ (named|changed|updated) the group (name|title|description|avatar|photo|icon)(?: to .+)?[.!?]?$", re.IGNORECASE),
+    re.compile(r"^(you|.+?) (added|removed|invited) .+ (to|from) the (group|chat)[.!?]?$", re.IGNORECASE),
+    re.compile(r"^.+ (left|joined) the (group|chat)[.!?]?$", re.IGNORECASE),
+    re.compile(r"^(you )?(were|was) (removed|added) (from|to) the (group|chat)[.!?]?$", re.IGNORECASE),
+    re.compile(r"^(you )?changed the (group|chat) (name|description|avatar|photo|icon)(?: to .+)?[.!?]?$", re.IGNORECASE),
+    re.compile(r"^(you )?updated the (group|cover) (photo|avatar|icon)[.!?]?$", re.IGNORECASE),
+    re.compile(r"^missed (voice|video) call[.!?]?$", re.IGNORECASE),
+    re.compile(r"^(voice|video) call[.!?]?$", re.IGNORECASE),
+    re.compile(r"^(you )?accepted a request to join[.!?]?$", re.IGNORECASE),
+    re.compile(r"^(you )?(sent|requested) a group invite[.!?]?$", re.IGNORECASE),
+)
+
+
+def _is_signal_system_message(content: str | None) -> bool:
+    """Return True if this looks like a Signal system/action message."""
+    if not content:
+        return False
+    text = " ".join(content.split()).strip()
+    for pat in _SIGNAL_SYSTEM_PATTERNS:
+        if pat.match(text):
+            return True
+    # Also check using the existing group-name-change extraction
+    if _extract_group_name_change_from_text(text) is not None:
+        return True
+    return False
+
+
 _GROUP_NAME_PATTERNS = (
     re.compile(
         r"^(?P<actor>.+?) named the group (?P<name>.+?)(?:[.!?])?(?:\n.*)?$",
@@ -623,6 +651,7 @@ def normalize_backup(
                 attachment_preview=_extract_attachment_preview(item),
                 reaction_count=_extract_reaction_count(item),
                 reaction_summary=_extract_reaction_summary(item),
+                is_system=_is_signal_system_message(_extract_message_content(item)),
             )
         )
 
@@ -924,6 +953,7 @@ def normalize_database(
                     attachment_preview=attachment_previews.get(str(row["id"])),
                     reaction_count=int(reaction_counts.get(row["id"], 0)),
                     reaction_summary=reaction_summaries.get(str(row["id"])),
+                    is_system=_is_signal_system_message(body),
                 )
             )
 
@@ -1268,6 +1298,7 @@ def normalize_html_export(
                     reaction_count=reaction_count,
                     reaction_summary=reaction_summary,
                     reaction_details_json=reaction_details_json,
+                    is_system=_is_signal_system_message(content),
                 )
             )
 

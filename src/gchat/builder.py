@@ -286,6 +286,7 @@ def build_database(
                 message.reaction_summary,
                 message.reaction_details_json,
                 message.is_edited,
+                message.is_system,
                 None,
                 None,
                 conversation_id_for_message.get(message.id),
@@ -417,7 +418,7 @@ def build_database(
         for i in range(0, len(message_rows), batch_size):
             batch = message_rows[i : i + batch_size]
             con.executemany(
-                "INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 batch,
             )
             _notify(

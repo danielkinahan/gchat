@@ -151,6 +151,41 @@ _ATTACHMENT_ONLY_PATTERNS = (
     re.compile(r"^click for (video|audio):?$", re.IGNORECASE),
 )
 
+# Patterns for Facebook system messages that aren't rename/member/nickname events.
+# These match photo changes, poll events, theme changes, and other UI actions.
+_FACEBOOK_EXTRA_SYSTEM_PATTERNS = (
+    re.compile(r"^.+ changed the (group|chat) photo\.?$", re.IGNORECASE),
+    re.compile(r"^.+ updated the (group|cover) photo\.?$", re.IGNORECASE),
+    re.compile(r"^.+ changed the group's? (icon|cover|avatar)\.?$", re.IGNORECASE),
+    re.compile(r"^.+ created a poll[.:]", re.IGNORECASE),
+    re.compile(r"^.+ (voted in|answered) (a )?poll", re.IGNORECASE),
+    re.compile(r"^.+ set the (group )?theme to .+\.?$", re.IGNORECASE),
+    re.compile(r"^.+ changed the (group )?theme\.?$", re.IGNORECASE),
+    re.compile(r"^.+ turned off (link previews|notifications)\.?$", re.IGNORECASE),
+    re.compile(r"^.+ turned on (link previews|notifications)\.?$", re.IGNORECASE),
+    re.compile(r"^.+ pinned a message\.?$", re.IGNORECASE),
+    re.compile(r"^.+ (started|ended) a (live )?video(?: call)?\.?$", re.IGNORECASE),
+    re.compile(r"^.+ (started|answered|declined|missed) (an? )?(audio|video) call\.?$", re.IGNORECASE),
+    re.compile(r"^.+ created (the|this) group\.?$", re.IGNORECASE),
+)
+
+
+def _is_facebook_system_message(content: str) -> bool:
+    """Return True if this is a Facebook system/action message, not user text."""
+    if not content:
+        return False
+    text = normalize_whitespace(content)
+    if _extract_group_name_change(text):
+        return True
+    if _extract_member_event(text):
+        return True
+    if _extract_nickname_change(text):
+        return True
+    for pat in _FACEBOOK_EXTRA_SYSTEM_PATTERNS:
+        if pat.match(text):
+            return True
+    return False
+
 
 def _extract_group_name_change(content: str) -> tuple[str, str | None] | None:
     text = normalize_whitespace(content)
@@ -513,6 +548,7 @@ def normalize_chat(chat_dir: Path) -> FacebookThread:
                     attachment_preview=attachment_preview,
                     reaction_count=reaction_count,
                     reaction_summary=reaction_summary,
+                    is_system=_is_facebook_system_message(content),
                 )
             )
             message_event_indices.append(event_index)

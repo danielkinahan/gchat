@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS messages (
   reaction_summary TEXT,
   reaction_details_json TEXT,
   is_edited BOOLEAN DEFAULT FALSE,
+  is_system BOOLEAN NOT NULL DEFAULT FALSE,
   lang TEXT,
   sentiment REAL,
   conversation_id INTEGER

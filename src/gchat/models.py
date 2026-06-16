@@ -42,6 +42,7 @@ class MessageSeed:
     reaction_summary: str | None = None
     reaction_details_json: str | None = None
     is_edited: bool = False
+    is_system: bool = False
 
 
 @dataclass(frozen=True)

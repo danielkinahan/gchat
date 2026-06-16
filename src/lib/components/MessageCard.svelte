@@ -93,8 +93,8 @@
         message?.reaction_summary || null,
     );
     $: containerClass = bare
-        ? `message-inner${highlight ? " highlight" : ""}`
-        : `message-card${highlight ? " highlight" : ""}`;
+        ? `message-inner${highlight ? " highlight" : ""}${message?.is_system ? " system-message" : ""}`
+        : `message-card${highlight ? " highlight" : ""}${message?.is_system ? " system-message" : ""}`;
 </script>
 
 <div
@@ -232,6 +232,11 @@
         font-weight: 400;
         font-size: 0.82em;
         color: #94a3b8;
+    }
+
+    :global(.system-message) {
+        opacity: 0.65;
+        font-style: italic;
     }
 
     .content {
