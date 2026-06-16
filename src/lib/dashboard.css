@@ -1026,7 +1026,7 @@ button.rank-row:focus-visible {
 .language {
     margin-top: 16px;
     display: grid;
-    grid-template-columns: minmax(280px, 0.9fr) minmax(0, 1.4fr);
+    grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
     gap: 16px;
 }
 
@@ -1103,7 +1103,7 @@ button.rank-row:focus-visible {
 
 .bar-row {
     display: grid;
-    grid-template-columns: minmax(120px, 1.1fr) minmax(100px, 2fr) auto;
+    grid-template-columns: minmax(0, max-content) minmax(60px, 1fr) auto;
     align-items: center;
     gap: 8px;
     margin-bottom: 8px;
@@ -1192,6 +1192,67 @@ button.rank-row:focus-visible {
 
 .mini-bar.chat {
     background: #8b5cf6;
+}
+
+.wt-section {
+    margin-top: 16px;
+}
+
+.wt-section h3 {
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #64748b;
+    margin: 0 0 8px;
+}
+
+.wt-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 120px;
+    width: 100%;
+}
+
+.wt-bar-wrap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    height: 100%;
+    min-width: 0;
+}
+
+.wt-bar-slot {
+    flex: 1;
+    width: 100%;
+    display: flex;
+    align-items: flex-end;
+}
+
+.wt-bar {
+    width: 100%;
+    background: #38bdf8;
+    border-radius: 2px 2px 0 0;
+    min-height: 1px;
+    transition: opacity 0.1s ease;
+    cursor: default;
+}
+
+.wt-bar:hover {
+    opacity: 0.75;
+}
+
+.wt-label {
+    font-size: 0.6rem;
+    color: #64748b;
+    margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: clip;
+    max-width: 100%;
+    text-align: center;
 }
 
 .history {

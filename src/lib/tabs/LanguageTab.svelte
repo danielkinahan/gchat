@@ -34,6 +34,11 @@
         }>;
     };
 
+    type WordOverTime = {
+        word: string;
+        points: Array<{ month: string; count: number }>;
+    };
+
     export let active: boolean;
     export let filterSignature: string;
     export let currentFilterParams: () => URLSearchParams;
@@ -51,6 +56,8 @@
     let loadedWordsFilterKey: string | null = null;
     let selectedWord = "";
     let wordBreakdown: WordBreakdown = { word: "", people: [], chats: [] };
+    let wordOverTime: WordOverTime = { word: "", points: [] };
+    let isLoadingOverTime = false;
     let showWordExamples = false;
     let isLoadingExamples = false;
     let isAppendingExamples = false;
@@ -104,22 +111,30 @@
     async function loadWordBreakdown(word: string) {
         if (!word) return;
         isLoadingBreakdown = true;
+        isLoadingOverTime = true;
         error = "";
         try {
             const params = currentFilterParams();
             params.set("word", word);
             params.set("limit", String(topLimit));
-            wordBreakdown = await fetchJson<WordBreakdown>(
-                `/api/word-breakdown?${params.toString()}`,
-            );
+            const otParams = currentFilterParams();
+            otParams.set("word", word);
+            const [breakdown, overTime] = await Promise.all([
+                fetchJson<WordBreakdown>(`/api/word-breakdown?${params.toString()}`),
+                fetchJson<WordOverTime>(`/api/word-over-time?${otParams.toString()}`),
+            ]);
+            wordBreakdown = breakdown;
+            wordOverTime = overTime;
         } catch (err) {
             error =
                 err instanceof Error
                     ? err.message
                     : "Failed to load word details";
             wordBreakdown = { word: word.toLowerCase(), people: [], chats: [] };
+            wordOverTime = { word: word.toLowerCase(), points: [] };
         } finally {
             isLoadingBreakdown = false;
+            isLoadingOverTime = false;
         }
     }
 
@@ -131,6 +146,10 @@
         wordFirstMessage = null;
         await loadWordBreakdown(word);
     }
+
+    $: chartPoints = wordOverTime.points;
+    $: chartMax = Math.max(...chartPoints.map((p) => p.count), 1);
+    $: labelStep = Math.max(1, Math.ceil(chartPoints.length / 7));
 
     async function loadWordExamples(offset = 0, append = false) {
         if (!selectedWord) return;
@@ -296,6 +315,29 @@
                     {/each}
                 </div>
             </div>
+            {#if chartPoints.length > 0}
+                <div class="wt-section">
+                    <h3>Usage over time</h3>
+                    <div class="wt-chart">
+                        {#each chartPoints as point, i}
+                            <div class="wt-bar-wrap">
+                                <div class="wt-bar-slot">
+                                    <div
+                                        class="wt-bar"
+                                        style={`height:${(point.count / chartMax) * 100}%`}
+                                        title={`${new Date(point.month).toLocaleDateString("en-US", { month: "short", year: "numeric" })}: ${point.count.toLocaleString()}`}
+                                    ></div>
+                                </div>
+                                <span class="wt-label">
+                                    {i % labelStep === 0
+                                        ? new Date(point.month).toLocaleDateString("en-US", { month: "short", year: "2-digit" })
+                                        : ""}
+                                </span>
+                            </div>
+                        {/each}
+                    </div>
+                </div>
+            {/if}
             {#if selectedWord}
                 <button
                     type="button"
@@ -333,26 +375,14 @@
                             {#each wordExamples as message}
                                 <div class="example-message">
                                     <div class="example-meta">
-                                        <strong
-                                            style={`color:${message.person_color}`}
-                                            >{message.person_name}</strong
-                                        >
+                                        <strong style={`color:${message.person_color}`}>{message.person_name}</strong>
                                         <span>{message.channel_name}</span>
-                                        <time
-                                            >{message.ts
-                                                ? new Date(
-                                                      message.ts,
-                                                  ).toLocaleString()
-                                                : "N/A"}</time
-                                        >
+                                        <time>{message.ts ? new Date(message.ts).toLocaleString() : "N/A"}</time>
                                         <button
                                             type="button"
                                             class="show-context"
-                                            on:click={() =>
-                                                openInContext(message.id)}
-                                        >
-                                            Show in context
-                                        </button>
+                                            on:click={() => openInContext(message.id)}
+                                        >Show in context</button>
                                     </div>
                                     {#if message.content && !isUrlOnlyMessage(message.content)}
                                         <p>{message.content}</p>
@@ -370,9 +400,7 @@
                                 on:click={showMoreWordExamples}
                                 disabled={isAppendingExamples}
                             >
-                                {isAppendingExamples
-                                    ? "Loading..."
-                                    : "Show 5 more messages"}
+                                {isAppendingExamples ? "Loading..." : "Show 5 more messages"}
                             </button>
                         {/if}
                     {/if}

@@ -3337,6 +3337,72 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             ).fetchall()
         return {"items": [{"word": row[0], "count": int(row[1])} for row in rows]}
 
+    @app.get("/api/word-over-time")
+    def word_over_time(
+        word: str,
+        start: date | None = Query(default=None, alias="from"),
+        end: date | None = Query(default=None, alias="to"),
+        people: str | None = None,
+        themes: str | None = None,
+        platforms: str | None = None,
+    ) -> dict[str, Any]:
+        """Monthly usage count of a specific word."""
+        normalized = "".join(ch for ch in word.casefold() if "a" <= ch <= "z")
+        if len(normalized) < 3:
+            raise HTTPException(
+                status_code=400, detail="Word must contain at least 3 letters"
+            )
+
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
+        params: list[Any] = []
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
+        is_system_filter = "AND NOT m.is_system" if app.state.has_is_system else ""
+        excluded_filter = _excluded_ids_sql(app.state.excluded_message_ids)
+
+        with _connect(app.state.db_path) as con:
+            rows = con.execute(
+                f"""
+                SELECT date_trunc('month', ts) AS month, COUNT(*) AS usage_count
+                FROM (
+                    SELECT m.ts,
+                           unnest(
+                               regexp_extract_all(
+                                   replace(lower(coalesce(m.content, '')), chr(39), ''),
+                                   '[a-z]{{3,}}'
+                               )
+                           ) AS token
+                    FROM messages m
+                    JOIN channels c ON c.id = m.channel_id
+                    JOIN sources s ON c.source_id = s.id
+                    WHERE {where} AND m.content IS NOT NULL AND m.content <> ''
+                      {is_system_filter}{excluded_filter}
+                ) tokens
+                WHERE token = ?
+                GROUP BY month
+                ORDER BY month
+                """,
+                [*params, normalized],
+            ).fetchall()
+
+        return {
+            "word": normalized,
+            "points": [
+                {
+                    "month": row[0].isoformat() if row[0] else None,
+                    "count": int(row[1]),
+                }
+                for row in rows
+            ],
+        }
+
     @app.get("/api/word-breakdown")
     def word_breakdown(
         word: str,
