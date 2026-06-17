@@ -531,12 +531,14 @@
                 </div>
                 <div class="timeline-chart">
                     {#each overviewData.messagesByMonth.points as point, i}
-                        <div class="timeline-bar-wrap">
+                        <div
+                            class="timeline-bar-wrap"
+                            title={`${new Date(point.month).toLocaleDateString("en-US", { month: "long", year: "numeric" })}: ${point.message_count.toLocaleString()} ${overviewMetricLabel}`}
+                        >
                             <div class="timeline-bar-slot">
                                 <div
                                     class="timeline-bar"
                                     style={`height:${(point.message_count / monthMax) * 100}%`}
-                                    title={`${new Date(point.month).toLocaleDateString("en-US", { month: "long", year: "numeric" })}: ${point.message_count.toLocaleString()} ${overviewMetricLabel}`}
                                 ></div>
                             </div>
                             <span class="timeline-label"
@@ -725,11 +727,13 @@
             <h2>{overviewMetricTitle} by week day & hour</h2>
             <div class="weekday-chart">
                 {#each weekdayLabels as label, i}
-                    <div class="weekday-bar-wrap">
+                    <div
+                        class="weekday-bar-wrap"
+                        title={`${label}: ${weekdayTotals[i].toLocaleString()} ${overviewMetricLabel}`}
+                    >
                         <div
                             class="weekday-bar"
                             style={`height:${(weekdayTotals[i] / weekdayMax) * 100}%`}
-                            title={`${label}: ${weekdayTotals[i].toLocaleString()} ${overviewMetricLabel}`}
                         ></div>
                         <span>{label}</span>
                     </div>
@@ -737,12 +741,14 @@
             </div>
             <div class="hour-chart">
                 {#each hourTotals as count, hour}
-                    <div class="hour-bar-wrap">
+                    <div
+                        class="hour-bar-wrap"
+                        title={`${hour}:00 - ${count.toLocaleString()} ${overviewMetricLabel}`}
+                    >
                         <div class="hour-bar-slot">
                             <div
                                 class="hour-bar"
                                 style={`height:${(count / hourTotalsMax) * 100}%`}
-                                title={`${hour}:00 - ${count.toLocaleString()} ${overviewMetricLabel}`}
                             ></div>
                         </div>
                         <span>{hour % 3 === 0 ? hour : ""}</span>
@@ -755,7 +761,10 @@
             <h2>{overviewMetricTitle} sent by author</h2>
             <div class="rank-list">
                 {#each overviewData.topPeople.items as person}
-                    <div class="rank-row">
+                    <div
+                        class="rank-row"
+                        title={`${person.display_name}: ${person.message_count.toLocaleString()} ${overviewMetricLabel}`}
+                    >
                         <span class="rank-name">
                             <span
                                 class="swatch"
@@ -782,7 +791,10 @@
             <h2>{overviewMetricTitle} sent by channel</h2>
             <div class="rank-list">
                 {#each overviewData.topChats.items as chat}
-                    <div class="rank-row">
+                    <div
+                        class="rank-row"
+                        title={`${chat.name}: ${chat.message_count.toLocaleString()} ${overviewMetricLabel}`}
+                    >
                         <span class="rank-name">{chat.name}</span>
                         <div class="rank-track">
                             <div
@@ -802,7 +814,10 @@
             <h2>{overviewMetricTitle} sent by theme</h2>
             <div class="rank-list">
                 {#each overviewData.topThemes.items as theme}
-                    <div class="rank-row">
+                    <div
+                        class="rank-row"
+                        title={`${theme.name}: ${theme.message_count.toLocaleString()} ${overviewMetricLabel}`}
+                    >
                         <span class="rank-name">{theme.name}</span>
                         <div class="rank-track">
                             <div

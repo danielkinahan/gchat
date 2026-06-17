@@ -178,13 +178,39 @@ def _reaction_data(
 
 def _reply_to_id(message_div) -> str | None:
     reply_link = message_div.select_one(".chatlog__reply-link")
-    if reply_link is None:
-        return None
-    onclick = reply_link.get("onclick")
-    if not isinstance(onclick, str):
-        return None
-    match = _REPLY_ID_RE.search(onclick)
-    return match.group("id") if match else None
+    if reply_link is not None:
+        onclick = reply_link.get("onclick")
+        if isinstance(onclick, str):
+            match = _REPLY_ID_RE.search(onclick)
+            if match:
+                return match.group("id")
+        href = reply_link.get("href")
+        if isinstance(href, str) and href.startswith("#"):
+            fragment = href.lstrip("#")
+            if fragment.startswith("chatlog__message-container-"):
+                return fragment.removeprefix("chatlog__message-container-")
+            if fragment.isdigit():
+                return fragment
+    reply = message_div.select_one(".chatlog__reply[data-message-id]")
+    if reply is not None:
+        referenced = reply.get("data-message-id")
+        if referenced:
+            return str(referenced).strip() or None
+    return None
+
+
+def _is_discord_system_message(message_div, content: str) -> bool:
+    if message_div.select_one(".chatlog__system-notification-content") is not None:
+        return True
+    if message_div.select_one(".poll_question_text") is not None:
+        return True
+    stripped = content.strip()
+    if not stripped:
+        return False
+    for pattern in (*_PHOTO_CHANGE_PATTERNS, *_EMOJI_SET_PATTERNS, *_POLL_PATTERNS):
+        if pattern.search(stripped):
+            return True
+    return False
 
 
 def _attachment_data(
@@ -240,6 +266,10 @@ def _person_from_message(
 
 
 def _message_content(message_div) -> str:
+    poll_question = message_div.select_one(".poll_question_text")
+    if poll_question is not None:
+        return _text_content(poll_question)
+
     system_content = message_div.select_one(".chatlog__system-notification-content")
     if system_content is not None:
         return _text_content(system_content)
@@ -453,6 +483,7 @@ def normalize_export(path: Path) -> DiscordExport:
                 reaction_summary=reaction_summary,
                 reaction_details_json=reaction_details_json,
                 is_edited=is_edited,
+                is_system=_is_discord_system_message(message_div, content),
             )
         )
 

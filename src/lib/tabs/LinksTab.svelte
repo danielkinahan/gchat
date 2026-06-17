@@ -194,6 +194,7 @@
                         type="button"
                         class="rank-row domain-row"
                         class:selected={selectedDomain === domain.domain}
+                        title={`${domain.domain}: ${domain.count.toLocaleString()} links`}
                         on:click={() => selectDomain(domain.domain)}
                     >
                         <span class="rank-name">{domain.domain}</span>
@@ -217,7 +218,10 @@
         {:else}
             <div class="rank-list">
                 {#each linksByAuthor as person}
-                    <div class="rank-row">
+                    <div
+                        class="rank-row"
+                        title={`${person.display_name}: ${person.count.toLocaleString()} links`}
+                    >
                         <span class="rank-name">
                             <span
                                 class="swatch"

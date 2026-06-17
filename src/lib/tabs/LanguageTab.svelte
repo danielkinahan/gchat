@@ -36,7 +36,12 @@
 
     type WordOverTime = {
         word: string;
-        points: Array<{ month: string; count: number }>;
+        points: Array<{
+            month: string;
+            count: number;
+            total_words: number;
+            percent: number;
+        }>;
     };
 
     export let active: boolean;
@@ -148,8 +153,14 @@
     }
 
     $: chartPoints = wordOverTime.points;
-    $: chartMax = Math.max(...chartPoints.map((p) => p.count), 1);
+    $: chartMax = Math.max(...chartPoints.map((p) => p.percent), 0.01);
     $: labelStep = Math.max(1, Math.ceil(chartPoints.length / 7));
+
+    function formatPercent(value: number): string {
+        if (value >= 10) return `${value.toFixed(1)}%`;
+        if (value >= 1) return `${value.toFixed(2)}%`;
+        return `${value.toFixed(3)}%`;
+    }
 
     async function loadWordExamples(offset = 0, append = false) {
         if (!selectedWord) return;
@@ -284,57 +295,75 @@
             <p class="muted">Loading breakdown...</p>
         {:else}
             <div class="detail-columns">
-                <div>
+                <div class="detail-bar-panel">
                     <h3>Top authors</h3>
-                    {#each wordBreakdown.people as person}
-                        <div class="bar-row">
-                            <span>{person.display_name}</span>
-                            <div class="mini-bar-track">
+                    <div class="bar-list">
+                        {#each wordBreakdown.people as person}
+                            <div class="bar-row">
+                                <span>{person.display_name}</span>
                                 <div
-                                    class="mini-bar"
-                                    style={`width:${(person.count / maxCount(wordBreakdown.people)) * 100}% ; background:${person.color}`}
-                                ></div>
+                                    class="mini-bar-track"
+                                    title={`${person.display_name}: ${person.count.toLocaleString()}`}
+                                >
+                                    <div
+                                        class="mini-bar"
+                                        style={`width:${(person.count / maxCount(wordBreakdown.people)) * 100}% ; background:${person.color}`}
+                                    ></div>
+                                </div>
+                                <strong>{person.count.toLocaleString()}</strong>
                             </div>
-                            <strong>{person.count.toLocaleString()}</strong>
-                        </div>
-                    {/each}
+                        {/each}
+                    </div>
                 </div>
-                <div>
+                <div class="detail-bar-panel">
                     <h3>Top chats</h3>
-                    {#each wordBreakdown.chats as chat}
-                        <div class="bar-row">
-                            <span>{chat.name}</span>
-                            <div class="mini-bar-track">
+                    <div class="bar-list">
+                        {#each wordBreakdown.chats as chat}
+                            <div class="bar-row">
+                                <span>{chat.name}</span>
                                 <div
-                                    class="mini-bar chat"
-                                    style={`width:${(chat.count / maxCount(wordBreakdown.chats)) * 100}%`}
-                                ></div>
+                                    class="mini-bar-track"
+                                    title={`${chat.name}: ${chat.count.toLocaleString()}`}
+                                >
+                                    <div
+                                        class="mini-bar chat"
+                                        style={`width:${(chat.count / maxCount(wordBreakdown.chats)) * 100}%`}
+                                    ></div>
+                                </div>
+                                <strong>{chat.count.toLocaleString()}</strong>
                             </div>
-                            <strong>{chat.count.toLocaleString()}</strong>
-                        </div>
-                    {/each}
+                        {/each}
+                    </div>
                 </div>
             </div>
             {#if chartPoints.length > 0}
                 <div class="wt-section">
                     <h3>Usage over time</h3>
-                    <div class="wt-chart">
-                        {#each chartPoints as point, i}
-                            <div class="wt-bar-wrap">
-                                <div class="wt-bar-slot">
-                                    <div
-                                        class="wt-bar"
-                                        style={`height:${(point.count / chartMax) * 100}%`}
-                                        title={`${new Date(point.month).toLocaleDateString("en-US", { month: "short", year: "numeric" })}: ${point.count.toLocaleString()}`}
-                                    ></div>
+                    <div class="wt-plot">
+                        <div class="wt-chart">
+                            {#each chartPoints as point}
+                                <div
+                                    class="wt-bar-wrap"
+                                    title={`${new Date(point.month).toLocaleDateString("en-US", { month: "short", year: "numeric" })}: ${formatPercent(point.percent)} (${point.count.toLocaleString()} of ${point.total_words.toLocaleString()} words)`}
+                                >
+                                    <div class="wt-bar-slot">
+                                        <div
+                                            class="wt-bar"
+                                            style={`height:${point.percent > 0 ? (point.percent / chartMax) * 100 : 0}%`}
+                                        ></div>
+                                    </div>
                                 </div>
+                            {/each}
+                        </div>
+                        <div class="wt-label-row">
+                            {#each chartPoints as point, i}
                                 <span class="wt-label">
                                     {i % labelStep === 0
                                         ? new Date(point.month).toLocaleDateString("en-US", { month: "short", year: "2-digit" })
                                         : ""}
                                 </span>
-                            </div>
-                        {/each}
+                            {/each}
+                        </div>
                     </div>
                 </div>
             {/if}

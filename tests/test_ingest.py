@@ -57,7 +57,7 @@ def _write_discord_html_export(discord_dir: Path) -> Path:
 
         <div class="chatlog__message-container" data-message-id="175928847299117064" id="chatlog__message-container-175928847299117064">
           <div class="chatlog__reply">
-            <a class="chatlog__reply-link" onclick="scrollToMessage(event, '175928847299117063')">reply</a>
+            <a class="chatlog__reply-link" href="#chatlog__message-container-175928847299117063">reply</a>
           </div>
           <span class="chatlog__short-timestamp" title="07-Jan-2024 10:01">10:01</span>
           <div class="chatlog__content chatlog__markdown">
@@ -342,6 +342,50 @@ class IngestTests(unittest.TestCase):
         self.assertEqual(len(channel_changes), 1)
         self.assertEqual(channel_changes[0].new_name, "Better Group")
         self.assertIn('"actor_name": "Alice"', channel_changes[0].payload_json or "")
+
+    def test_signal_html_reply_strips_quote(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp) / "signal_decrypted"
+            chat = root / "Reply Group (_id88)"
+            chat.mkdir(parents=True)
+            html = """
+            <html><body>
+              <div class="msg msg-incoming">
+                <div class="msg-name"><div class="membername">Alice</div></div>
+                <div><pre dir="auto">original text here</pre></div>
+                <div class="footer"><span class="msg-data">Oct 09, 2020 19:50:50</span></div>
+              </div>
+              <div class="msg msg-incoming">
+                <div class="msg-name"><div class="membername">Bob</div></div>
+                <div class="msg-quote">
+                  <a class="quote-link" href="#123">
+                    <div class="msg-quote-message">
+                      <pre dir="auto">original text here</pre>
+                    </div>
+                  </a>
+                </div>
+                <div><pre dir="auto">reply text only</pre></div>
+                <div class="footer"><span class="msg-data">Oct 09, 2020 19:51:00</span></div>
+              </div>
+            </body></html>
+            """
+            (chat / "Reply Group.html").write_text(html, encoding="utf-8")
+            export = normalize_signal(root)
+
+        reply = next(
+            message for message in export.messages if message.content == "reply text only"
+        )
+        self.assertEqual(reply.reply_to_id, "123")
+        self.assertNotIn("original text here", reply.content)
+
+    def test_facebook_poll_vote_change_is_system(self) -> None:
+        from gchat.facebook import _is_facebook_system_message
+
+        self.assertTrue(
+            _is_facebook_system_message(
+                'Caelan changed their vote to "Jonah Bonell" in the poll: Wungo Division Fight C.'
+            )
+        )
 
     def test_signal_html_export_filters_to_configured_people(self) -> None:
         with TemporaryDirectory() as tmp:

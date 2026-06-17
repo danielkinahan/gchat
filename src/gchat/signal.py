@@ -1041,6 +1041,29 @@ def normalize_database(
         con.close()
 
 
+def _html_message_body(message_div) -> str:
+    clone = BeautifulSoup(str(message_div), "html.parser")
+    for quote in clone.select(".msg-quote"):
+        quote.decompose()
+    body_parts: list[str] = []
+    for pre in clone.find_all("pre"):
+        text = pre.get_text("\n", strip=True)
+        if text:
+            body_parts.append(text)
+    return "\n\n".join(body_parts)
+
+
+def _html_reply_anchor(message_div) -> str | None:
+    quote_link = message_div.select_one(".quote-link[href^=\"#\"]")
+    if quote_link is None:
+        return None
+    href = quote_link.get("href")
+    if not isinstance(href, str) or not href.startswith("#"):
+        return None
+    anchor = href.lstrip("#").strip()
+    return anchor or None
+
+
 def _looks_like_html_export(path: Path) -> bool:
     if not path.is_dir():
         return False
@@ -1330,14 +1353,8 @@ def normalize_html_export(
                 )
                 person = _html_person(display_name, people)
 
-            body_parts: list[str] = []
-            for pre in message_div.find_all("pre"):
-                if pre.find_parent(class_="msg-quote") is not None:
-                    continue
-                text = pre.get_text("\n", strip=True)
-                if text:
-                    body_parts.append(text)
-            content = "\n\n".join(body_parts)
+            content = _html_message_body(message_div)
+            reply_to_id = _html_reply_anchor(message_div)
 
             attachments = _message_attachment_paths(message_div, chat_dir.name)
             attachment_preview = attachments[0] if attachments else None
@@ -1366,6 +1383,7 @@ def normalize_html_export(
                     person=person,
                     ts=timestamp,
                     content=content,
+                    reply_to_id=reply_to_id,
                     attachment_count=len(attachments),
                     attachment_preview=attachment_preview,
                     reaction_count=reaction_count,

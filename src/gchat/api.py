@@ -1716,7 +1716,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 SELECT m.id, m.ts, m.content, m.attachment_preview, m.attachment_count,
                        m.reaction_count, m.reaction_summary, m.reaction_details_json,
                        m.channel_id, c.platform_channel_id, s.id, s.platform, s.name,
-                       p.display_name, p.color, c.name
+                       p.display_name, p.color, c.name, m.reply_to_id
                 FROM messages m
                 JOIN channels c ON c.id = m.channel_id
                 JOIN sources s ON s.id = c.source_id
@@ -1744,6 +1744,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 person_name,
                 person_color,
                 channel_initial_name,
+                _msg_reply_to_id,
             ) = row
 
             # Use COUNT queries to locate the target message's position in channel
@@ -1782,6 +1783,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                         None,
                         None,
                         False,
+                        _msg_reply_to_id,
                     )
                 ]
             else:
@@ -1811,7 +1813,8 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                                ORDER BY pnc.ts DESC
                                LIMIT 1
                            ) AS nickname_at_time,
-                           {"m.is_system" if app.state.has_is_system else "FALSE"} AS is_system
+                           {"m.is_system" if app.state.has_is_system else "FALSE"} AS is_system,
+                           m.reply_to_id
                     FROM messages m
                     LEFT JOIN people p ON p.id = m.person_id
                     WHERE m.channel_id = ?
@@ -1871,6 +1874,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 r_person_id,
                 r_nickname,  # resolved by SQL correlated subquery
                 r_is_system,
+                r_reply_to_id,
             ) = r
             attach_url = (
                 _resolve_local_attachment_url(
@@ -1915,6 +1919,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     "person_color": r_person_color,
                     "avatar_url": avatar_by_name.get(r_person_name or "", "") or None,
                     "is_system": bool(r_is_system),
+                    "reply_to_id": r_reply_to_id,
                     "channel_id": msg_channel_id,
                     "platform": platform,
                     "source_name": source_name,
@@ -3370,9 +3375,8 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         with _connect(app.state.db_path) as con:
             rows = con.execute(
                 f"""
-                SELECT date_trunc('month', ts) AS month, COUNT(*) AS usage_count
-                FROM (
-                    SELECT m.ts,
+                WITH tokenized AS (
+                    SELECT date_trunc('month', m.ts) AS month,
                            unnest(
                                regexp_extract_all(
                                    replace(lower(coalesce(m.content, '')), chr(39), ''),
@@ -3384,10 +3388,22 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     JOIN sources s ON c.source_id = s.id
                     WHERE {where} AND m.content IS NOT NULL AND m.content <> ''
                       {is_system_filter}{excluded_filter}
-                ) tokens
-                WHERE token = ?
-                GROUP BY month
-                ORDER BY month
+                ),
+                totals AS (
+                    SELECT month, COUNT(*) AS total_words
+                    FROM tokenized
+                    GROUP BY month
+                ),
+                word_counts AS (
+                    SELECT month, COUNT(*) AS usage_count
+                    FROM tokenized
+                    WHERE token = ?
+                    GROUP BY month
+                )
+                SELECT t.month, COALESCE(wc.usage_count, 0) AS usage_count, t.total_words
+                FROM totals t
+                LEFT JOIN word_counts wc ON wc.month = t.month
+                ORDER BY t.month
                 """,
                 [*params, normalized],
             ).fetchall()
@@ -3398,6 +3414,10 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 {
                     "month": row[0].isoformat() if row[0] else None,
                     "count": int(row[1]),
+                    "total_words": int(row[2]),
+                    "percent": round((int(row[1]) / int(row[2])) * 100, 4)
+                    if int(row[2]) > 0
+                    else 0.0,
                 }
                 for row in rows
             ],
@@ -4187,7 +4207,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             ).fetchall()
 
         emoji_counts: Counter[str] = Counter()
-        emoji_image: dict[str, str] = {}
+        emoji_image: dict[str, tuple[str, str]] = {}
 
         for details_json, summary, src_name in rows:
             if details_json:
@@ -4204,7 +4224,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                             emoji_counts[name] += count
                             img = str(item.get("image_url") or "").strip()
                             if img and name not in emoji_image:
-                                emoji_image[name] = img
+                                emoji_image[name] = (img, src_name)
                 except Exception:
                     pass
             elif summary:
@@ -4219,16 +4239,26 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                             pass
 
         top = emoji_counts.most_common(limit)
-        return {
-            "items": [
+        items: list[dict[str, Any]] = []
+        for name, count in top:
+            image_meta = emoji_image.get(name)
+            image_url = None
+            if image_meta:
+                raw_url, src_name = image_meta
+                image_url = _resolve_local_attachment_url(
+                    raw_url,
+                    src_name,
+                    app.state.data_dir,
+                    app.state.signal_filename_index,
+                )
+            items.append(
                 {
                     "name": name,
                     "count": count,
-                    "image_url": emoji_image.get(name),
+                    "image_url": image_url,
                 }
-                for name, count in top
-            ]
-        }
+            )
+        return {"items": items}
 
     @app.get("/api/search")
     def search(

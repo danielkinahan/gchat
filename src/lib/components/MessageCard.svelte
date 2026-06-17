@@ -162,6 +162,10 @@
         </div>
     {/if}
 
+    {#if message?.reply_to_id}
+        <div class="reply-indicator">↩ Reply</div>
+    {/if}
+
     {#if showContent}
         <p class="content">{displayContent}</p>
     {/if}
@@ -267,6 +271,12 @@
         font-weight: 400;
         font-size: 0.82em;
         color: #94a3b8;
+    }
+
+    .reply-indicator {
+        margin-top: 6px;
+        font-size: 0.75rem;
+        color: #64748b;
     }
 
     :global(.system-message) {

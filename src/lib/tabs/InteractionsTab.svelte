@@ -204,7 +204,10 @@
         {:else}
             <div class="rank-list">
                 {#each visibleMentions as mention}
-                    <div class="rank-row">
+                    <div
+                        class="rank-row"
+                        title={`${mention.mention}: ${mention.count.toLocaleString()} mentions`}
+                    >
                         <span class="rank-name">{mention.mention}</span>
                         <div class="rank-track">
                             <div
@@ -302,7 +305,10 @@
         {:else}
             <div class="rank-list">
                 {#each reactionAuthors as person}
-                    <div class="rank-row">
+                    <div
+                        class="rank-row"
+                        title={`${person.display_name}: ${person.count.toLocaleString()} reactions received`}
+                    >
                         <span class="rank-name">
                             <span
                                 class="swatch"
@@ -327,7 +333,10 @@
             <h2>Top kickers</h2>
             <div class="rank-list">
                 {#each removedEvents.by_actor as person}
-                    <div class="rank-row">
+                    <div
+                        class="rank-row"
+                        title={`${person.display_name}: ${person.count.toLocaleString()} kicks`}
+                    >
                         <span class="rank-name">
                             <span
                                 class="swatch"
@@ -350,7 +359,10 @@
             <h2>Most kicked</h2>
             <div class="rank-list">
                 {#each removedEvents.by_target as person}
-                    <div class="rank-row">
+                    <div
+                        class="rank-row"
+                        title={`${person.display_name}: ${person.count.toLocaleString()} times kicked`}
+                    >
                         <span class="rank-name">
                             <span
                                 class="swatch"
@@ -373,7 +385,10 @@
             <h2>Chats with the most kicks</h2>
             <div class="rank-list">
                 {#each removedEvents.by_chat as chat}
-                    <div class="rank-row">
+                    <div
+                        class="rank-row"
+                        title={`${chat.name}: ${chat.count.toLocaleString()} kicks`}
+                    >
                         <span class="rank-name">{chat.name}</span>
                         <div class="rank-track">
                             <div
@@ -393,7 +408,10 @@
             <h2>Most departures</h2>
             <div class="rank-list">
                 {#each leftEvents.by_target as person}
-                    <div class="rank-row">
+                    <div
+                        class="rank-row"
+                        title={`${person.display_name}: ${person.count.toLocaleString()} departures`}
+                    >
                         <span class="rank-name">
                             <span
                                 class="swatch"

@@ -1,6 +1,5 @@
 <script lang="ts">
-    import { fetchJson } from "$lib/api";
-    import { toMediaUrl } from "$lib/mediaUrls";
+    import { apiUrl, fetchJson } from "$lib/api";
 
     type EmojiItem = {
         name: string;
@@ -42,12 +41,12 @@
 
     function resolveImageUrl(url: string | null): string | null {
         if (!url) return null;
-        if (url.startsWith("/api/")) return url;
+        if (url.startsWith("/api/")) return apiUrl(url);
         try {
             const u = new URL(url);
             if (u.protocol === "http:" || u.protocol === "https:") return url;
         } catch {}
-        return toMediaUrl(url);
+        return url;
     }
 
 </script>
