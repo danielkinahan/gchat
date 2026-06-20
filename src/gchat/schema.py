@@ -94,4 +94,17 @@ CREATE TABLE IF NOT EXISTS member_events (
   ts TIMESTAMP NOT NULL,
   payload_json TEXT
 );
+
+CREATE TABLE IF NOT EXISTS person_stats (
+  person_id INTEGER PRIMARY KEY,
+  message_count INTEGER NOT NULL,
+  unique_words INTEGER NOT NULL,
+  total_words INTEGER NOT NULL,
+  ttr DOUBLE NOT NULL,
+  word_entropy DOUBLE NOT NULL,
+  channel_count INTEGER NOT NULL,
+  theme_count INTEGER NOT NULL,
+  platform_count INTEGER NOT NULL,
+  channel_hhi DOUBLE NOT NULL
+);
 """

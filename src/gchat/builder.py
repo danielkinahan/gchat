@@ -18,6 +18,7 @@ from .models import (
     PersonSeed,
     SourceSeed,
 )
+from .person_stats import refresh_person_stats
 from .reconciliation import load_reconciliation
 from .schema import SCHEMA_SQL
 from .signal import normalize as normalize_signal
@@ -425,6 +426,10 @@ def build_database(
                 status,
                 f"    Inserted {min(i + batch_size, len(message_rows))}/{len(message_rows)} messages",
             )
+
+    _notify(status, "Computing person diversity stats")
+    stats_count = refresh_person_stats(con, has_is_system=True)
+    _notify(status, f"  Wrote person stats ({stats_count} rows)")
 
     con.execute("COMMIT")
     con.close()

@@ -24,110 +24,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .reconciliation import load_reconciliation
-
-COMMON_STOP_WORDS = {
-    "the",
-    "and",
-    "for",
-    "that",
-    "you",
-    "with",
-    "this",
-    "have",
-    "are",
-    "was",
-    "but",
-    "not",
-    "all",
-    "can",
-    "your",
-    "just",
-    "its",
-    "its",
-    "from",
-    "they",
-    "what",
-    "when",
-    "where",
-    "will",
-    "would",
-    "there",
-    "their",
-    "about",
-    "out",
-    "get",
-    "got",
-    "into",
-    "too",
-    "very",
-    "how",
-    "why",
-    "who",
-    "him",
-    "her",
-    "his",
-    "she",
-    "himself",
-    "herself",
-    "them",
-    "then",
-    "than",
-    "our",
-    "ours",
-    "were",
-    "had",
-    "has",
-    "did",
-    "does",
-    "dont",
-    "cant",
-    "im",
-    "ive",
-    "id",
-    "ill",
-    "youre",
-    "youve",
-    "theyre",
-    "weve",
-    "isnt",
-    "wasnt",
-    "wont",
-    "aint",
-    "lol",
-    "lmao",
-    "yeah",
-    "yep",
-    "nah",
-    "ok",
-    "okay",
-    "bro",
-    "dude",
-    "tho",
-    "though",
-    "like",
-    "https",
-    "http",
-    "www",
-    "com",
-    "org",
-    "net",
-    "gg",
-    "jpg",
-    "jpeg",
-    "png",
-    "gif",
-    "webp",
-    "mp4",
-    "mov",
-    "sticker",
-    "video",
-    "image",
-    "images",
-    "reply",
-    "forwarded",
-    "message",
-    "messages",
-}
+from .person_stats import compute_person_stats, person_stats_row_to_dict
+from .stop_words import COMMON_STOP_WORDS
 _THEME_CHANNEL_IDS: dict[str, list[int]] = {}
 
 _LINK_PREVIEW_CACHE_LOCK = threading.Lock()
@@ -777,6 +675,21 @@ def _messages_has_column(db_path: Path, column_name: str) -> bool:
     return any(str(row[1]) == column_name for row in rows)
 
 
+def _table_exists(db_path: Path, table_name: str) -> bool:
+    if not db_path.exists():
+        return False
+    with _connect(db_path) as con:
+        row = con.execute(
+            """
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_name = ?
+            """,
+            [table_name],
+        ).fetchone()
+    return bool(row and int(row[0]) > 0)
+
+
 def _path_signature(path: Path) -> tuple[int, int] | None:
     try:
         stat = path.stat()
@@ -1039,6 +952,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     )
     app.state.has_is_edited = _messages_has_column(app.state.db_path, "is_edited")
     app.state.has_is_system = _messages_has_column(app.state.db_path, "is_system")
+    app.state.has_person_stats = _table_exists(app.state.db_path, "person_stats")
     app.state.has_conversation_id = _messages_has_column(
         app.state.db_path, "conversation_id"
     )
@@ -1091,6 +1005,12 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             )
             app.state.has_is_edited = _messages_has_column(
                 app.state.db_path, "is_edited"
+            )
+            app.state.has_is_system = _messages_has_column(
+                app.state.db_path, "is_system"
+            )
+            app.state.has_person_stats = _table_exists(
+                app.state.db_path, "person_stats"
             )
             app.state.has_conversation_id = _messages_has_column(
                 app.state.db_path, "conversation_id"
@@ -2533,6 +2453,119 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 for row in rows
             ]
         }
+
+    @app.get("/api/person-diversity")
+    def person_diversity(
+        limit: int = Query(default=50, ge=1, le=500),
+        start: date | None = Query(default=None, alias="from"),
+        end: date | None = Query(default=None, alias="to"),
+        people: str | None = None,
+        themes: str | None = None,
+        platforms: str | None = None,
+    ) -> dict[str, Any]:
+        """Per-person lexical and participation diversity metrics."""
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
+        needs_live = bool(
+            filters.start
+            or filters.end
+            or filters.themes
+            or filters.platforms
+            or not app.state.has_person_stats
+        )
+        people_extra = _load_people_extra()
+
+        with _connect(app.state.db_path) as con:
+            if needs_live:
+                params: list[Any] = []
+                where = _filters_clause(
+                    filters,
+                    params,
+                    app.state.reconciliation,
+                    app.state.theme_id_to_name,
+                )
+                stats_rows = compute_person_stats(
+                    con,
+                    where=where,
+                    params=params,
+                    has_is_system=app.state.has_is_system,
+                    excluded_filter=_excluded_ids_sql(
+                        app.state.excluded_message_ids
+                    ),
+                )
+                people_rows = con.execute(
+                    "SELECT id, display_name, color FROM people"
+                ).fetchall()
+            else:
+                params = []
+                people_clause = ""
+                if filters.people:
+                    placeholders = ", ".join("?" for _ in filters.people)
+                    people_clause = f"AND ps.person_id IN ({placeholders})"
+                    params.extend(filters.people)
+                stats_rows = con.execute(
+                    f"""
+                    SELECT
+                        ps.person_id,
+                        ps.message_count,
+                        ps.unique_words,
+                        ps.total_words,
+                        ps.ttr,
+                        ps.word_entropy,
+                        ps.channel_count,
+                        ps.theme_count,
+                        ps.platform_count,
+                        ps.channel_hhi
+                    FROM person_stats ps
+                    WHERE 1 = 1 {people_clause}
+                    ORDER BY ps.message_count DESC, ps.person_id
+                    """,
+                    params,
+                ).fetchall()
+                people_rows = con.execute(
+                    "SELECT id, display_name, color FROM people"
+                ).fetchall()
+
+        people_by_id = {
+            int(row[0]): (str(row[1]), str(row[2] or "")) for row in people_rows
+        }
+        items: list[dict[str, Any]] = []
+        for row in stats_rows:
+            person_id = int(row[0])
+            meta = people_by_id.get(person_id)
+            if meta is None:
+                continue
+            display_name, color = meta
+            if (
+                not filters.people
+                and app.state.configured_people_names
+                and display_name not in app.state.configured_people_names
+            ):
+                continue
+            avatar = people_extra.get(display_name, {}).get("avatar", "")
+            resolved_color = color or people_extra.get(display_name, {}).get(
+                "color", ""
+            )
+            items.append(
+                person_stats_row_to_dict(
+                    row,
+                    display_name=display_name,
+                    color=resolved_color,
+                    avatar=avatar,
+                )
+            )
+
+        items.sort(
+            key=lambda item: (-int(item["message_count"]), str(item["display_name"]))
+        )
+        if len(items) > limit:
+            items = items[:limit]
+        return {"items": items, "source": "live" if needs_live else "materialized"}
 
     @app.get("/api/metadata")
     def metadata() -> dict[str, Any]:

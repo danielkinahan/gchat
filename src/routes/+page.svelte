@@ -9,6 +9,7 @@
     import LanguageTab from "$lib/tabs/LanguageTab.svelte";
     import MessagesTab from "$lib/tabs/MessagesTab.svelte";
     import EmojiTab from "$lib/tabs/EmojiTab.svelte";
+    import PeopleTab from "$lib/tabs/PeopleTab.svelte";
     import SearchTab from "$lib/tabs/SearchTab.svelte";
     import {
         apiUrl,
@@ -165,6 +166,7 @@
     let topLimit = 10;
     let activeTab:
         | "overview"
+        | "people"
         | "language"
         | "chats"
         | "nicknames"
@@ -673,6 +675,11 @@
             on:click={() => (activeTab = "overview")}>Messages</button
         >
         <button
+            class:active={activeTab === "people"}
+            type="button"
+            on:click={() => (activeTab = "people")}>People</button
+        >
+        <button
             class:active={activeTab === "language"}
             type="button"
             on:click={openLanguageTab}>Language</button
@@ -725,6 +732,13 @@
             topThemes: data.topThemes,
             platformOverTime: data.platformOverTime,
         }}
+    />
+
+    <PeopleTab
+        active={activeTab === "people"}
+        {filterSignature}
+        {currentFilterParams}
+        {topLimit}
     />
 
     <LanguageTab

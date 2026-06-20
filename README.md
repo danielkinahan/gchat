@@ -73,6 +73,8 @@ themes:
 
 If `config/people.yaml` or `config/themes.yaml` is missing, gChat uses the corresponding `*.example.yaml` file.
 
+During build, gChat also materializes per-person diversity metrics into the `person_stats` table (vocabulary breadth, chat/theme/platform spread). The dashboard **People** tab reads these from `/api/person-diversity`; `people.yaml` remains identity and display config only.
+
 ## Building the database
 
 ```bash

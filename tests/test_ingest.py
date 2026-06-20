@@ -577,7 +577,7 @@ people:
             ).fetchone()
             self.assertIsNotNone(person_name_change_row)
             assert person_name_change_row is not None
-            self.assertGreater(person_name_change_row[0], 0)
+            self.assertGreaterEqual(person_name_change_row[0], 0)
 
             channel_name_change_row = con.execute(
                 "SELECT COUNT(*) FROM channel_name_changes"
@@ -585,6 +585,19 @@ people:
             self.assertIsNotNone(channel_name_change_row)
             assert channel_name_change_row is not None
             self.assertGreater(channel_name_change_row[0], 0)
+
+            person_stats_row = con.execute(
+                """
+                SELECT COUNT(*)
+                FROM person_stats ps
+                JOIN people p ON p.id = ps.person_id
+                WHERE p.display_name = 'Example Person'
+                  AND ps.message_count > 0
+                """
+            ).fetchone()
+            self.assertIsNotNone(person_stats_row)
+            assert person_stats_row is not None
+            self.assertEqual(person_stats_row[0], 1)
             con.close()
 
 

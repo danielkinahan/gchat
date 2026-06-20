@@ -78,6 +78,18 @@ class ApiTests(unittest.TestCase):
             self.assertGreater(len(top_people["items"]), 0)
             self.assertEqual(top_people["items"][0]["display_name"], "Example Person")
 
+            diversity = client.get(
+                f"/api/person-diversity?limit=10&people={example_person_id}"
+            ).json()
+            self.assertEqual(diversity["source"], "materialized")
+            self.assertGreater(len(diversity["items"]), 0)
+            example_stats = diversity["items"][0]
+            self.assertEqual(example_stats["display_name"], "Example Person")
+            self.assertGreater(example_stats["message_count"], 0)
+            self.assertIn("ttr", example_stats)
+            self.assertIn("word_entropy", example_stats)
+            self.assertIn("channel_hhi", example_stats)
+
             time_series = client.get("/api/messages-over-time?granularity=day").json()
             self.assertTrue(time_series["points"])
 

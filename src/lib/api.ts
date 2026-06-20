@@ -48,6 +48,25 @@ export type TopPeople = {
   }>;
 };
 
+export type PersonDiversity = {
+  source: "materialized" | "live";
+  items: Array<{
+    id: number;
+    display_name: string;
+    color: string;
+    avatar: string;
+    message_count: number;
+    unique_words: number;
+    total_words: number;
+    ttr: number;
+    word_entropy: number;
+    channel_count: number;
+    theme_count: number;
+    platform_count: number;
+    channel_hhi: number;
+  }>;
+};
+
 export type PlatformOverTime = {
   granularity: string;
   platforms: string[];
