@@ -15,20 +15,29 @@ class PeopleConfig:
     normalized_identity_any_platform_to_person: dict[str, tuple[str, str]]
     normalized_person_name_to_person: dict[str, tuple[str, str]]
     normalized_identity_token_candidates: list[tuple[frozenset[str], tuple[str, str]]]
-    normalized_person_name_token_candidates: list[tuple[frozenset[str], tuple[str, str]]]
+    normalized_person_name_token_candidates: list[
+        tuple[frozenset[str], tuple[str, str]]
+    ]
 
-    def resolve(self, platform: str, raw_id: str, fallback_name: str) -> tuple[str, str]:
+    def resolve(
+        self, platform: str, raw_id: str, fallback_name: str
+    ) -> tuple[str, str]:
         def _token_set(value: str) -> frozenset[str]:
             return frozenset(re.findall(r"[a-z0-9]+", value.casefold()))
 
-        def _unique_match(tokens: frozenset[str], candidates: list[tuple[frozenset[str], tuple[str, str]]]) -> tuple[str, str] | None:
+        def _unique_match(
+            tokens: frozenset[str],
+            candidates: list[tuple[frozenset[str], tuple[str, str]]],
+        ) -> tuple[str, str] | None:
             if not tokens:
                 return None
             matches: set[tuple[str, str]] = set()
             for candidate_tokens, person in candidates:
                 if not candidate_tokens:
                     continue
-                if tokens.issubset(candidate_tokens) or candidate_tokens.issubset(tokens):
+                if tokens.issubset(candidate_tokens) or candidate_tokens.issubset(
+                    tokens
+                ):
                     matches.add(person)
             if len(matches) == 1:
                 return next(iter(matches))
@@ -39,7 +48,9 @@ class PeopleConfig:
             return exact
 
         normalized_raw_id = " ".join(raw_id.strip().casefold().split())
-        normalized_match = self.normalized_identity_to_person.get((platform, normalized_raw_id))
+        normalized_match = self.normalized_identity_to_person.get(
+            (platform, normalized_raw_id)
+        )
         if normalized_match is not None:
             return normalized_match
 
@@ -48,7 +59,9 @@ class PeopleConfig:
             alias_match = self.normalized_identity_to_person.get((platform, name_key))
             if alias_match is not None:
                 return alias_match
-            cross_platform_alias = self.normalized_identity_any_platform_to_person.get(name_key)
+            cross_platform_alias = self.normalized_identity_any_platform_to_person.get(
+                name_key
+            )
             if cross_platform_alias is not None:
                 return cross_platform_alias
             fuzzy_alias_match = _unique_match(
@@ -59,14 +72,20 @@ class PeopleConfig:
                 return fuzzy_alias_match
 
         normalized_fallback = " ".join(fallback_name.strip().casefold().split())
-        fallback_identity_match = self.normalized_identity_to_person.get((platform, normalized_fallback))
+        fallback_identity_match = self.normalized_identity_to_person.get(
+            (platform, normalized_fallback)
+        )
         if fallback_identity_match is not None:
             return fallback_identity_match
-        cross_platform_fallback_match = self.normalized_identity_any_platform_to_person.get(normalized_fallback)
+        cross_platform_fallback_match = (
+            self.normalized_identity_any_platform_to_person.get(normalized_fallback)
+        )
         if cross_platform_fallback_match is not None:
             return cross_platform_fallback_match
 
-        fallback_name_match = self.normalized_person_name_to_person.get(normalized_fallback)
+        fallback_name_match = self.normalized_person_name_to_person.get(
+            normalized_fallback
+        )
         if fallback_name_match is not None:
             return fallback_name_match
         fuzzy_fallback_match = _unique_match(
@@ -111,12 +130,16 @@ class ThemesConfig:
         normalized_source = self._normalize(source_name)
         normalized_channel = self._normalize(channel_name)
 
-        normalized_source_match = self.normalized_source_channel_to_theme.get((normalized_source, normalized_channel))
+        normalized_source_match = self.normalized_source_channel_to_theme.get(
+            (normalized_source, normalized_channel)
+        )
         if normalized_source_match is not None:
             return normalized_source_match
 
         platform = self._platform(source_name)
-        platform_match = self.platform_channel_to_theme.get((platform, normalized_channel))
+        platform_match = self.platform_channel_to_theme.get(
+            (platform, normalized_channel)
+        )
         if platform_match is not None:
             return platform_match
 
@@ -128,10 +151,15 @@ class ThemesConfig:
         # Accept prefix matches only when they resolve to exactly one configured theme.
         if platform in {"facebook", "signal"}:
             prefix_matches: set[str] = set()
-            for (candidate_source, candidate_channel), theme_name in self.normalized_source_channel_to_theme.items():
+            for (
+                candidate_source,
+                candidate_channel,
+            ), theme_name in self.normalized_source_channel_to_theme.items():
                 if self._platform(candidate_source) != platform:
                     continue
-                if normalized_source.startswith(candidate_source) and normalized_channel.startswith(candidate_channel):
+                if normalized_source.startswith(
+                    candidate_source
+                ) and normalized_channel.startswith(candidate_channel):
                     prefix_matches.add(theme_name)
             if len(prefix_matches) == 1:
                 return next(iter(prefix_matches))
@@ -159,7 +187,10 @@ def _default_config_dir(base_dir: Path | None = None) -> Path:
     root = base_dir or Path.cwd()
     return root / "config"
 
-def load_reconciliation(base_dir: Path | None = None, config_dir: Path | None = None) -> ReconciliationConfig:
+
+def load_reconciliation(
+    base_dir: Path | None = None, config_dir: Path | None = None
+) -> ReconciliationConfig:
     if config_dir is None:
         config_dir = _default_config_dir(base_dir)
     else:
@@ -175,8 +206,12 @@ def load_reconciliation(base_dir: Path | None = None, config_dir: Path | None = 
     normalized_identity_to_person: dict[tuple[str, str], tuple[str, str]] = {}
     normalized_identity_any_platform_candidates: dict[str, set[tuple[str, str]]] = {}
     person_name_candidates: dict[str, set[tuple[str, str]]] = {}
-    normalized_identity_token_candidates: list[tuple[frozenset[str], tuple[str, str]]] = []
-    normalized_person_name_token_candidates: list[tuple[frozenset[str], tuple[str, str]]] = []
+    normalized_identity_token_candidates: list[
+        tuple[frozenset[str], tuple[str, str]]
+    ] = []
+    normalized_person_name_token_candidates: list[
+        tuple[frozenset[str], tuple[str, str]]
+    ] = []
     if people_path.exists():
         people_data = _load_yaml(people_path)
         for person in people_data.get("people", []):
@@ -184,19 +219,32 @@ def load_reconciliation(base_dir: Path | None = None, config_dir: Path | None = 
             color = str(person.get("color") or "")
             normalized_name = " ".join(name.strip().casefold().split())
             resolved_person = (name, color or name)
-            person_name_candidates.setdefault(normalized_name, set()).add(resolved_person)
+            person_name_candidates.setdefault(normalized_name, set()).add(
+                resolved_person
+            )
             normalized_person_name_token_candidates.append(
                 (frozenset(re.findall(r"[a-z0-9]+", normalized_name)), resolved_person)
             )
             for identity in person.get("identities", []):
                 platform = str(identity["platform"]).lower()
-                raw_id = str(identity.get("id") or identity.get("username") or identity.get("name"))
+                raw_id = str(
+                    identity.get("id")
+                    or identity.get("username")
+                    or identity.get("name")
+                )
                 identity_to_person[(platform, raw_id)] = resolved_person
                 normalized_raw_id = " ".join(raw_id.strip().casefold().split())
-                normalized_identity_to_person[(platform, normalized_raw_id)] = resolved_person
-                normalized_identity_any_platform_candidates.setdefault(normalized_raw_id, set()).add(resolved_person)
+                normalized_identity_to_person[(platform, normalized_raw_id)] = (
+                    resolved_person
+                )
+                normalized_identity_any_platform_candidates.setdefault(
+                    normalized_raw_id, set()
+                ).add(resolved_person)
                 normalized_identity_token_candidates.append(
-                    (frozenset(re.findall(r"[a-z0-9]+", normalized_raw_id)), resolved_person)
+                    (
+                        frozenset(re.findall(r"[a-z0-9]+", normalized_raw_id)),
+                        resolved_person,
+                    )
                 )
     normalized_identity_any_platform_to_person = {
         key: next(iter(candidates))
@@ -229,12 +277,18 @@ def load_reconciliation(base_dir: Path | None = None, config_dir: Path | None = 
                 channel_to_theme[(source_name, channel_name)] = theme_name
                 normalized_source = ThemesConfig._normalize(source_name)
                 normalized_channel = ThemesConfig._normalize(channel_name)
-                normalized_source_channel_to_theme[(normalized_source, normalized_channel)] = theme_name
+                normalized_source_channel_to_theme[
+                    (normalized_source, normalized_channel)
+                ] = theme_name
 
                 platform = ThemesConfig._platform(source_name)
                 platform_key = (platform, normalized_channel)
-                platform_channel_candidates.setdefault(platform_key, set()).add(theme_name)
-                normalized_channel_candidates.setdefault(normalized_channel, set()).add(theme_name)
+                platform_channel_candidates.setdefault(platform_key, set()).add(
+                    theme_name
+                )
+                normalized_channel_candidates.setdefault(normalized_channel, set()).add(
+                    theme_name
+                )
 
     platform_channel_to_theme = {
         key: next(iter(theme_names))

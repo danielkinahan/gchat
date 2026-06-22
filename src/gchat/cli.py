@@ -24,7 +24,9 @@ def main() -> None:
 
     build = sub.add_parser("build", help="Build the DuckDB database")
     build.add_argument("--data-dir", type=Path, default=Path("data"))
-    build.add_argument("--output", type=Path, default=Path("data/gchat-db/gchat.duckdb"))
+    build.add_argument(
+        "--output", type=Path, default=Path("data/gchat-db/gchat.duckdb")
+    )
     build.add_argument("--config-dir", type=Path, default=Path("config"))
 
     serve = sub.add_parser("serve", help="Run the read API")

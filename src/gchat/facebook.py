@@ -20,7 +20,6 @@ from .models import (
 from .util import (
     fix_facebook_mojibake,
     hash_message,
-    message_counts,
     normalize_whitespace,
 )
 
@@ -295,7 +294,9 @@ _FACEBOOK_EXTRA_SYSTEM_PATTERNS = (
     ),
     re.compile(r"^.+ created (the|this) group\.?$", re.IGNORECASE),
     re.compile(r"^.+ scored \d+ points? playing \w+\.?$", re.IGNORECASE),
-    re.compile(r"^.+ set the new high score of \d+ points? playing \w+\.?$", re.IGNORECASE),
+    re.compile(
+        r"^.+ set the new high score of \d+ points? playing \w+\.?$", re.IGNORECASE
+    ),
     # Plans feature
     re.compile(r"^Plan created: .+$", re.IGNORECASE),
     re.compile(r"^.+ created a plan\.?$", re.IGNORECASE),

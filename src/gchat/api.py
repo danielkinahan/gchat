@@ -23,9 +23,10 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from .reconciliation import load_reconciliation
 from .person_stats import compute_person_stats, person_stats_row_to_dict
+from .reconciliation import load_reconciliation
 from .stop_words import COMMON_STOP_WORDS
+
 _THEME_CHANNEL_IDS: dict[str, list[int]] = {}
 
 _LINK_PREVIEW_CACHE_LOCK = threading.Lock()
@@ -2066,9 +2067,8 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             ).fetchone()
             conversations_row = (None, None, None)
             if app.state.has_conversation_id:
-                conversations_row = (
-                    con.execute(
-                        f"""
+                conversations_row = con.execute(
+                    f"""
                     SELECT
                         COUNT(DISTINCT m.conversation_id) AS conversation_count,
                         AVG(per_conversation.message_count) AS avg_messages,
@@ -2084,10 +2084,8 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     ) per_conversation ON per_conversation.conversation_id = m.conversation_id
                     WHERE {where} AND m.conversation_id IS NOT NULL
                     """,
-                        params,
-                    ).fetchone()
-                    or (None, None, None)
-                )
+                    params,
+                ).fetchone() or (None, None, None)
         total_messages = int(total[0] or 0)
         start_ts = total[1]
         end_ts = total[2]
@@ -2494,9 +2492,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     where=where,
                     params=params,
                     has_is_system=app.state.has_is_system,
-                    excluded_filter=_excluded_ids_sql(
-                        app.state.excluded_message_ids
-                    ),
+                    excluded_filter=_excluded_ids_sql(app.state.excluded_message_ids),
                 )
                 people_rows = con.execute(
                     "SELECT id, display_name, color FROM people"

@@ -9,7 +9,12 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from gchat.facebook_archive import copy_matching_archives, find_matching_archives, main, scan_archives
+from gchat.facebook_archive import (
+    copy_matching_archives,
+    find_matching_archives,
+    main,
+    scan_archives,
+)
 from gchat.reconciliation import load_reconciliation
 
 
@@ -63,14 +68,18 @@ class FacebookArchiveTests(unittest.TestCase):
 
             matches = find_matching_archives(source_dir, config_dir)
 
-            self.assertEqual([match.source_dir.name for match in matches], ["gargboyz_123"])
+            self.assertEqual(
+                [match.source_dir.name for match in matches], ["gargboyz_123"]
+            )
             self.assertEqual(matches[0].title, "Group Chat")
             self.assertEqual(
                 matches[0].matched_participants,
                 ("Person A", "Person B", "Person C", "Person D"),
             )
 
-    def test_copy_matching_archives_copies_and_skips_existing_without_overwrite(self) -> None:
+    def test_copy_matching_archives_copies_and_skips_existing_without_overwrite(
+        self,
+    ) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             source_dir = root / "source"
@@ -147,11 +156,16 @@ class FacebookArchiveTests(unittest.TestCase):
                 _chat_html("Group 1", "Person A, Person B and Person C"),
                 encoding="utf-8",
             )
-            (bad_dir / "message_1.html").write_text("<html><head><title>Broken</title></head><body></body></html>", encoding="utf-8")
+            (bad_dir / "message_1.html").write_text(
+                "<html><head><title>Broken</title></head><body></body></html>",
+                encoding="utf-8",
+            )
 
             scan = scan_archives(source_dir, config_dir)
 
-            self.assertEqual([match.source_dir.name for match in scan.matches], ["group_1"])
+            self.assertEqual(
+                [match.source_dir.name for match in scan.matches], ["group_1"]
+            )
             self.assertEqual([path.name for path in scan.unreadable_dirs], ["broken_1"])
 
     def test_main_lists_folders_before_copying(self) -> None:
@@ -340,7 +354,12 @@ people:
             )
 
     def test_build_parser_defaults_to_repo_root_paths(self) -> None:
-        from gchat.facebook_archive import DEFAULT_DEST_DIR, DEFAULT_SOURCE_DIR, PROJECT_ROOT, build_parser
+        from gchat.facebook_archive import (
+            DEFAULT_DEST_DIR,
+            DEFAULT_SOURCE_DIR,
+            PROJECT_ROOT,
+            build_parser,
+        )
 
         parser = build_parser()
         args = parser.parse_args([])

@@ -549,11 +549,11 @@ def normalize_backup(
                     continue
                 # Handle group icon/photo updates
                 if "groupIconUpdate" in change or "groupPhotoUpdate" in change:
-                    icon_update = (
-                        change.get("groupIconUpdate")
-                        or change.get("groupPhotoUpdate")
-                        or {}
-                    )
+                    # icon_update = (
+                    #     change.get("groupIconUpdate")
+                    #     or change.get("groupPhotoUpdate")
+                    #     or {}
+                    # )
                     group_title_updates.setdefault(chat_id, []).append(
                         (
                             to_utc_naive(
@@ -1054,7 +1054,7 @@ def _html_message_body(message_div) -> str:
 
 
 def _html_reply_anchor(message_div) -> str | None:
-    quote_link = message_div.select_one(".quote-link[href^=\"#\"]")
+    quote_link = message_div.select_one('.quote-link[href^="#"]')
     if quote_link is None:
         return None
     href = quote_link.get("href")

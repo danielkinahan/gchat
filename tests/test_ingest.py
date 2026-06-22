@@ -373,7 +373,9 @@ class IngestTests(unittest.TestCase):
             export = normalize_signal(root)
 
         reply = next(
-            message for message in export.messages if message.content == "reply text only"
+            message
+            for message in export.messages
+            if message.content == "reply text only"
         )
         self.assertEqual(reply.reply_to_id, "123")
         self.assertNotIn("original text here", reply.content)

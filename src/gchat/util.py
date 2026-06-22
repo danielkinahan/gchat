@@ -26,19 +26,19 @@ def stable_color(name: str) -> str:
     return hsl_to_hex(hue * 360.0, saturation, lightness)
 
 
-def hsl_to_hex(h: float, s: float, l: float) -> str:
-    c = (1 - abs(2 * l - 1)) * s
-    x = c * (1 - abs((h / 60.0) % 2 - 1))
-    m = l - c / 2
-    if h < 60:
+def hsl_to_hex(hue: float, saturation: float, lightness: float) -> str:
+    c = (1 - abs(2 * lightness - 1)) * saturation
+    x = c * (1 - abs((hue / 60.0) % 2 - 1))
+    m = lightness - c / 2
+    if hue < 60:
         r, g, b = c, x, 0
-    elif h < 120:
+    elif hue < 120:
         r, g, b = x, c, 0
-    elif h < 180:
+    elif hue < 180:
         r, g, b = 0, c, x
-    elif h < 240:
+    elif hue < 240:
         r, g, b = 0, x, c
-    elif h < 300:
+    elif hue < 300:
         r, g, b = x, 0, c
     else:
         r, g, b = c, 0, x
