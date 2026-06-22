@@ -2511,7 +2511,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                         ps.message_count,
                         ps.unique_words,
                         ps.total_words,
-                        ps.ttr,
+                        ps.mtld,
                         ps.word_entropy,
                         ps.channel_count,
                         ps.theme_count,

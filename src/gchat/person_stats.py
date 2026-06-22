@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import duckdb
@@ -21,10 +22,98 @@ PersonStatsRow = tuple[
     float,
 ]
 
+_TOKEN_PATTERN = re.compile(r"[a-z]{3,}")
+_MTLD_THRESHOLD = 0.72
+
 
 def _stop_word_placeholders(stop_words: frozenset[str]) -> tuple[str, list[str]]:
     words = sorted(stop_words)
     return ", ".join("?" for _ in words), words
+
+
+def tokenize_content(
+    content: str,
+    *,
+    stop_words: frozenset[str] = COMMON_STOP_WORDS,
+) -> list[str]:
+    """Tokenize message content using the same rules as diversity SQL."""
+    text = content.lower().replace("'", "")
+    return [word for word in _TOKEN_PATTERN.findall(text) if word not in stop_words]
+
+
+def _mtld_direction(tokens: list[str], threshold: float = _MTLD_THRESHOLD) -> float:
+    if not tokens:
+        return 0.0
+    if len(tokens) == 1:
+        return 1.0
+
+    types: set[str] = set()
+    token_count = 0
+    factor_count = 0.0
+    ttr = 1.0
+
+    for word in tokens:
+        types.add(word)
+        token_count += 1
+        ttr = len(types) / token_count
+        if ttr <= threshold:
+            factor_count += 1.0
+            types = set()
+            token_count = 0
+
+    if token_count > 0:
+        factor_count += (1.0 - ttr) / (1.0 - threshold)
+
+    if factor_count == 0.0:
+        return float(len(tokens))
+    return len(tokens) / factor_count
+
+
+def compute_mtld(
+    tokens: list[str],
+    *,
+    threshold: float = _MTLD_THRESHOLD,
+) -> float:
+    """Measure of Textual Lexical Diversity (mean of forward and reverse passes)."""
+    if not tokens:
+        return 0.0
+    forward = _mtld_direction(tokens, threshold)
+    backward = _mtld_direction(list(reversed(tokens)), threshold)
+    return (forward + backward) / 2.0
+
+
+def _fetch_person_tokens(
+    con: duckdb.DuckDBPyConnection,
+    *,
+    where: str,
+    params: list[Any],
+    has_is_system: bool,
+    excluded_filter: str,
+    stop_words: frozenset[str] = COMMON_STOP_WORDS,
+) -> dict[int, list[str]]:
+    is_system_filter = "AND NOT m.is_system" if has_is_system else ""
+    rows = con.execute(
+        f"""
+        SELECT m.person_id, m.content
+        FROM messages m
+        JOIN channels c ON c.id = m.channel_id
+        JOIN sources s ON s.id = c.source_id
+        WHERE {where}
+          {is_system_filter}
+          {excluded_filter}
+          AND m.content IS NOT NULL
+          AND m.content <> ''
+        ORDER BY m.person_id, m.ts, m.id
+        """,
+        params,
+    ).fetchall()
+    tokens_by_person: dict[int, list[str]] = {}
+    for person_id, content in rows:
+        pid = int(person_id)
+        tokens_by_person.setdefault(pid, []).extend(
+            tokenize_content(str(content), stop_words=stop_words)
+        )
+    return tokens_by_person
 
 
 def person_stats_sql(
@@ -128,11 +217,6 @@ def person_stats_sql(
             mc.message_count,
             COALESCE(wt.unique_words, 0) AS unique_words,
             COALESCE(wt.total_words, 0) AS total_words,
-            CASE
-                WHEN COALESCE(wt.total_words, 0) > 0
-                THEN COALESCE(wt.unique_words, 0) * 1.0 / wt.total_words
-                ELSE 0.0
-            END AS ttr,
             COALESCE(we.word_entropy, 0.0) AS word_entropy,
             mc.channel_count,
             mc.theme_count,
@@ -160,7 +244,15 @@ def compute_person_stats(
         has_is_system=has_is_system,
         excluded_filter=excluded_filter,
     )
-    bind = list(params or []) + stop_params
+    bind = list(params or [])
+    tokens_by_person = _fetch_person_tokens(
+        con,
+        where=where,
+        params=bind,
+        has_is_system=has_is_system,
+        excluded_filter=excluded_filter,
+    )
+    bind.extend(stop_params)
     rows = con.execute(sql, bind).fetchall()
     return [
         (
@@ -168,12 +260,12 @@ def compute_person_stats(
             int(row[1]),
             int(row[2]),
             int(row[3]),
+            compute_mtld(tokens_by_person.get(int(row[0]), [])),
             float(row[4]),
-            float(row[5]),
+            int(row[5]),
             int(row[6]),
             int(row[7]),
-            int(row[8]),
-            float(row[9]),
+            float(row[8]),
         )
         for row in rows
     ]
@@ -195,7 +287,7 @@ def refresh_person_stats(
                 message_count,
                 unique_words,
                 total_words,
-                ttr,
+                mtld,
                 word_entropy,
                 channel_count,
                 theme_count,
@@ -223,7 +315,7 @@ def person_stats_row_to_dict(
         "message_count": int(row[1]),
         "unique_words": int(row[2]),
         "total_words": int(row[3]),
-        "ttr": round(float(row[4]), 6),
+        "mtld": round(float(row[4]), 2),
         "word_entropy": round(float(row[5]), 4),
         "channel_count": int(row[6]),
         "theme_count": int(row[7]),

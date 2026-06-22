@@ -205,7 +205,7 @@
             <div class="rank-list">
                 {#each visibleMentions as mention}
                     <div
-                        class="rank-row"
+                        class="rank-row hover-title"
                         title={`${mention.mention}: ${mention.count.toLocaleString()} mentions`}
                     >
                         <span class="rank-name">{mention.mention}</span>
@@ -306,7 +306,7 @@
             <div class="rank-list">
                 {#each reactionAuthors as person}
                     <div
-                        class="rank-row"
+                        class="rank-row hover-title"
                         title={`${person.display_name}: ${person.count.toLocaleString()} reactions received`}
                     >
                         <span class="rank-name">
@@ -334,7 +334,7 @@
             <div class="rank-list">
                 {#each removedEvents.by_actor as person}
                     <div
-                        class="rank-row"
+                        class="rank-row hover-title"
                         title={`${person.display_name}: ${person.count.toLocaleString()} kicks`}
                     >
                         <span class="rank-name">
@@ -360,7 +360,7 @@
             <div class="rank-list">
                 {#each removedEvents.by_target as person}
                     <div
-                        class="rank-row"
+                        class="rank-row hover-title"
                         title={`${person.display_name}: ${person.count.toLocaleString()} times kicked`}
                     >
                         <span class="rank-name">
@@ -386,7 +386,7 @@
             <div class="rank-list">
                 {#each removedEvents.by_chat as chat}
                     <div
-                        class="rank-row"
+                        class="rank-row hover-title"
                         title={`${chat.name}: ${chat.count.toLocaleString()} kicks`}
                     >
                         <span class="rank-name">{chat.name}</span>
@@ -409,7 +409,7 @@
             <div class="rank-list">
                 {#each leftEvents.by_target as person}
                     <div
-                        class="rank-row"
+                        class="rank-row hover-title"
                         title={`${person.display_name}: ${person.count.toLocaleString()} departures`}
                     >
                         <span class="rank-name">

@@ -64,7 +64,7 @@
             <div class="emoji-grid">
                 {#each emojiItems as item, i}
                     {@const imgSrc = resolveImageUrl(item.image_url)}
-                    <div class="emoji-card" title={item.name}>
+                    <div class="emoji-card hover-title" title={item.name}>
                         <span class="emoji-rank">#{i + 1}</span>
                         <div class="emoji-face">
                             {#if imgSrc}

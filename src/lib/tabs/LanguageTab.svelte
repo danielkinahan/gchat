@@ -302,7 +302,7 @@
                             <div class="bar-row">
                                 <span>{person.display_name}</span>
                                 <div
-                                    class="mini-bar-track"
+                                    class="mini-bar-track hover-title"
                                     title={`${person.display_name}: ${person.count.toLocaleString()}`}
                                 >
                                     <div
@@ -322,7 +322,7 @@
                             <div class="bar-row">
                                 <span>{chat.name}</span>
                                 <div
-                                    class="mini-bar-track"
+                                    class="mini-bar-track hover-title"
                                     title={`${chat.name}: ${chat.count.toLocaleString()}`}
                                 >
                                     <div
@@ -343,7 +343,7 @@
                         <div class="wt-chart">
                             {#each chartPoints as point}
                                 <div
-                                    class="wt-bar-wrap"
+                                    class="wt-bar-wrap hover-title"
                                     title={`${new Date(point.month).toLocaleDateString("en-US", { month: "short", year: "numeric" })}: ${formatPercent(point.percent)} (${point.count.toLocaleString()} of ${point.total_words.toLocaleString()} words)`}
                                 >
                                     <div class="wt-bar-slot">

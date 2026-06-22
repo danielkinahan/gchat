@@ -1,4 +1,5 @@
 <script lang="ts">
+    import TooltipHeader from "$lib/components/TooltipHeader.svelte";
     import { fetchJson, type PersonDiversity } from "$lib/api";
 
     type PersonDiversityItem = PersonDiversity["items"][number];
@@ -42,8 +43,8 @@
         }
     }
 
-    function formatTtr(value: number): string {
-        return `${(value * 100).toFixed(2)}%`;
+    function formatMtld(value: number): string {
+        return value.toFixed(1);
     }
 
     function formatEntropy(value: number): string {
@@ -58,11 +59,6 @@
 <section class="people-tab" class:tab-hidden={!active}>
     <div class="panel diversity-panel">
         <h2>Message diversity</h2>
-        <!-- <p class="muted diversity-lede">
-            Vocabulary breadth (unique words, type-token ratio, entropy) and
-            participation spread (channels, themes, platforms). Chat focus near
-            1.0 means most messages are in one chat.
-        </p> -->
         {#if loading}
             <p class="muted">Loading diversity stats…</p>
         {:else if error}
@@ -70,27 +66,43 @@
         {:else if items.length === 0}
             <p class="muted">No diversity data found.</p>
         {:else}
+            <p class="metric-hint">Hover column headers for metric definitions.</p>
             <div class="diversity-table-wrap">
                 <table class="diversity-table">
                     <thead>
                         <tr>
-                            <th>Person</th>
-                            <th>Messages</th>
-                            <th>Unique words</th>
-                            <th
-                                title="The type-token ratio (TTR) is a statistical measure used in corpus linguistics to quantify the lexical diversity of a text or a corpus. It is calculated by dividing the number of unique words (types) by the total number of words (tokens) in a given text."
-                                >TTR</th
+                            <th class="diversity-person-header">Person</th>
+                            <TooltipHeader
+                                title="Total messages from this person in the current filter."
+                                >Messages</TooltipHeader
                             >
-                            <th
-                                title="Unpredictability (entropy) is a measure of the randomness or unpredictability of a system. In the context of chat diversity, it quantifies how well the system can predict the next word or message based on the previous ones."
-                                >Entropy</th
+                            <TooltipHeader
+                                title="Distinct words used (3+ letters, common stop words removed)."
+                                >Unique words</TooltipHeader
                             >
-                            <th>Chats</th>
-                            <th>Themes</th>
-                            <th>Platforms</th>
-                            <th
-                                title="Higher = more concentrated in fewer chats"
-                                >Chat focus</th
+                            <TooltipHeader
+                                title="Measure of Textual Lexical Diversity. Average length of word sequences before vocabulary repeats, adjusted for corpus length. Higher values mean richer, less repetitive vocabulary."
+                                >MTLD</TooltipHeader
+                            >
+                            <TooltipHeader
+                                title="Shannon entropy of word usage. Higher values mean word choice is spread more evenly across the vocabulary."
+                                >Entropy</TooltipHeader
+                            >
+                            <TooltipHeader
+                                title="Number of distinct chats this person sent messages in."
+                                >Chats</TooltipHeader
+                            >
+                            <TooltipHeader
+                                title="Number of distinct themes this person participated in."
+                                >Themes</TooltipHeader
+                            >
+                            <TooltipHeader
+                                title="Number of distinct platforms this person used."
+                                >Platforms</TooltipHeader
+                            >
+                            <TooltipHeader
+                                title="Herfindahl index of message share across chats. Near 1.0 means most messages are concentrated in one chat; lower values mean broader participation."
+                                >Chat focus</TooltipHeader
                             >
                         </tr>
                     </thead>
@@ -122,8 +134,9 @@
                                 <td>{person.message_count.toLocaleString()}</td>
                                 <td>{person.unique_words.toLocaleString()}</td>
                                 <td
+                                    class="hover-title"
                                     title={`${person.total_words.toLocaleString()} total words`}
-                                    >{formatTtr(person.ttr)}</td
+                                    >{formatMtld(person.mtld)}</td
                                 >
                                 <td>{formatEntropy(person.word_entropy)}</td>
                                 <td>{person.channel_count.toLocaleString()}</td>
@@ -145,13 +158,8 @@
         margin-top: 16px;
     }
 
-    .diversity-lede {
-        margin-top: 8px;
-        max-width: 72ch;
-    }
-
     .diversity-table-wrap {
-        margin-top: 16px;
+        margin-top: 12px;
         overflow-x: auto;
     }
 
@@ -165,12 +173,13 @@
     .diversity-table td {
         padding: 10px 8px;
         border-bottom: 1px solid #1f2937;
-        text-align: right;
+        text-align: center;
         white-space: nowrap;
+        vertical-align: middle;
     }
 
-    .diversity-table th:first-child,
-    .diversity-table td:first-child {
+    .diversity-person-header,
+    .diversity-name {
         text-align: left;
     }
 

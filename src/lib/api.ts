@@ -58,7 +58,7 @@ export type PersonDiversity = {
     message_count: number;
     unique_words: number;
     total_words: number;
-    ttr: number;
+    mtld: number;
     word_entropy: number;
     channel_count: number;
     theme_count: number;

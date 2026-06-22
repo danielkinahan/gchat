@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS person_stats (
   message_count INTEGER NOT NULL,
   unique_words INTEGER NOT NULL,
   total_words INTEGER NOT NULL,
-  ttr DOUBLE NOT NULL,
+  mtld DOUBLE NOT NULL,
   word_entropy DOUBLE NOT NULL,
   channel_count INTEGER NOT NULL,
   theme_count INTEGER NOT NULL,

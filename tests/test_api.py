@@ -86,7 +86,7 @@ class ApiTests(unittest.TestCase):
             example_stats = diversity["items"][0]
             self.assertEqual(example_stats["display_name"], "Example Person")
             self.assertGreater(example_stats["message_count"], 0)
-            self.assertIn("ttr", example_stats)
+            self.assertIn("mtld", example_stats)
             self.assertIn("word_entropy", example_stats)
             self.assertIn("channel_hhi", example_stats)
 
