@@ -13,7 +13,11 @@
     let error = "";
     let loadedFilterKey = "";
 
-    $: if (active && !loading && loadedFilterKey !== filterSignature + topLimit) {
+    $: if (
+        active &&
+        !loading &&
+        loadedFilterKey !== filterSignature + topLimit
+    ) {
         void loadData();
     }
 
@@ -29,7 +33,10 @@
             items = data.items ?? [];
             loadedFilterKey = filterSignature + topLimit;
         } catch (e: unknown) {
-            error = e instanceof Error ? e.message : "Failed to load diversity stats";
+            error =
+                e instanceof Error
+                    ? e.message
+                    : "Failed to load diversity stats";
         } finally {
             loading = false;
         }
@@ -51,11 +58,11 @@
 <section class="people-tab" class:tab-hidden={!active}>
     <div class="panel diversity-panel">
         <h2>Message diversity</h2>
-        <p class="muted diversity-lede">
+        <!-- <p class="muted diversity-lede">
             Vocabulary breadth (unique words, type-token ratio, entropy) and
             participation spread (channels, themes, platforms). Chat focus near
             1.0 means most messages are in one chat.
-        </p>
+        </p> -->
         {#if loading}
             <p class="muted">Loading diversity stats…</p>
         {:else if error}
@@ -70,12 +77,19 @@
                             <th>Person</th>
                             <th>Messages</th>
                             <th>Unique words</th>
-                            <th>TTR</th>
-                            <th>Entropy</th>
+                            <th
+                                title="The type-token ratio (TTR) is a statistical measure used in corpus linguistics to quantify the lexical diversity of a text or a corpus. It is calculated by dividing the number of unique words (types) by the total number of words (tokens) in a given text."
+                                >TTR</th
+                            >
+                            <th
+                                title="Unpredictability (entropy) is a measure of the randomness or unpredictability of a system. In the context of chat diversity, it quantifies how well the system can predict the next word or message based on the previous ones."
+                                >Entropy</th
+                            >
                             <th>Chats</th>
                             <th>Themes</th>
                             <th>Platforms</th>
-                            <th title="Higher = more concentrated in fewer chats"
+                            <th
+                                title="Higher = more concentrated in fewer chats"
                                 >Chat focus</th
                             >
                         </tr>
@@ -100,19 +114,22 @@
                                                 .toUpperCase()}</span
                                         >
                                     {/if}
-                                    <span style={`color:${person.color || "#fff"}`}
+                                    <span
+                                        style={`color:${person.color || "#fff"}`}
                                         >{person.display_name}</span
                                     >
                                 </td>
                                 <td>{person.message_count.toLocaleString()}</td>
                                 <td>{person.unique_words.toLocaleString()}</td>
-                                <td title={`${person.total_words.toLocaleString()} total words`}
+                                <td
+                                    title={`${person.total_words.toLocaleString()} total words`}
                                     >{formatTtr(person.ttr)}</td
                                 >
                                 <td>{formatEntropy(person.word_entropy)}</td>
                                 <td>{person.channel_count.toLocaleString()}</td>
                                 <td>{person.theme_count.toLocaleString()}</td>
-                                <td>{person.platform_count.toLocaleString()}</td>
+                                <td>{person.platform_count.toLocaleString()}</td
+                                >
                                 <td>{formatHhi(person.channel_hhi)}</td>
                             </tr>
                         {/each}

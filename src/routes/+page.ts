@@ -3,8 +3,8 @@ import type {
   PlatformOverTime,
   TimePoint,
   TopPeople,
-} from "$lib/api";
-import { fetchJson, filterQuery } from "$lib/api";
+} from "../lib/api.ts";
+import { fetchJson, filterQuery } from "../lib/api.ts";
 
 export const load = async ({ url, fetch }) => {
   const query = filterQuery(url.searchParams);
@@ -58,7 +58,9 @@ export const load = async ({ url, fetch }) => {
       fetch,
     ),
     fetchJson<{
-      people: Array<{ id: number; name: string; color: string; avatar: string }>;
+      people: Array<
+        { id: number; name: string; color: string; avatar: string }
+      >;
       themes: Array<{ id: number; name: string; emoji: string }>;
       platforms: string[];
     }>(`/api/metadata`, fetch),
