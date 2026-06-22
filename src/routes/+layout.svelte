@@ -37,9 +37,11 @@
                 authenticated = true;
                 // Reload so all page data is fetched with the new auth cookie
                 window.location.reload();
-            } else {
+            } else if (res.status === 401) {
                 error = "Incorrect password";
                 password = "";
+            } else {
+                error = "Cannot connect to backend. Contact the admin.";
             }
         } catch {
             error = "Login failed — please try again";
