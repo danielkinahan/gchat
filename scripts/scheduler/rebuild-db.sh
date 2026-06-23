@@ -19,6 +19,7 @@ echo "scheduler: refreshing Discord export"
 sh /app/scripts/scheduler/export-discord.sh
 
 echo "scheduler: rebuilding DuckDB"
+# python -m gchat build --data-dir /data --output "/data/gchat-db/gchat.duckdb" --config-dir "/config"
 python -m gchat build --data-dir "$DATA_DIR" --output "$DATA_DIR/gchat-db/gchat.duckdb" --config-dir "$CONFIG_DIR"
 
 API_HOST="${API_HOST:-api}"

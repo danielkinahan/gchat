@@ -2584,7 +2584,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     @app.get("/api/person-exclusive-words")
     def person_exclusive_words(
         person_id: int = Query(..., ge=1),
-        limit: int = Query(default=500, ge=1, le=2000),
+        limit: int = Query(default=10000, ge=1, le=10000),
         start: date | None = Query(default=None, alias="from"),
         end: date | None = Query(default=None, alias="to"),
         people: str | None = None,

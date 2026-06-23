@@ -48,6 +48,7 @@ _EMOJI_SET_PATTERNS = (
 
 _POLL_PATTERNS = (
     re.compile(r"(?P<actor>.+?) created a poll(?:[:\s].+)?$", re.IGNORECASE),
+    re.compile(r"poll_question_text$", re.IGNORECASE),
 )
 
 

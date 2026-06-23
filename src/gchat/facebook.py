@@ -277,7 +277,7 @@ _FACEBOOK_EXTRA_SYSTEM_PATTERNS = (
     re.compile(r"^.+ changed the group's? (icon|cover|avatar)\.?$", re.IGNORECASE),
     re.compile(r"^.+ created a poll[.:]", re.IGNORECASE),
     re.compile(r"^.+ (voted in|answered) (a )?poll", re.IGNORECASE),
-    re.compile(r"^.+ voted for .+ in the poll[.:]?$", re.IGNORECASE),
+    re.compile(r"^.+ voted for .+ in the poll[.:]?(?: .*)?$", re.IGNORECASE),
     re.compile(r"^.+ changed their vote to .+ in the poll[.:]", re.IGNORECASE),
     re.compile(r"^.+ removed their vote for .+ in the poll[.:]?$", re.IGNORECASE),
     re.compile(r"^.+ set the (group )?theme to .+\.?$", re.IGNORECASE),
