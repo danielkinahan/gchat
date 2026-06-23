@@ -19,6 +19,7 @@ PersonStatsRow = tuple[
     int,
     int,
     int,
+    int,
     float,
 ]
 
@@ -211,6 +212,21 @@ def person_stats_sql(
             SELECT person_id, SUM(share * share) AS channel_hhi
             FROM channel_shares
             GROUP BY person_id
+        ),
+        word_by_person AS (
+            SELECT DISTINCT person_id, word
+            FROM filtered_tokens
+        ),
+        exclusive_by_person AS (
+            SELECT wbp.person_id, COUNT(*) AS exclusive_word_count
+            FROM word_by_person wbp
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM word_by_person other
+                WHERE other.word = wbp.word
+                  AND other.person_id <> wbp.person_id
+            )
+            GROUP BY wbp.person_id
         )
         SELECT
             mc.person_id,
@@ -218,6 +234,7 @@ def person_stats_sql(
             COALESCE(wt.unique_words, 0) AS unique_words,
             COALESCE(wt.total_words, 0) AS total_words,
             COALESCE(we.word_entropy, 0.0) AS word_entropy,
+            COALESCE(ebp.exclusive_word_count, 0) AS exclusive_word_count,
             mc.channel_count,
             mc.theme_count,
             mc.platform_count,
@@ -225,6 +242,7 @@ def person_stats_sql(
         FROM message_counts mc
         LEFT JOIN word_totals wt ON wt.person_id = mc.person_id
         LEFT JOIN word_entropy we ON we.person_id = mc.person_id
+        LEFT JOIN exclusive_by_person ebp ON ebp.person_id = mc.person_id
         LEFT JOIN channel_hhi ch ON ch.person_id = mc.person_id
         ORDER BY mc.message_count DESC, mc.person_id
     """
@@ -265,10 +283,83 @@ def compute_person_stats(
             int(row[5]),
             int(row[6]),
             int(row[7]),
-            float(row[8]),
+            int(row[8]),
+            float(row[9]),
         )
         for row in rows
     ]
+
+
+def exclusive_words_sql(
+    *,
+    where: str,
+    has_is_system: bool,
+    excluded_filter: str,
+    stop_words: frozenset[str] = COMMON_STOP_WORDS,
+) -> tuple[str, list[str]]:
+    is_system_filter = "AND NOT m.is_system" if has_is_system else ""
+    stop_placeholders, stop_params = _stop_word_placeholders(stop_words)
+    sql = f"""
+        WITH scoped_messages AS (
+            SELECT m.person_id, m.content
+            FROM messages m
+            JOIN channels c ON c.id = m.channel_id
+            JOIN sources s ON s.id = c.source_id
+            WHERE {where}
+              {is_system_filter}
+              {excluded_filter}
+              AND m.content IS NOT NULL
+              AND m.content <> ''
+        ),
+        tokens AS (
+            SELECT
+                person_id,
+                unnest(
+                    regexp_extract_all(
+                        replace(lower(coalesce(content, '')), chr(39), ''),
+                        '[a-z]{{3,}}'
+                    )
+                ) AS word
+            FROM scoped_messages
+        ),
+        filtered_tokens AS (
+            SELECT person_id, word
+            FROM tokens
+            WHERE word NOT IN ({stop_placeholders})
+        )
+        SELECT DISTINCT ft.word
+        FROM filtered_tokens ft
+        WHERE ft.person_id = ?
+          AND NOT EXISTS (
+            SELECT 1
+            FROM filtered_tokens other
+            WHERE other.word = ft.word
+              AND other.person_id <> ft.person_id
+          )
+        ORDER BY ft.word
+        LIMIT ?
+    """
+    return sql, stop_params
+
+
+def compute_exclusive_words(
+    con: duckdb.DuckDBPyConnection,
+    person_id: int,
+    *,
+    where: str = "1 = 1",
+    params: list[Any] | None = None,
+    has_is_system: bool = True,
+    excluded_filter: str = "",
+    limit: int = 500,
+) -> list[str]:
+    sql, stop_params = exclusive_words_sql(
+        where=where,
+        has_is_system=has_is_system,
+        excluded_filter=excluded_filter,
+    )
+    bind = list(params or []) + stop_params + [person_id, limit]
+    rows = con.execute(sql, bind).fetchall()
+    return [str(row[0]) for row in rows]
 
 
 def refresh_person_stats(
@@ -289,11 +380,12 @@ def refresh_person_stats(
                 total_words,
                 mtld,
                 word_entropy,
+                exclusive_word_count,
                 channel_count,
                 theme_count,
                 platform_count,
                 channel_hhi
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
@@ -317,8 +409,9 @@ def person_stats_row_to_dict(
         "total_words": int(row[3]),
         "mtld": round(float(row[4]), 2),
         "word_entropy": round(float(row[5]), 4),
-        "channel_count": int(row[6]),
-        "theme_count": int(row[7]),
-        "platform_count": int(row[8]),
-        "channel_hhi": round(float(row[9]), 4),
+        "exclusive_word_count": int(row[6]),
+        "channel_count": int(row[7]),
+        "theme_count": int(row[8]),
+        "platform_count": int(row[9]),
+        "channel_hhi": round(float(row[10]), 4),
     }

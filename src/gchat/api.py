@@ -23,7 +23,11 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from .person_stats import compute_person_stats, person_stats_row_to_dict
+from .person_stats import (
+    compute_exclusive_words,
+    compute_person_stats,
+    person_stats_row_to_dict,
+)
 from .reconciliation import load_reconciliation
 from .stop_words import COMMON_STOP_WORDS
 
@@ -1979,18 +1983,19 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             longest_active_row = con.execute(
                 f"""
                 WITH filtered AS (
-                    SELECT m.ts
+                    SELECT m.id, m.ts
                     FROM messages m
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
                     WHERE {where}
                 ),
                 ordered AS (
-                    SELECT ts, LAG(ts) OVER (ORDER BY ts) AS prev_ts
+                    SELECT id, ts, LAG(ts) OVER (ORDER BY ts) AS prev_ts
                     FROM filtered
                 ),
                 grouped AS (
                     SELECT
+                        id,
                         ts,
                         SUM(
                             CASE
@@ -2004,12 +2009,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     SELECT
                         session_id,
                         MIN(ts) AS start_ts,
-                        MAX(ts) AS end_ts
+                        MAX(ts) AS end_ts,
+                        arg_min(id, ts) AS start_message_id
                     FROM grouped
                     GROUP BY session_id
                 )
-                SELECT COALESCE(MAX(date_diff('second', start_ts, end_ts)), 0)
+                SELECT
+                    date_diff('second', start_ts, end_ts) AS duration_seconds,
+                    start_message_id
                 FROM sessions
+                ORDER BY duration_seconds DESC, start_ts ASC
+                LIMIT 1
                 """,
                 params,
             ).fetchone()
@@ -2112,7 +2122,14 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 "edited_messages": int(message_stats_row[10] or 0),
                 "average_per_day": average_per_day,
                 "longest_period_without_messages_seconds": int(longest_gap_row[0] or 0),
-                "longest_active_conversation_seconds": int(longest_active_row[0] or 0),
+                "longest_active_conversation_seconds": int(
+                    (longest_active_row or (0, None))[0] or 0
+                ),
+                "longest_active_conversation_message_id": (
+                    str((longest_active_row or (0, None))[1])
+                    if longest_active_row and longest_active_row[1]
+                    else None
+                ),
                 "most_active_year": {
                     "bucket": (
                         most_active_year[0].isoformat() if most_active_year else None
@@ -2513,6 +2530,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                         ps.total_words,
                         ps.mtld,
                         ps.word_entropy,
+                        ps.exclusive_word_count,
                         ps.channel_count,
                         ps.theme_count,
                         ps.platform_count,
@@ -2562,6 +2580,56 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         if len(items) > limit:
             items = items[:limit]
         return {"items": items, "source": "live" if needs_live else "materialized"}
+
+    @app.get("/api/person-exclusive-words")
+    def person_exclusive_words(
+        person_id: int = Query(..., ge=1),
+        limit: int = Query(default=500, ge=1, le=2000),
+        start: date | None = Query(default=None, alias="from"),
+        end: date | None = Query(default=None, alias="to"),
+        people: str | None = None,
+        themes: str | None = None,
+        platforms: str | None = None,
+    ) -> dict[str, Any]:
+        """Words used by one person that no other person uses in the filtered corpus."""
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+        )
+        params: list[Any] = []
+        where = _filters_clause(
+            filters,
+            params,
+            app.state.reconciliation,
+            app.state.theme_id_to_name,
+        )
+        with _connect(app.state.db_path) as con:
+            person_row = con.execute(
+                "SELECT display_name FROM people WHERE id = ?",
+                [person_id],
+            ).fetchone()
+            if person_row is None:
+                raise HTTPException(status_code=404, detail="Person not found")
+            display_name = str(person_row[0])
+            words = compute_exclusive_words(
+                con,
+                person_id,
+                where=where,
+                params=params,
+                has_is_system=app.state.has_is_system,
+                excluded_filter=_excluded_ids_sql(app.state.excluded_message_ids),
+                limit=limit,
+            )
+        return {
+            "person_id": person_id,
+            "display_name": display_name,
+            "words": words,
+            "count": len(words),
+            "truncated": len(words) >= limit,
+        }
 
     @app.get("/api/metadata")
     def metadata() -> dict[str, Any]:

@@ -1,6 +1,10 @@
 <script lang="ts">
     import TooltipHeader from "$lib/components/TooltipHeader.svelte";
-    import { fetchJson, type PersonDiversity } from "$lib/api";
+    import {
+        fetchJson,
+        type PersonDiversity,
+        type PersonExclusiveWords,
+    } from "$lib/api";
 
     type PersonDiversityItem = PersonDiversity["items"][number];
 
@@ -13,6 +17,13 @@
     let loading = false;
     let error = "";
     let loadedFilterKey = "";
+
+    let wordsModalVisible = false;
+    let wordsModalPerson: PersonDiversityItem | null = null;
+    let wordsModalWords: string[] = [];
+    let wordsModalTruncated = false;
+    let wordsModalLoading = false;
+    let wordsModalError = "";
 
     $: if (
         active &&
@@ -40,6 +51,39 @@
                     : "Failed to load diversity stats";
         } finally {
             loading = false;
+        }
+    }
+
+    function closeWordsModal() {
+        wordsModalVisible = false;
+        wordsModalPerson = null;
+        wordsModalWords = [];
+        wordsModalTruncated = false;
+        wordsModalError = "";
+        wordsModalLoading = false;
+    }
+
+    async function openWordsModal(person: PersonDiversityItem) {
+        if (person.exclusive_word_count <= 0) return;
+        wordsModalPerson = person;
+        wordsModalVisible = true;
+        wordsModalLoading = true;
+        wordsModalError = "";
+        wordsModalWords = [];
+        wordsModalTruncated = false;
+        try {
+            const params = currentFilterParams();
+            params.set("person_id", String(person.id));
+            const data = await fetchJson<PersonExclusiveWords>(
+                `/api/person-exclusive-words?${params.toString()}`,
+            );
+            wordsModalWords = data.words ?? [];
+            wordsModalTruncated = Boolean(data.truncated);
+        } catch (e: unknown) {
+            wordsModalError =
+                e instanceof Error ? e.message : "Failed to load exclusive words";
+        } finally {
+            wordsModalLoading = false;
         }
     }
 
@@ -79,6 +123,10 @@
                             <TooltipHeader
                                 title="Distinct words used (3+ letters, common stop words removed)."
                                 >Unique words</TooltipHeader
+                            >
+                            <TooltipHeader
+                                title="Words this person has used that no one else in the filtered corpus has used. Click the count to view the list."
+                                >Solo words</TooltipHeader
                             >
                             <TooltipHeader
                                 title="Measure of Textual Lexical Diversity. Average length of word sequences before vocabulary repeats, adjusted for corpus length. Higher values mean richer, less repetitive vocabulary."
@@ -133,6 +181,20 @@
                                 </td>
                                 <td>{person.message_count.toLocaleString()}</td>
                                 <td>{person.unique_words.toLocaleString()}</td>
+                                <td>
+                                    {#if person.exclusive_word_count > 0}
+                                        <button
+                                            type="button"
+                                            class="exclusive-words-btn hover-title"
+                                            title="View solo words for {person.display_name}"
+                                            on:click={() => openWordsModal(person)}
+                                        >
+                                            {person.exclusive_word_count.toLocaleString()}
+                                        </button>
+                                    {:else}
+                                        0
+                                    {/if}
+                                </td>
                                 <td
                                     class="hover-title"
                                     title={`${person.total_words.toLocaleString()} total words`}
@@ -152,6 +214,68 @@
         {/if}
     </div>
 </section>
+
+{#if wordsModalVisible && wordsModalPerson}
+    <div
+        class="snippet-modal-backdrop"
+        role="button"
+        tabindex="0"
+        aria-label="Close solo words"
+        on:click={closeWordsModal}
+        on:keydown={(e) => {
+            if (e.key === "Escape" || e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                closeWordsModal();
+            }
+        }}
+    >
+        <div
+            class="snippet-modal exclusive-words-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="exclusive-words-title"
+            tabindex="-1"
+            on:click|stopPropagation
+            on:keydown|stopPropagation
+        >
+            <div class="snippet-modal-header">
+                <div>
+                    <h3 id="exclusive-words-title" class="exclusive-words-title">
+                        Solo words — {wordsModalPerson.display_name}
+                    </h3>
+                    <p class="muted exclusive-words-subtitle">
+                        Words only {wordsModalPerson.display_name} has used in the
+                        current filter.
+                    </p>
+                </div>
+                <button class="close" type="button" on:click={closeWordsModal}
+                    >✕</button
+                >
+            </div>
+            {#if wordsModalLoading}
+                <p class="muted exclusive-words-body">Loading words…</p>
+            {:else if wordsModalError}
+                <p class="muted exclusive-words-body">{wordsModalError}</p>
+            {:else if wordsModalWords.length === 0}
+                <p class="muted exclusive-words-body">No solo words found.</p>
+            {:else}
+                <div class="exclusive-words-body">
+                    <ul class="exclusive-words-list">
+                        {#each wordsModalWords as word}
+                            <li>{word}</li>
+                        {/each}
+                    </ul>
+                    {#if wordsModalTruncated}
+                        <p class="muted exclusive-words-truncated">
+                            Showing the first {wordsModalWords.length.toLocaleString()}
+                            words alphabetically.
+                        </p>
+                    {/if}
+                </div>
+            {/if}
+        </div>
+    </div>
+{/if}
 
 <style>
     .people-tab {
@@ -213,5 +337,67 @@
         font-size: 0.7rem;
         font-weight: 700;
         color: #fff;
+    }
+
+    .exclusive-words-btn {
+        border: none;
+        background: transparent;
+        color: #93c5fd;
+        font: inherit;
+        font-weight: 600;
+        padding: 2px 6px;
+        border-radius: 6px;
+        cursor: pointer;
+        text-decoration: underline dotted rgba(147, 197, 253, 0.45);
+        text-underline-offset: 3px;
+    }
+
+    .exclusive-words-btn:hover,
+    .exclusive-words-btn:focus-visible {
+        color: #dbeafe;
+        background: rgba(59, 130, 246, 0.12);
+    }
+
+    .exclusive-words-title {
+        margin: 0;
+        font-size: 1.05rem;
+    }
+
+    .exclusive-words-subtitle {
+        margin-top: 4px;
+        font-size: 0.85rem;
+    }
+
+    .exclusive-words-body {
+        padding: 0 20px 20px;
+        max-height: min(60vh, 520px);
+        overflow: auto;
+    }
+
+    .exclusive-words-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    .exclusive-words-list li {
+        background: #111827;
+        border: 1px solid #334155;
+        border-radius: 999px;
+        padding: 6px 12px;
+        font-size: 0.85rem;
+        color: #e2e8f0;
+    }
+
+    .exclusive-words-truncated {
+        margin-top: 14px;
+        font-size: 0.8rem;
+    }
+
+    :global(.exclusive-words-modal) {
+        width: min(720px, calc(100vw - 32px));
     }
 </style>

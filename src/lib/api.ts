@@ -18,6 +18,7 @@ export type Overview = {
     average_per_day: number;
     longest_period_without_messages_seconds: number;
     longest_active_conversation_seconds: number;
+    longest_active_conversation_message_id: string | null;
     most_active_year: { bucket: string | null; count: number };
     most_active_month: { bucket: string | null; count: number };
     most_active_day: { bucket: string | null; count: number };
@@ -60,11 +61,20 @@ export type PersonDiversity = {
     total_words: number;
     mtld: number;
     word_entropy: number;
+    exclusive_word_count: number;
     channel_count: number;
     theme_count: number;
     platform_count: number;
     channel_hhi: number;
   }>;
+};
+
+export type PersonExclusiveWords = {
+  person_id: number;
+  display_name: string;
+  words: string[];
+  count: number;
+  truncated: boolean;
 };
 
 export type PlatformOverTime = {

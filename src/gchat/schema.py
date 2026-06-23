@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS person_stats (
   total_words INTEGER NOT NULL,
   mtld DOUBLE NOT NULL,
   word_entropy DOUBLE NOT NULL,
+  exclusive_word_count INTEGER NOT NULL,
   channel_count INTEGER NOT NULL,
   theme_count INTEGER NOT NULL,
   platform_count INTEGER NOT NULL,

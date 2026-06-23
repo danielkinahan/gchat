@@ -48,6 +48,7 @@
     export let filterSignature: string;
     export let currentFilterParams: () => URLSearchParams;
     export let topLimit: number = 10;
+    export let openInContext: (messageId: string) => void;
     export let baseData: {
         overview: Overview;
         topPeople: TopPeople;
@@ -633,11 +634,28 @@
                         >
                     </div>
                     <div>
-                        <span>Longest active conversation</span><strong
-                            >{formatDuration(
-                                messageStats.longest_active_conversation_seconds,
-                            )}</strong
-                        >
+                        <span>Longest active conversation</span>
+                        {#if messageStats.longest_active_conversation_message_id}
+                            <button
+                                type="button"
+                                class="stat-action hover-title"
+                                title="View the start of this conversation"
+                                on:click={() =>
+                                    openInContext(
+                                        messageStats.longest_active_conversation_message_id!,
+                                    )}
+                            >
+                                {formatDuration(
+                                    messageStats.longest_active_conversation_seconds,
+                                )}
+                            </button>
+                        {:else}
+                            <strong
+                                >{formatDuration(
+                                    messageStats.longest_active_conversation_seconds,
+                                )}</strong
+                            >
+                        {/if}
                     </div>
                     <div>
                         <span>Most active year</span><strong

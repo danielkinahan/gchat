@@ -721,6 +721,7 @@
         {filterSignature}
         {currentFilterParams}
         {topLimit}
+        {openInContext}
         baseData={{
             overview: data.overview,
             topPeople: data.topPeople,

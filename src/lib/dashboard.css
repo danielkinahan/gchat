@@ -757,6 +757,24 @@ input[type="checkbox"] {
   text-align: right;
 }
 
+.stats-list .stat-action {
+  border: none;
+  background: transparent;
+  color: #93c5fd;
+  font: inherit;
+  font-weight: 700;
+  text-align: right;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline dotted rgba(147, 197, 253, 0.45);
+  text-underline-offset: 3px;
+}
+
+.stats-list .stat-action:hover,
+.stats-list .stat-action:focus-visible {
+  color: #dbeafe;
+}
+
 .swatch {
   display: inline-block;
   width: 10px;

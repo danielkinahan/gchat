@@ -62,6 +62,10 @@ class ApiTests(unittest.TestCase):
             self.assertIn("message_stats", overview)
             self.assertIn("with_text", overview["message_stats"])
             self.assertIn("most_active_hour", overview["message_stats"])
+            self.assertIn(
+                "longest_active_conversation_message_id",
+                overview["message_stats"],
+            )
 
             con = duckdb.connect(str(db_path))
             example_person_row = con.execute(
@@ -89,6 +93,15 @@ class ApiTests(unittest.TestCase):
             self.assertIn("mtld", example_stats)
             self.assertIn("word_entropy", example_stats)
             self.assertIn("channel_hhi", example_stats)
+            self.assertIn("exclusive_word_count", example_stats)
+
+            exclusive_words = client.get(
+                f"/api/person-exclusive-words?person_id={example_person_id}"
+            ).json()
+            self.assertEqual(exclusive_words["person_id"], example_person_id)
+            self.assertEqual(exclusive_words["display_name"], "Example Person")
+            self.assertIsInstance(exclusive_words["words"], list)
+            self.assertEqual(exclusive_words["count"], len(exclusive_words["words"]))
 
             time_series = client.get("/api/messages-over-time?granularity=day").json()
             self.assertTrue(time_series["points"])

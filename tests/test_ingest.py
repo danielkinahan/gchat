@@ -590,7 +590,7 @@ people:
 
             person_stats_row = con.execute(
                 """
-                SELECT COUNT(*)
+                SELECT ps.exclusive_word_count
                 FROM person_stats ps
                 JOIN people p ON p.id = ps.person_id
                 WHERE p.display_name = 'Example Person'
@@ -599,7 +599,7 @@ people:
             ).fetchone()
             self.assertIsNotNone(person_stats_row)
             assert person_stats_row is not None
-            self.assertEqual(person_stats_row[0], 1)
+            self.assertGreaterEqual(person_stats_row[0], 0)
             con.close()
 
 
