@@ -23,7 +23,7 @@ def load_english_words() -> frozenset[str]:
 
     text = (
         importlib.resources.files("gchat")
-        .joinpath("data/english_words.txt")
+        .joinpath("wordlist/english_words.txt")
         .read_text(encoding="utf-8")
     )
     _ENGLISH_WORDS = frozenset(_words_from_text(text))

@@ -28,7 +28,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-gchat = ["data/*.txt"]
+gchat = ["wordlist/*.txt"]
 
 [dependency-groups]
 dev = [
