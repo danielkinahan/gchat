@@ -234,6 +234,7 @@
     let snippetIsFull = false;
     let snippetTotalInChannel = 0;
     let snippetContext = 10;
+    let snippetModalEl: HTMLDivElement | null = null;
 
     function closeSnippetModal() {
         snippetModalVisible = false;
@@ -259,6 +260,9 @@
 
     async function expandContext(full: boolean) {
         if (!snippetTargetId) return;
+        const modal = snippetModalEl;
+        const prevScrollHeight = modal?.scrollHeight ?? 0;
+        const prevScrollTop = modal?.scrollTop ?? 0;
         snippetExpandLoading = true;
         try {
             const newContext = full ? 500 : snippetContext + 25;
@@ -270,6 +274,10 @@
             snippetIsFull = data.is_full ?? false;
             snippetTotalInChannel = data.total_in_channel ?? 0;
             if (!full) snippetContext = newContext;
+            await tick();
+            if (modal) {
+                modal.scrollTop = modal.scrollHeight - prevScrollHeight + prevScrollTop;
+            }
         } finally {
             snippetExpandLoading = false;
         }
@@ -799,6 +807,7 @@
         >
             <div
                 class="snippet-modal"
+                bind:this={snippetModalEl}
                 role="dialog"
                 aria-modal="true"
                 tabindex="-1"

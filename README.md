@@ -121,9 +121,10 @@ It also includes two recurring-job services:
 - `discord-exporter-scheduler` for periodic DiscordChatExporter runs.
 
 After each successful rebuild, the scheduler posts to
-`http://api:8000/api/restart` so the API container exits and is restarted by
-docker against the freshly built DuckDB file. The web gateway blocks
-`/api/restart` so it cannot be triggered from outside the docker network.
+`http://api:8000/api/reload` so the API picks up the freshly built DuckDB file
+without restarting. The web gateway blocks `/api/reload` and `/api/restart`
+so they cannot be triggered from outside the docker network. Nginx re-resolves
+the API hostname on each request as a fallback if the API container is recreated.
 
 ### Scheduler configuration
 

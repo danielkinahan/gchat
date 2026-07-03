@@ -21,6 +21,8 @@
     let wordsModalVisible = false;
     let wordsModalPerson: PersonDiversityItem | null = null;
     let wordsModalWords: string[] = [];
+    let wordsModalDictionaryWords: string[] = [];
+    let wordsModalOtherWords: string[] = [];
     let wordsModalTruncated = false;
     let wordsModalLoading = false;
     let wordsModalError = "";
@@ -58,6 +60,8 @@
         wordsModalVisible = false;
         wordsModalPerson = null;
         wordsModalWords = [];
+        wordsModalDictionaryWords = [];
+        wordsModalOtherWords = [];
         wordsModalTruncated = false;
         wordsModalError = "";
         wordsModalLoading = false;
@@ -70,6 +74,8 @@
         wordsModalLoading = true;
         wordsModalError = "";
         wordsModalWords = [];
+        wordsModalDictionaryWords = [];
+        wordsModalOtherWords = [];
         wordsModalTruncated = false;
         try {
             const params = currentFilterParams();
@@ -78,6 +84,8 @@
                 `/api/person-exclusive-words?${params.toString()}`,
             );
             wordsModalWords = data.words ?? [];
+            wordsModalDictionaryWords = data.dictionary_words ?? [];
+            wordsModalOtherWords = data.other_words ?? [];
             wordsModalTruncated = Boolean(data.truncated);
         } catch (e: unknown) {
             wordsModalError =
@@ -260,11 +268,29 @@
                 <p class="muted exclusive-words-body">No solo words found.</p>
             {:else}
                 <div class="exclusive-words-body">
-                    <ul class="exclusive-words-list">
-                        {#each wordsModalWords as word}
-                            <li>{word}</li>
-                        {/each}
-                    </ul>
+                    {#if wordsModalDictionaryWords.length > 0}
+                        <h4 class="exclusive-words-section-title">
+                            Dictionary words ({wordsModalDictionaryWords.length.toLocaleString()})
+                        </h4>
+                        <ul class="exclusive-words-list">
+                            {#each wordsModalDictionaryWords as word}
+                                <li>{word}</li>
+                            {/each}
+                        </ul>
+                    {/if}
+                    {#if wordsModalDictionaryWords.length > 0 && wordsModalOtherWords.length > 0}
+                        <hr class="exclusive-words-divider" />
+                    {/if}
+                    {#if wordsModalOtherWords.length > 0}
+                        <h4 class="exclusive-words-section-title">
+                            Other ({wordsModalOtherWords.length.toLocaleString()})
+                        </h4>
+                        <ul class="exclusive-words-list">
+                            {#each wordsModalOtherWords as word}
+                                <li class="exclusive-word-other">{word}</li>
+                            {/each}
+                        </ul>
+                    {/if}
                     {#if wordsModalTruncated}
                         <p class="muted exclusive-words-truncated">
                             Showing the first {wordsModalWords.length.toLocaleString()}
@@ -374,6 +400,21 @@
         overflow: auto;
     }
 
+    .exclusive-words-section-title {
+        margin: 0 0 10px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        color: #94a3b8;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    .exclusive-words-divider {
+        border: none;
+        border-top: 1px solid #334155;
+        margin: 18px 0;
+    }
+
     .exclusive-words-list {
         display: flex;
         flex-wrap: wrap;
@@ -390,6 +431,11 @@
         padding: 6px 12px;
         font-size: 0.85rem;
         color: #e2e8f0;
+    }
+
+    .exclusive-word-other {
+        color: #cbd5e1;
+        border-style: dashed;
     }
 
     .exclusive-words-truncated {

@@ -73,7 +73,11 @@ export type PersonExclusiveWords = {
   person_id: number;
   display_name: string;
   words: string[];
+  dictionary_words: string[];
+  other_words: string[];
   count: number;
+  dictionary_count: number;
+  other_count: number;
   truncated: boolean;
 };
 

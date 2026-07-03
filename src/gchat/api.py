@@ -23,6 +23,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
+from .dictionary import partition_dictionary_words
 from .person_stats import (
     compute_exclusive_words,
     compute_person_stats,
@@ -1046,7 +1047,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     async def auth_middleware(request: Request, call_next):  # type: ignore[no-untyped-def]
         # Auth endpoints and the internal scheduler restart endpoint are exempt.
         path = request.url.path
-        if path.startswith("/api/auth/") or path == "/api/restart":
+        if path.startswith("/api/auth/") or path in {"/api/restart", "/api/reload"}:
             return await call_next(request)
         if not _is_authenticated(request):
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
@@ -1123,6 +1124,21 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
 
         threading.Thread(target=_shutdown, daemon=True).start()
         return {"status": "restarting"}
+
+    @app.post("/api/reload")
+    def reload_api() -> dict[str, Any]:
+        """Reload cached DB/config state without restarting the process."""
+        _refresh_runtime_state()
+        current_signature = (
+            _path_signature(app.state.db_path),
+            _config_signature(app.state.config_dir),
+        )
+        db_mtime_ns = current_signature[0][0] if current_signature[0] else None
+        return {
+            "status": "reloaded",
+            "db_mtime_ns": db_mtime_ns,
+            "up_to_date": current_signature == app.state._runtime_signature,
+        }
 
     @app.get("/api/runtime-state")
     def runtime_state() -> dict[str, Any]:
@@ -2623,11 +2639,16 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 excluded_filter=_excluded_ids_sql(app.state.excluded_message_ids),
                 limit=limit,
             )
+        dictionary_words, other_words = partition_dictionary_words(words)
         return {
             "person_id": person_id,
             "display_name": display_name,
             "words": words,
+            "dictionary_words": dictionary_words,
+            "other_words": other_words,
             "count": len(words),
+            "dictionary_count": len(dictionary_words),
+            "other_count": len(other_words),
             "truncated": len(words) >= limit,
         }
 

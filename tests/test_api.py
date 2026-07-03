@@ -101,7 +101,17 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(exclusive_words["person_id"], example_person_id)
             self.assertEqual(exclusive_words["display_name"], "Example Person")
             self.assertIsInstance(exclusive_words["words"], list)
+            self.assertIn("dictionary_words", exclusive_words)
+            self.assertIn("other_words", exclusive_words)
             self.assertEqual(exclusive_words["count"], len(exclusive_words["words"]))
+            self.assertEqual(
+                exclusive_words["dictionary_count"],
+                len(exclusive_words["dictionary_words"]),
+            )
+            self.assertEqual(
+                exclusive_words["other_count"],
+                len(exclusive_words["other_words"]),
+            )
 
             time_series = client.get("/api/messages-over-time?granularity=day").json()
             self.assertTrue(time_series["points"])
