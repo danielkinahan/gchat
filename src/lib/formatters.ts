@@ -14,6 +14,16 @@ export function formatDuration(seconds: number): string {
   return `${minutes}m`;
 }
 
+export function formatGapRange(start: string | null, end: string | null): string | null {
+  if (!start || !end) return null;
+  const fmt = (iso: string) =>
+    new Date(iso).toLocaleString("en-US", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+  return `${fmt(start)} → ${fmt(end)}`;
+}
+
 export function formatMostActiveYear(bucket: string | null): string {
   if (!bucket) return "N/A";
   return new Date(bucket).toLocaleDateString("en-US", { year: "numeric" });

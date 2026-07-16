@@ -2022,10 +2022,19 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 ordered AS (
                     SELECT ts, LAG(ts) OVER (ORDER BY ts) AS prev_ts
                     FROM filtered
+                ),
+                gaps AS (
+                    SELECT
+                        prev_ts,
+                        ts,
+                        date_diff('second', prev_ts, ts) AS gap_seconds
+                    FROM ordered
+                    WHERE prev_ts IS NOT NULL
                 )
-                SELECT COALESCE(MAX(date_diff('second', prev_ts, ts)), 0)
-                FROM ordered
-                WHERE prev_ts IS NOT NULL
+                SELECT gap_seconds, prev_ts, ts
+                FROM gaps
+                ORDER BY gap_seconds DESC, prev_ts ASC
+                LIMIT 1
                 """,
                 params,
             ).fetchone()
@@ -2170,7 +2179,19 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 "with_other_files": int(message_stats_row[9] or 0),
                 "edited_messages": int(message_stats_row[10] or 0),
                 "average_per_day": average_per_day,
-                "longest_period_without_messages_seconds": int(longest_gap_row[0] or 0),
+                "longest_period_without_messages_seconds": int(
+                    (longest_gap_row or (0, None, None))[0] or 0
+                ),
+                "longest_period_without_messages_start": (
+                    (longest_gap_row or (0, None, None))[1].isoformat()
+                    if longest_gap_row and longest_gap_row[1]
+                    else None
+                ),
+                "longest_period_without_messages_end": (
+                    (longest_gap_row or (0, None, None))[2].isoformat()
+                    if longest_gap_row and longest_gap_row[2]
+                    else None
+                ),
                 "longest_active_conversation_seconds": int(
                     (longest_active_row or (0, None))[0] or 0
                 ),

@@ -17,6 +17,8 @@ export type Overview = {
     edited_messages: number;
     average_per_day: number;
     longest_period_without_messages_seconds: number;
+    longest_period_without_messages_start: string | null;
+    longest_period_without_messages_end: string | null;
     longest_active_conversation_seconds: number;
     longest_active_conversation_message_id: string | null;
     most_active_year: { bucket: string | null; count: number };

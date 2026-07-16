@@ -6,6 +6,7 @@
     } from "$lib/api";
     import {
         formatDuration,
+        formatGapRange,
         formatMostActiveYear,
         formatMostActiveMonth,
         formatMostActiveDay,
@@ -627,11 +628,24 @@
                         >
                     </div>
                     <div>
-                        <span>Longest period without messages</span><strong
-                            >{formatDuration(
-                                messageStats.longest_period_without_messages_seconds,
-                            )}</strong
-                        >
+                        <span>Longest period without messages</span>
+                        {@const gapRange = formatGapRange(
+                            messageStats.longest_period_without_messages_start,
+                            messageStats.longest_period_without_messages_end,
+                        )}
+                        {#if gapRange}
+                            <strong class="hover-title" title={gapRange}>
+                                {formatDuration(
+                                    messageStats.longest_period_without_messages_seconds,
+                                )}
+                            </strong>
+                        {:else}
+                            <strong
+                                >{formatDuration(
+                                    messageStats.longest_period_without_messages_seconds,
+                                )}</strong
+                            >
+                        {/if}
                     </div>
                     <div>
                         <span>Longest active conversation</span>
