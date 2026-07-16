@@ -9,77 +9,7 @@ permissions:
   packages: write
 
 jobs:
-  changes:
-    runs-on: ubuntu-latest
-    outputs:
-      api: ${{ steps.merged.outputs.api }}
-      web: ${{ steps.merged.outputs.web }}
-      scheduler: ${{ steps.merged.outputs.scheduler }}
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Resolve previous release tag
-        id: prev
-        run: |
-          tag="${{ github.event.release.tag_name }}"
-          prev=$(git describe --tags --abbrev=0 "${tag}^" 2>/dev/null || true)
-          echo "tag=$prev" >> "$GITHUB_OUTPUT"
-
-      - name: Detect changed paths
-        id: filter
-        if: steps.prev.outputs.tag != ''
-        uses: dorny/paths-filter@v3
-        with:
-          base: ${{ steps.prev.outputs.tag }}
-          ref: ${{ github.event.release.tag_name }}
-          filters: |
-            api:
-              - 'Containerfile.api'
-              - 'pyproject.toml'
-              - 'README.md'
-              - 'src/gchat/**'
-            web:
-              - 'Containerfile.web'
-              - 'package.json'
-              - 'package-lock.json'
-              - 'svelte.config.js'
-              - 'vite.config.ts'
-              - 'tsconfig.json'
-              - 'src/**'
-              - '!src/gchat/**'
-              - 'static/**'
-              - 'nginx/**'
-              - 'scripts/web/**'
-            scheduler:
-              - 'Containerfile.scheduler'
-              - 'pyproject.toml'
-              - 'README.md'
-              - 'src/gchat/**'
-              - 'scripts/scheduler/**'
-
-      - name: Default to building everything on first release
-        if: steps.prev.outputs.tag == ''
-        id: fallback
-        run: |
-          echo "api=true" >> "$GITHUB_OUTPUT"
-          echo "web=true" >> "$GITHUB_OUTPUT"
-          echo "scheduler=true" >> "$GITHUB_OUTPUT"
-
-      - name: Merge filter outputs
-        id: merged
-        run: |
-          api="${{ steps.filter.outputs.api || steps.fallback.outputs.api }}"
-          web="${{ steps.filter.outputs.web || steps.fallback.outputs.web }}"
-          scheduler="${{ steps.filter.outputs.scheduler || steps.fallback.outputs.scheduler }}"
-          echo "api=${api:-false}" >> "$GITHUB_OUTPUT"
-          echo "web=${web:-false}" >> "$GITHUB_OUTPUT"
-          echo "scheduler=${scheduler:-false}" >> "$GITHUB_OUTPUT"
-
   publish:
-    needs: changes
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -87,42 +17,30 @@ jobs:
         include:
           - dockerfile: Containerfile.api
             image_suffix: api
-            changed: ${{ needs.changes.outputs.api }}
           - dockerfile: Containerfile.web
             image_suffix: web
-            changed: ${{ needs.changes.outputs.web }}
           - dockerfile: Containerfile.scheduler
             image_suffix: scheduler
-            changed: ${{ needs.changes.outputs.scheduler }}
 
     steps:
-      - name: Skip unchanged image
-        if: matrix.changed != 'true'
-        run: echo "No changes affecting ${{ matrix.image_suffix }} since previous release; skipping build."
-
       - name: Check out repository
-        if: matrix.changed == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Compute image repository
-        if: matrix.changed == 'true'
         id: repo
         run: echo "value=ghcr.io/${GITHUB_REPOSITORY,,}-${{ matrix.image_suffix }}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        if: matrix.changed == 'true'
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
-        if: matrix.changed == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Generate Docker metadata
-        if: matrix.changed == 'true'
         id: meta
         uses: docker/metadata-action@v6
         with:
@@ -134,7 +52,6 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
 
       - name: Build and push image
-        if: matrix.changed == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
