@@ -142,6 +142,26 @@ This validates typed people, theme, bot, identity, moderation, and media-hash
 settings and prints a JSON summary. The same summary is exposed by
 `/api/runtime-state`.
 
+## Exporting local training data
+
+Export model-agnostic conversation windows from the built database:
+
+```bash
+uv run python -m gchat export-training \
+  --db data/gchat-db/gchat.duckdb \
+  --output-dir data/training
+```
+
+The command writes `train.jsonl`, `validation.jsonl`, `test.jsonl`, and a
+`manifest.json` containing the stable speaker-token mapping. Splits are
+chronological and assigned at the conversation level, so overlapping windows
+from one conversation never cross split boundaries. System messages and
+messages without text are omitted.
+
+The structured JSONL is intentionally independent of MLX, Transformers, or a
+particular chat template. Model-specific formatting and tokenization can be
+added later without rebuilding the source database.
+
 ## Running the API
 
 ```bash

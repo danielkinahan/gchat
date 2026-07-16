@@ -3,11 +3,13 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
-from .builder import build_database
 from .api import run_server
+from .builder import build_database
 from .configuration import validate_configuration
+from .training_data import TrainingExportConfig, export_training_data
 
 
 def _project_root() -> Path:
@@ -44,6 +46,22 @@ def main() -> None:
     )
     validate.add_argument("--config-dir", type=Path, default=Path("config"))
 
+    export_training = sub.add_parser(
+        "export-training",
+        help="Export model-agnostic conversation windows as local JSONL",
+    )
+    export_training.add_argument(
+        "--db", type=Path, default=Path("data/gchat-db/gchat.duckdb")
+    )
+    export_training.add_argument(
+        "--output-dir", type=Path, default=Path("data/training")
+    )
+    export_training.add_argument("--max-messages", type=int, default=64)
+    export_training.add_argument("--overlap-messages", type=int, default=8)
+    export_training.add_argument("--min-messages", type=int, default=2)
+    export_training.add_argument("--train-fraction", type=float, default=0.9)
+    export_training.add_argument("--validation-fraction", type=float, default=0.05)
+
     args = parser.parse_args()
     if args.command == "build":
         build_database(
@@ -63,3 +81,16 @@ def main() -> None:
     elif args.command == "validate-config":
         diagnostics = validate_configuration(_resolve_path(args.config_dir))
         print(json.dumps(diagnostics, indent=2, sort_keys=True))
+    elif args.command == "export-training":
+        summary = export_training_data(
+            _resolve_path(args.db),
+            _resolve_path(args.output_dir),
+            TrainingExportConfig(
+                max_messages=args.max_messages,
+                overlap_messages=args.overlap_messages,
+                min_messages=args.min_messages,
+                train_fraction=args.train_fraction,
+                validation_fraction=args.validation_fraction,
+            ),
+        )
+        print(json.dumps(asdict(summary), indent=2, sort_keys=True))
