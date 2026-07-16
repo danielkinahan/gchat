@@ -20,7 +20,11 @@ from gchat.api import (
     create_app,
 )
 from gchat.builder import build_database
-from gchat.moderation import REMOVED_MEDIA_URL, set_active_moderation, load_moderation_config
+from gchat.moderation import (
+    REMOVED_MEDIA_URL,
+    set_active_moderation,
+    load_moderation_config,
+)
 from gchat.schema import SCHEMA_SQL
 from tests.test_ingest import ROOT, _write_discord_html_export
 
@@ -105,9 +109,7 @@ people:
 
                 overview = client.get("/api/overview").json()
                 self.assertEqual(overview["total_messages"], 6)
-                self.assertEqual(
-                    overview["message_stats"]["conversation_count"], 2
-                )
+                self.assertEqual(overview["message_stats"]["conversation_count"], 2)
                 self.assertEqual(
                     overview["message_stats"]["avg_messages_per_conversation"],
                     3.0,
@@ -130,9 +132,7 @@ people:
                         "/api/messages-by-month", params={"metric": metric}
                     ).json()["points"]
                     self.assertEqual(
-                        metric_overview["message_stats"]["most_active_month"][
-                            "count"
-                        ],
+                        metric_overview["message_stats"]["most_active_month"]["count"],
                         max(point["message_count"] for point in metric_monthly),
                     )
 
@@ -153,9 +153,7 @@ people:
                     params={"include_bots": "true"},
                 ).json()["points"]
                 self.assertEqual(reactions_with_bots[1]["reaction_count"], 20)
-                self.assertEqual(
-                    reactions_with_bots[1]["reactions_per_message"], 2.0
-                )
+                self.assertEqual(reactions_with_bots[1]["reactions_per_message"], 2.0)
 
                 metadata = client.get("/api/metadata").json()
                 bot = next(
@@ -233,15 +231,66 @@ people:
             db_path = tmp_path / "gchat.duckdb"
             build_database(data_dir, db_path, config_dir=config_dir)
 
-            client = TestClient(create_app(db_path, data_dir=data_dir))
+            app = create_app(db_path, data_dir=data_dir)
+            client = TestClient(app)
+            registered_paths = [route.path for route in app.routes]
+            for modular_path in (
+                "/api/runtime-state",
+                "/api/search",
+                "/api/top-words",
+                "/api/word-over-time",
+                "/api/word-breakdown",
+                "/api/word-examples",
+                "/api/linked-domains",
+                "/api/domain-examples",
+                "/api/links-by-author",
+                "/api/most-mentioned",
+                "/api/reaction-authors",
+                "/api/reactions-over-time",
+                "/api/reaction-identity-coverage",
+            ):
+                self.assertEqual(registered_paths.count(modular_path), 1)
             overview_response = client.get("/api/overview")
             self.assertEqual(
                 overview_response.headers.get("cache-control"),
                 "private, max-age=60",
             )
             overview = overview_response.json()
+            self.assertEqual(client.get("/healthz").json(), {"status": "ok"})
+            runtime = client.get("/api/runtime-state").json()
+            self.assertEqual(runtime["analytics_mode"], "materialized")
+            self.assertTrue(runtime["config"]["valid"])
             self.assertGreater(overview["total_messages"], 0)
             self.assertTrue(overview["people"])
+            reaction_coverage = client.get("/api/reaction-identity-coverage").json()
+            self.assertTrue(reaction_coverage["supported"])
+            self.assertGreaterEqual(
+                reaction_coverage["total_reactions"],
+                reaction_coverage["identified_reactions"],
+            )
+            fact_results = {
+                path: client.get(path).json()
+                for path in (
+                    "/api/top-words?limit=20",
+                    "/api/word-over-time?word=hello",
+                    "/api/word-breakdown?word=hello&limit=10",
+                    "/api/word-examples?word=hello&limit=10",
+                    "/api/linked-domains?limit=20",
+                    "/api/domain-examples?domain=youtube.com&limit=20",
+                    "/api/links-by-author?limit=20",
+                    "/api/most-mentioned?limit=20",
+                    "/api/emoji-usage?limit=20",
+                    "/api/search?q=hello",
+                )
+            }
+            app.state.has_analytics_facts = False
+            try:
+                legacy_results = {
+                    path: client.get(path).json() for path in fact_results
+                }
+            finally:
+                app.state.has_analytics_facts = True
+            self.assertEqual(fact_results, legacy_results)
             self.assertIn("message_stats", overview)
             self.assertIn("with_text", overview["message_stats"])
             self.assertIn("most_active_hour", overview["message_stats"])

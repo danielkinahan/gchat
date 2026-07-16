@@ -7,6 +7,8 @@ import re
 
 import yaml
 
+from .config_models import PeopleFile, ThemesFile
+
 
 @dataclass(frozen=True)
 class PeopleConfig:
@@ -216,7 +218,9 @@ def load_reconciliation(
     bot_person_names: set[str] = set()
     bot_declarations: dict[str, bool] = {}
     if people_path.exists():
-        people_data = _load_yaml(people_path)
+        people_data = PeopleFile.model_validate(_load_yaml(people_path)).model_dump(
+            exclude_none=True
+        )
         for person in people_data.get("people", []):
             name = str(person["name"])
             color = str(person.get("color") or "")
@@ -244,6 +248,12 @@ def load_reconciliation(
                     or identity.get("username")
                     or identity.get("name")
                 )
+                existing = identity_to_person.get((platform, raw_id))
+                if existing is not None and existing != resolved_person:
+                    raise ValueError(
+                        f"Identity {platform}:{raw_id} is assigned to both "
+                        f"{existing[0]!r} and {name!r}"
+                    )
                 identity_to_person[(platform, raw_id)] = resolved_person
                 normalized_raw_id = " ".join(raw_id.strip().casefold().split())
                 normalized_identity_to_person[(platform, normalized_raw_id)] = (
@@ -275,7 +285,9 @@ def load_reconciliation(
     platform_channel_candidates: dict[tuple[str, str], set[str]] = {}
     normalized_channel_candidates: dict[str, set[str]] = {}
     if themes_path.exists():
-        themes_data = _load_yaml(themes_path)
+        themes_data = ThemesFile.model_validate(_load_yaml(themes_path)).model_dump(
+            exclude_none=True
+        )
         for theme in themes_data.get("themes") or []:
             if not isinstance(theme, dict):
                 continue
@@ -286,6 +298,12 @@ def load_reconciliation(
                     continue
                 source_name = str(channel["source"])
                 channel_name = str(channel["channel"])
+                existing_theme = channel_to_theme.get((source_name, channel_name))
+                if existing_theme is not None and existing_theme != theme_name:
+                    raise ValueError(
+                        f"Channel {source_name}:{channel_name} is assigned to both "
+                        f"{existing_theme!r} and {theme_name!r}"
+                    )
                 channel_to_theme[(source_name, channel_name)] = theme_name
                 normalized_source = ThemesConfig._normalize(source_name)
                 normalized_channel = ThemesConfig._normalize(channel_name)

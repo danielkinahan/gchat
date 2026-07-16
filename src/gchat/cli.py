@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
 from .builder import build_database
 from .api import run_server
+from .configuration import validate_configuration
 
 
 def _project_root() -> Path:
@@ -36,6 +38,12 @@ def main() -> None:
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--reload", action="store_true")
 
+    validate = sub.add_parser(
+        "validate-config",
+        help="Validate YAML configuration and print diagnostics",
+    )
+    validate.add_argument("--config-dir", type=Path, default=Path("config"))
+
     args = parser.parse_args()
     if args.command == "build":
         build_database(
@@ -52,3 +60,6 @@ def main() -> None:
             port=args.port,
             reload=args.reload,
         )
+    elif args.command == "validate-config":
+        diagnostics = validate_configuration(_resolve_path(args.config_dir))
+        print(json.dumps(diagnostics, indent=2, sort_keys=True))

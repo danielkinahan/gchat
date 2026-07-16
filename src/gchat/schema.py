@@ -108,4 +108,48 @@ CREATE TABLE IF NOT EXISTS person_stats (
   platform_count INTEGER NOT NULL,
   channel_hhi DOUBLE NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS message_tokens (
+  message_id TEXT NOT NULL,
+  token_index INTEGER NOT NULL,
+  token TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS message_links (
+  message_id TEXT NOT NULL,
+  link_index INTEGER NOT NULL,
+  raw_url TEXT NOT NULL,
+  raw_host TEXT NOT NULL,
+  domain TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS message_mentions (
+  message_id TEXT NOT NULL,
+  mention_index INTEGER NOT NULL,
+  mention TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS message_search_trigrams (
+  message_id TEXT NOT NULL,
+  gram TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS message_reaction_events (
+  message_id TEXT NOT NULL,
+  reaction_index INTEGER NOT NULL,
+  emoji TEXT NOT NULL,
+  reactor_platform TEXT,
+  reactor_raw_id TEXT,
+  reactor_display_name TEXT,
+  reactor_person_id INTEGER,
+  emoji_id TEXT,
+  image_url TEXT,
+  code TEXT,
+  is_animated BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE TABLE IF NOT EXISTS build_metadata (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
 """

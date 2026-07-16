@@ -7,6 +7,7 @@ from typing import Any
 
 import duckdb
 
+from .analytics_facts import has_analytics_facts
 from .stop_words import COMMON_STOP_WORDS
 
 PersonStatsRow = tuple[
@@ -90,9 +91,31 @@ def _fetch_person_tokens(
     params: list[Any],
     has_is_system: bool,
     excluded_filter: str,
+    has_message_tokens: bool,
     stop_words: frozenset[str] = COMMON_STOP_WORDS,
 ) -> dict[int, list[str]]:
     is_system_filter = "AND NOT m.is_system" if has_is_system else ""
+    if has_message_tokens:
+        rows = con.execute(
+            f"""
+            SELECT m.person_id, mt.token
+            FROM messages m
+            JOIN message_tokens mt ON mt.message_id = m.id
+            JOIN channels c ON c.id = m.channel_id
+            JOIN sources s ON s.id = c.source_id
+            WHERE {where}
+              {is_system_filter}
+              {excluded_filter}
+            ORDER BY m.person_id, m.ts, m.id, mt.token_index
+            """,
+            params,
+        ).fetchall()
+        tokens_by_person: dict[int, list[str]] = {}
+        for person_id, token in rows:
+            normalized = str(token)
+            if normalized not in stop_words:
+                tokens_by_person.setdefault(int(person_id), []).append(normalized)
+        return tokens_by_person
     rows = con.execute(
         f"""
         SELECT m.person_id, m.content
@@ -122,14 +145,35 @@ def person_stats_sql(
     where: str,
     has_is_system: bool,
     excluded_filter: str,
+    has_message_tokens: bool = False,
     stop_words: frozenset[str] = COMMON_STOP_WORDS,
 ) -> tuple[str, list[str]]:
     """Return SQL and stop-word bind params for person diversity stats."""
     is_system_filter = "AND NOT m.is_system" if has_is_system else ""
     stop_placeholders, stop_params = _stop_word_placeholders(stop_words)
+    token_source = (
+        """
+            SELECT sm.person_id, mt.token AS word
+            FROM scoped_messages sm
+            JOIN message_tokens mt ON mt.message_id = sm.message_id
+        """
+        if has_message_tokens
+        else """
+            SELECT
+                person_id,
+                unnest(
+                    regexp_extract_all(
+                        replace(lower(coalesce(content, '')), chr(39), ''),
+                        '[a-z]{3,}'
+                    )
+                ) AS word
+            FROM text_messages
+        """
+    )
     sql = f"""
         WITH scoped_messages AS (
             SELECT
+                m.id AS message_id,
                 m.person_id,
                 m.channel_id,
                 c.theme_id,
@@ -158,15 +202,7 @@ def person_stats_sql(
             WHERE content IS NOT NULL AND content <> ''
         ),
         tokens AS (
-            SELECT
-                person_id,
-                unnest(
-                    regexp_extract_all(
-                        replace(lower(coalesce(content, '')), chr(39), ''),
-                        '[a-z]{{3,}}'
-                    )
-                ) AS word
-            FROM text_messages
+            {token_source}
         ),
         filtered_tokens AS (
             SELECT person_id, word
@@ -256,11 +292,15 @@ def compute_person_stats(
     params: list[Any] | None = None,
     has_is_system: bool = True,
     excluded_filter: str = "",
+    has_message_tokens: bool | None = None,
 ) -> list[PersonStatsRow]:
+    if has_message_tokens is None:
+        has_message_tokens = has_analytics_facts(con)
     sql, stop_params = person_stats_sql(
         where=where,
         has_is_system=has_is_system,
         excluded_filter=excluded_filter,
+        has_message_tokens=has_message_tokens,
     )
     bind = list(params or [])
     tokens_by_person = _fetch_person_tokens(
@@ -269,6 +309,7 @@ def compute_person_stats(
         params=bind,
         has_is_system=has_is_system,
         excluded_filter=excluded_filter,
+        has_message_tokens=has_message_tokens,
     )
     bind.extend(stop_params)
     rows = con.execute(sql, bind).fetchall()
@@ -295,13 +336,33 @@ def exclusive_words_sql(
     where: str,
     has_is_system: bool,
     excluded_filter: str,
+    has_message_tokens: bool = False,
     stop_words: frozenset[str] = COMMON_STOP_WORDS,
 ) -> tuple[str, list[str]]:
     is_system_filter = "AND NOT m.is_system" if has_is_system else ""
     stop_placeholders, stop_params = _stop_word_placeholders(stop_words)
+    token_source = (
+        """
+            SELECT sm.person_id, mt.token AS word
+            FROM scoped_messages sm
+            JOIN message_tokens mt ON mt.message_id = sm.message_id
+        """
+        if has_message_tokens
+        else """
+            SELECT
+                person_id,
+                unnest(
+                    regexp_extract_all(
+                        replace(lower(coalesce(content, '')), chr(39), ''),
+                        '[a-z]{3,}'
+                    )
+                ) AS word
+            FROM scoped_messages
+        """
+    )
     sql = f"""
         WITH scoped_messages AS (
-            SELECT m.person_id, m.content
+            SELECT m.id AS message_id, m.person_id, m.content
             FROM messages m
             JOIN channels c ON c.id = m.channel_id
             JOIN sources s ON s.id = c.source_id
@@ -312,15 +373,7 @@ def exclusive_words_sql(
               AND m.content <> ''
         ),
         tokens AS (
-            SELECT
-                person_id,
-                unnest(
-                    regexp_extract_all(
-                        replace(lower(coalesce(content, '')), chr(39), ''),
-                        '[a-z]{{3,}}'
-                    )
-                ) AS word
-            FROM scoped_messages
+            {token_source}
         ),
         filtered_tokens AS (
             SELECT person_id, word
@@ -351,11 +404,15 @@ def compute_exclusive_words(
     has_is_system: bool = True,
     excluded_filter: str = "",
     limit: int = 500,
+    has_message_tokens: bool | None = None,
 ) -> list[str]:
+    if has_message_tokens is None:
+        has_message_tokens = has_analytics_facts(con)
     sql, stop_params = exclusive_words_sql(
         where=where,
         has_is_system=has_is_system,
         excluded_filter=excluded_filter,
+        has_message_tokens=has_message_tokens,
     )
     bind = list(params or []) + stop_params + [person_id, limit]
     rows = con.execute(sql, bind).fetchall()

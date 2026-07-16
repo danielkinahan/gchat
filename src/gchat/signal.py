@@ -1114,6 +1114,7 @@ def _message_attachment_paths(message_div, chat_dir_name: str) -> list[str]:
 
 def _message_reactions(message_div) -> tuple[int, str | None, str | None]:
     counts: Counter[str] = Counter()
+    reactors: dict[str, list[dict[str, str]]] = {}
     for reaction in message_div.select("div.msg-reactions div.msg-reaction"):
         emoji = reaction.select_one("span.msg-emoji")
         value = emoji.get_text(strip=True) if emoji is not None else ""
@@ -1126,11 +1127,34 @@ def _message_reactions(message_div) -> tuple[int, str | None, str | None]:
             if parsed.isdigit():
                 reaction_count = max(int(parsed), 1)
         counts[value] += reaction_count
+        info = reaction.select_one(".msg-reaction-info")
+        if info is not None:
+            match = re.search(
+                r"(?:^|\n)\s*From:\s*(.+?)(?:\n|$)",
+                info.get_text("\n", strip=True),
+                flags=re.IGNORECASE,
+            )
+            if match:
+                display_name = match.group(1).strip()
+                reactors.setdefault(value, []).append(
+                    {
+                        "platform": "signal",
+                        "raw_id": _html_person_raw_id(display_name),
+                        "display_name": display_name,
+                    }
+                )
     if not counts:
         return 0, None, None
     summary = " ".join(f"{emoji}×{count}" for emoji, count in counts.most_common())
     details = json.dumps(
-        [{"name": emoji, "count": count} for emoji, count in counts.most_common()],
+        [
+            {
+                "name": emoji,
+                "count": count,
+                "reactors": reactors.get(emoji, []),
+            }
+            for emoji, count in counts.most_common()
+        ],
         ensure_ascii=False,
     )
     return sum(counts.values()), summary, details

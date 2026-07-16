@@ -112,6 +112,14 @@ During build, gChat also materializes per-person diversity metrics into the
 dashboard **People** tab reads these from `/api/person-diversity`; `people.yaml`
 remains identity and display config only.
 
+Builds also create versioned token, link, mention, search-trigram, and reaction
+event fact tables. These make content analytics and substring search faster and
+allow reaction identity coverage where the source export contains reactor
+names. The Emoji tab shows coverage and top reactors when those identities are
+available. The API remains compatible with older databases through live-query
+fallbacks; `/api/runtime-state` reports `analytics_mode: legacy-fallback` until
+the database is rebuilt.
+
 ## Building the database
 
 ```bash
@@ -120,6 +128,19 @@ uv run python -m gchat build --data-dir data --output data/gchat-db/gchat.duckdb
 
 The build command scans `data/`, applies reconciliation rules from `config/` (or
 `--config-dir`), writes a fresh DuckDB file, and prints progress while it runs.
+It builds to a unique temporary file, validates the result, and atomically
+replaces the prior database only after success. Rebuild once after upgrading to
+populate the new analytics and reaction fact tables.
+
+Validate configuration independently before a build or deploy:
+
+```bash
+uv run python -m gchat validate-config --config-dir config
+```
+
+This validates typed people, theme, bot, identity, moderation, and media-hash
+settings and prints a JSON summary. The same summary is exposed by
+`/api/runtime-state`.
 
 ## Running the API
 

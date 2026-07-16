@@ -6,6 +6,19 @@
         count: number;
         image_url: string | null;
     };
+    type ReactionCoverage = {
+        supported: boolean;
+        total_reactions: number;
+        identified_reactions: number;
+        resolved_reactions: number;
+        identity_coverage: number;
+        people: Array<{
+            id: number;
+            display_name: string;
+            color: string;
+            count: number;
+        }>;
+    };
 
     export let active = false;
     export let filterSignature: string;
@@ -13,6 +26,7 @@
     export let topLimit: number = 10;
 
     let emojiItems: EmojiItem[] = [];
+    let reactionCoverage: ReactionCoverage | null = null;
     let loading = false;
     let error = "";
     let loadedFilterKey = "";
@@ -27,10 +41,18 @@
         try {
             const params = currentFilterParams();
             params.set("limit", String(Math.max(topLimit, 30)));
-            const data = await fetchJson<{ items: EmojiItem[] }>(
-                `/api/emoji-usage?${params.toString()}`,
-            );
+            const coverageParams = currentFilterParams();
+            coverageParams.set("limit", String(topLimit));
+            const [data, coverage] = await Promise.all([
+                fetchJson<{ items: EmojiItem[] }>(
+                    `/api/emoji-usage?${params.toString()}`,
+                ),
+                fetchJson<ReactionCoverage>(
+                    `/api/reaction-identity-coverage?${coverageParams.toString()}`,
+                ),
+            ]);
             emojiItems = data.items ?? [];
+            reactionCoverage = coverage;
             loadedFilterKey = filterSignature + topLimit;
         } catch (e: any) {
             error = e?.message ?? "Failed to load emoji data";
@@ -60,6 +82,38 @@
         {:else if emojiItems.length === 0}
             <p class="muted">No reaction data found.</p>
         {:else}
+            {#if reactionCoverage?.supported && reactionCoverage.total_reactions > 0}
+                <div class="coverage-panel">
+                    <div>
+                        <span class="coverage-value"
+                            >{(
+                                reactionCoverage.identity_coverage * 100
+                            ).toFixed(1)}%</span
+                        >
+                        <span class="coverage-label"
+                            >reaction identities available</span
+                        >
+                    </div>
+                    <span class="coverage-detail"
+                        >{reactionCoverage.identified_reactions.toLocaleString()}
+                        of {reactionCoverage.total_reactions.toLocaleString()}</span
+                    >
+                </div>
+                {#if reactionCoverage.people.length > 0}
+                    <h2 class="section-title">Top Reactors</h2>
+                    <div class="reactor-list">
+                        {#each reactionCoverage.people as person}
+                            <span
+                                class="reactor-pill"
+                                style={`--person-color:${person.color}`}
+                            >
+                                {person.display_name}
+                                <strong>{person.count.toLocaleString()}</strong>
+                            </span>
+                        {/each}
+                    </div>
+                {/if}
+            {/if}
             <h2 class="section-title">Top Reaction Emoji</h2>
             <div class="emoji-grid">
                 {#each emojiItems as item, i}
@@ -101,6 +155,50 @@
         font-weight: 600;
         color: #f1f5f9;
         margin: 0 0 16px;
+    }
+
+    .coverage-panel {
+        align-items: center;
+        background: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 12px;
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 16px;
+        padding: 14px 16px;
+    }
+
+    .coverage-value {
+        color: #f1f5f9;
+        font-size: 1.25rem;
+        font-weight: 700;
+        margin-right: 8px;
+    }
+
+    .coverage-label,
+    .coverage-detail {
+        color: #94a3b8;
+        font-size: 0.78rem;
+    }
+
+    .reactor-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 20px;
+    }
+
+    .reactor-pill {
+        border: 1px solid color-mix(in srgb, var(--person-color) 55%, #334155);
+        border-radius: 999px;
+        color: #cbd5e1;
+        font-size: 0.75rem;
+        padding: 5px 9px;
+    }
+
+    .reactor-pill strong {
+        color: #f1f5f9;
+        margin-left: 5px;
     }
 
     .emoji-grid {

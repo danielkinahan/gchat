@@ -9,6 +9,8 @@ from pathlib import Path
 
 import yaml
 
+from .config_models import ModerationFile
+
 REMOVED_MEDIA_URL = "/api/media-removed"
 
 REMOVED_MEDIA_SVG = """\
@@ -65,20 +67,15 @@ def load_moderation_config(config_dir: Path) -> ModerationConfig:
     """Load moderation.yaml, falling back to legacy excluded_messages.yaml."""
     moderation_path = config_dir / "moderation.yaml"
     if moderation_path.exists():
-        try:
-            data = yaml.safe_load(moderation_path.read_text(encoding="utf-8")) or {}
-        except Exception:
-            return _EMPTY
-        if not isinstance(data, dict):
-            return _EMPTY
+        data = ModerationFile.model_validate(
+            yaml.safe_load(moderation_path.read_text(encoding="utf-8")) or {}
+        ).model_dump()
         blocked = data.get("blocked_media")
         blocked_dict = blocked if isinstance(blocked, dict) else {}
         return ModerationConfig(
             excluded_message_ids=_parse_message_ids(data.get("excluded_message_ids")),
             blocked_media_sha256=_parse_sha256_list(blocked_dict.get("sha256")),
-            blocked_media_filenames=_parse_filename_list(
-                blocked_dict.get("filenames")
-            ),
+            blocked_media_filenames=_parse_filename_list(blocked_dict.get("filenames")),
         )
 
     legacy_path = config_dir / "excluded_messages.yaml"
@@ -126,7 +123,10 @@ def is_blocked_media_file(
         return False
     if not path.is_file():
         return False
-    if cfg.blocked_media_filenames and path.name.casefold() in cfg.blocked_media_filenames:
+    if (
+        cfg.blocked_media_filenames
+        and path.name.casefold() in cfg.blocked_media_filenames
+    ):
         return True
     if cfg.blocked_media_sha256:
         stat = path.stat()

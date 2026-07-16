@@ -4,9 +4,11 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+from uuid import uuid4
 
 import duckdb
 
+from .analytics_facts import materialize_analytics_facts
 from .discord import normalize_export as normalize_discord
 from .discovery import discover_dataset
 from .facebook import normalize_chat as normalize_facebook
@@ -19,6 +21,7 @@ from .models import (
     SourceSeed,
 )
 from .person_stats import refresh_person_stats
+from .reaction_facts import materialize_reaction_facts
 from .reconciliation import load_reconciliation
 from .schema import SCHEMA_SQL
 from .signal import normalize as normalize_signal
@@ -113,15 +116,37 @@ def build_database(
     status: Callable[[str], None] | None = None,
     config_dir: Path | None = None,
 ) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    """Build and atomically install a database, cleaning up after any failure."""
     if output_path.exists() and not overwrite:
         raise FileExistsError(f"Database already exists: {output_path}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_output = output_path.with_name(f".{output_path.name}.{uuid4().hex}.building")
+    con: duckdb.DuckDBPyConnection | None = None
+    try:
+        con = duckdb.connect(str(temp_output))
+        _build_database(
+            data_dir,
+            output_path,
+            temp_output=temp_output,
+            con=con,
+            status=status,
+            config_dir=config_dir,
+        )
+    finally:
+        if con is not None:
+            con.close()
+        temp_output.unlink(missing_ok=True)
 
-    # Build to a temporary file so the API can continue serving the old DB
-    temp_output = output_path.with_suffix(output_path.suffix + ".tmp")
-    if temp_output.exists():
-        temp_output.unlink()
 
+def _build_database(
+    data_dir: Path,
+    output_path: Path,
+    *,
+    temp_output: Path,
+    con: duckdb.DuckDBPyConnection,
+    status: Callable[[str], None] | None = None,
+    config_dir: Path | None = None,
+) -> None:
     _notify(status, "Loading reconciliation")
     reconciliation = load_reconciliation(config_dir=config_dir)
     _notify(status, "Collecting exports")
@@ -137,7 +162,6 @@ def build_database(
         status,
         f"Collected {len(dataset.messages)} messages from {len(dataset.sources)} sources",
     )
-    con = duckdb.connect(str(temp_output))
     con.execute(SCHEMA_SQL)
 
     # Optimize for bulk loading
@@ -429,9 +453,44 @@ def build_database(
                 f"    Inserted {min(i + batch_size, len(message_rows))}/{len(message_rows)} messages",
             )
 
+    _notify(status, "Materializing content analytics and search facts")
+    materialize_analytics_facts(con)
+    reaction_fact_count = materialize_reaction_facts(con, deduped_messages, person_ids)
+    _notify(status, f"  Wrote reaction events ({reaction_fact_count} rows)")
+
     _notify(status, "Computing person diversity stats")
     stats_count = refresh_person_stats(con, has_is_system=True)
     _notify(status, f"  Wrote person stats ({stats_count} rows)")
+
+    message_count = int(con.execute("SELECT COUNT(*) FROM messages").fetchone()[0])
+    fact_count = int(
+        con.execute("SELECT COUNT(*) FROM message_search_trigrams").fetchone()[0]
+    )
+    fact_version_row = con.execute(
+        """
+        SELECT value
+        FROM build_metadata
+        WHERE key = 'fact_schema_version'
+        """
+    ).fetchone()
+    if message_count != len(message_rows):
+        raise RuntimeError(
+            f"Build validation failed: expected {len(message_rows)} messages, "
+            f"found {message_count}"
+        )
+    if any(
+        message.content and len(message.content) >= 3 for message in deduped_messages
+    ):
+        if fact_count == 0:
+            raise RuntimeError("Build validation failed: search facts are empty")
+    expected_reactions = sum(message.reaction_count for message in deduped_messages)
+    if reaction_fact_count != expected_reactions:
+        raise RuntimeError(
+            f"Build validation failed: expected {expected_reactions} reaction "
+            f"events, found {reaction_fact_count}"
+        )
+    if not fact_version_row or fact_version_row[0] != "2":
+        raise RuntimeError("Build validation failed: analytics fact version is missing")
 
     con.execute("COMMIT")
     con.close()

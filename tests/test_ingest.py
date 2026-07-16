@@ -6,6 +6,9 @@ import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
+
+from bs4 import BeautifulSoup
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -15,7 +18,7 @@ from gchat.discord import normalize_export
 from gchat.discovery import discover_dataset
 from gchat.facebook import normalize_chat
 from gchat.reconciliation import load_reconciliation
-from gchat.signal import normalize as normalize_signal
+from gchat.signal import _message_reactions, normalize as normalize_signal
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -95,6 +98,37 @@ def _make_subset_data_dir(base: Path) -> Path:
 
 
 class IngestTests(unittest.TestCase):
+    def test_signal_reaction_identity_is_preserved_when_exported(self) -> None:
+        soup = BeautifulSoup(
+            """
+            <div class="message">
+              <div class="msg-reactions">
+                <div class="msg-reaction">
+                  <span class="msg-emoji">❤️</span>
+                  <div class="msg-reaction-info">
+                    From: Alice
+                    Sent: 2026-01-01 12:00:00
+                  </div>
+                </div>
+              </div>
+            </div>
+            """,
+            "html.parser",
+        )
+
+        count, _, details_json = _message_reactions(soup)
+
+        self.assertEqual(count, 1)
+        details = json.loads(details_json or "[]")
+        self.assertEqual(
+            details[0]["reactors"][0],
+            {
+                "platform": "signal",
+                "raw_id": "name:alice",
+                "display_name": "Alice",
+            },
+        )
+
     def test_discord_export(self) -> None:
         with TemporaryDirectory() as tmp:
             path = _write_discord_html_export(Path(tmp) / "discord")
@@ -132,6 +166,8 @@ class IngestTests(unittest.TestCase):
 
     def test_facebook_thread(self) -> None:
         chat_dir = ROOT / "data" / "facebook" / "VirgilsDisciplesR_JuKl_Syh8Q"
+        if not chat_dir.exists():
+            self.skipTest("optional Facebook archive fixture is not available")
         export = normalize_chat(chat_dir)
         self.assertGreater(len(export.messages), 0)
         self.assertTrue(export.messages[0].content)
@@ -600,7 +636,36 @@ people:
             self.assertIsNotNone(person_stats_row)
             assert person_stats_row is not None
             self.assertGreaterEqual(person_stats_row[0], 0)
+            fact_version_row = con.execute(
+                """
+                SELECT value
+                FROM build_metadata
+                WHERE key = 'fact_schema_version'
+                """
+            ).fetchone()
+            self.assertEqual(fact_version_row, ("2",))
+            self.assertGreater(
+                con.execute("SELECT COUNT(*) FROM message_tokens").fetchone()[0],
+                0,
+            )
             con.close()
+
+    def test_failed_build_preserves_existing_database_and_cleans_temp(self) -> None:
+        with TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            output = tmp_path / "gchat.duckdb"
+            output.write_bytes(b"existing database")
+            data_dir = _make_subset_data_dir(tmp_path)
+
+            with patch(
+                "gchat.builder.materialize_analytics_facts",
+                side_effect=RuntimeError("fact build failed"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "fact build failed"):
+                    build_database(data_dir, output)
+
+            self.assertEqual(output.read_bytes(), b"existing database")
+            self.assertEqual(list(tmp_path.glob("*.building")), [])
 
 
 if __name__ == "__main__":

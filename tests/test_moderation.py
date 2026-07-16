@@ -73,21 +73,27 @@ blocked_media:
             set_active_moderation(config)
 
             self.assertEqual(
-                media_url_if_allowed("/api/media?platform=signal&source=x&path=y", media_file),
+                media_url_if_allowed(
+                    "/api/media?platform=signal&source=x&path=y", media_file
+                ),
                 REMOVED_MEDIA_URL,
             )
 
             other_file = Path(tmp) / "other.jpg"
             other_file.write_bytes(b"different")
             self.assertEqual(
-                media_url_if_allowed("/api/media?platform=signal&source=x&path=y", other_file),
+                media_url_if_allowed(
+                    "/api/media?platform=signal&source=x&path=y", other_file
+                ),
                 REMOVED_MEDIA_URL,
             )
 
             allowed_file = Path(tmp) / "allowed.png"
             allowed_file.write_bytes(b"allowed")
             self.assertEqual(
-                media_url_if_allowed("/api/media?platform=signal&source=x&path=y", allowed_file),
+                media_url_if_allowed(
+                    "/api/media?platform=signal&source=x&path=y", allowed_file
+                ),
                 "/api/media?platform=signal&source=x&path=y",
             )
 
