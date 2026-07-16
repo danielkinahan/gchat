@@ -1,6 +1,7 @@
 import type {
   Overview,
   PlatformOverTime,
+  ReactionsOverTime,
 } from "../lib/api";
 import { fetchJson, filterQuery } from "../lib/api";
 import {
@@ -20,6 +21,7 @@ export const load = async ({ url, fetch }) => {
     topThemes,
     metadata,
     platformOverTime,
+    reactionsOverTime,
   ] = await Promise.all([
     fetchJson<Overview>(`/api/overview${query}`, fetch),
     fetchJson<{ points: HeatmapPoint[] }>(
@@ -39,13 +41,23 @@ export const load = async ({ url, fetch }) => {
     }>(`/api/top-themes?limit=10${querySuffix}`, fetch),
     fetchJson<{
       people: Array<
-        { id: number; name: string; color: string; avatar: string }
+        {
+          id: number;
+          name: string;
+          color: string;
+          avatar: string;
+          is_bot: boolean;
+        }
       >;
       themes: Array<{ id: number; name: string; emoji: string }>;
       platforms: string[];
     }>(`/api/metadata`, fetch),
     fetchJson<PlatformOverTime>(
       `/api/platform-over-time?granularity=month${querySuffix}`,
+      fetch,
+    ),
+    fetchJson<ReactionsOverTime>(
+      `/api/reactions-over-time${query}`,
       fetch,
     ),
   ]);
@@ -59,12 +71,14 @@ export const load = async ({ url, fetch }) => {
     messagesByHour: hourlyTotals(activityHeatmap.points),
     metadata,
     platformOverTime,
+    reactionsOverTime,
     filters: {
       from: url.searchParams.get("from") ?? "",
       to: url.searchParams.get("to") ?? "",
       people: url.searchParams.get("people") ?? "",
       themes: url.searchParams.get("themes") ?? "",
       platforms: url.searchParams.get("platforms") ?? "",
+      includeBots: url.searchParams.get("include_bots") === "true",
     },
   };
 };

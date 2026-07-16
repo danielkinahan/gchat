@@ -32,6 +32,7 @@
         error = "";
         try {
             const params = currentFilterParams();
+            params.delete("include_bots");
             params.set("q", q);
             params.set("limit", String(PAGE));
             if (append) params.set("offset", String(results.length));

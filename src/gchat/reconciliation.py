@@ -18,6 +18,7 @@ class PeopleConfig:
     normalized_person_name_token_candidates: list[
         tuple[frozenset[str], tuple[str, str]]
     ]
+    bot_person_names: frozenset[str]
 
     def resolve(
         self, platform: str, raw_id: str, fallback_name: str
@@ -212,12 +213,23 @@ def load_reconciliation(
     normalized_person_name_token_candidates: list[
         tuple[frozenset[str], tuple[str, str]]
     ] = []
+    bot_person_names: set[str] = set()
+    bot_declarations: dict[str, bool] = {}
     if people_path.exists():
         people_data = _load_yaml(people_path)
         for person in people_data.get("people", []):
             name = str(person["name"])
             color = str(person.get("color") or "")
             normalized_name = " ".join(name.strip().casefold().split())
+            is_bot = person.get("is_bot", False)
+            if not isinstance(is_bot, bool):
+                raise ValueError(f"is_bot must be true or false for person {name!r}")
+            previous_bot_value = bot_declarations.get(normalized_name)
+            if previous_bot_value is not None and previous_bot_value != is_bot:
+                raise ValueError(f"Conflicting is_bot values for person {name!r}")
+            bot_declarations[normalized_name] = is_bot
+            if is_bot:
+                bot_person_names.add(name)
             resolved_person = (name, color or name)
             person_name_candidates.setdefault(normalized_name, set()).add(
                 resolved_person
@@ -309,6 +321,7 @@ def load_reconciliation(
             normalized_person_name_to_person=normalized_person_name_to_person,
             normalized_identity_token_candidates=normalized_identity_token_candidates,
             normalized_person_name_token_candidates=normalized_person_name_token_candidates,
+            bot_person_names=frozenset(bot_person_names),
         ),
         themes=ThemesConfig(
             channel_to_theme=channel_to_theme,

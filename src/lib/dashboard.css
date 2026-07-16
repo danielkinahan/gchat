@@ -360,6 +360,17 @@ input[type="checkbox"] {
   color: #fff;
 }
 
+.bot-badge {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #334155;
+  color: #cbd5e1;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .person-chip-avatar {
   width: 22px;
   height: 22px;

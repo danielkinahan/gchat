@@ -21,3 +21,10 @@ people:
         id: "+15555550102"
       - platform: facebook
         name: "Bob Example"
+
+  - name: Example Bot
+    color: "#94A3B8"
+    is_bot: true
+    identities:
+      - platform: discord
+        id: "345678901234567890"

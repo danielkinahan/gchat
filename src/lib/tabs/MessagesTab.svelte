@@ -2,6 +2,7 @@
     import {
         fetchJson,
         type Overview,
+        type ReactionsOverTime,
         type TopPeople,
     } from "$lib/api";
     import {
@@ -88,11 +89,13 @@
                 counts: Record<string, number>;
             }>;
         };
+        reactionsOverTime: ReactionsOverTime;
     };
 
     const weekdayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
     let messageMetric: CountMetric = "messages";
+    let reactionMetric: "rate" | "total" = "rate";
     let overviewData: MessageTabData = {
         overview: baseData.overview,
         topPeople: { items: baseData.overview.people.slice(0, topLimit) },
@@ -439,6 +442,38 @@
             PLATFORM_CHART_PADDING.top +
             (1 - ratio) * platformChartInnerHeight,
         label: Math.round(platformOverTimeMax * ratio).toLocaleString(),
+    }));
+    $: reactionPoints = baseData.reactionsOverTime.points;
+    $: reactionValues = reactionPoints.map((point) =>
+        reactionMetric === "rate"
+            ? point.reactions_per_message
+            : point.reaction_count,
+    );
+    $: reactionMax = Math.max(...reactionValues, 0.01);
+    $: reactionLabelStep = Math.max(1, Math.ceil(reactionPoints.length / 8));
+    $: reactionLinePoints = reactionPoints.map((point, index) => {
+        const value =
+            reactionMetric === "rate"
+                ? point.reactions_per_message
+                : point.reaction_count;
+        return {
+            x: platformChartX(index, reactionPoints.length),
+            y:
+                PLATFORM_CHART_PADDING.top +
+                (1 - Math.min(value / reactionMax, 1)) *
+                    platformChartInnerHeight,
+            value,
+            point,
+        };
+    });
+    $: reactionGridLines = [0, 0.25, 0.5, 0.75, 1].map((ratio) => ({
+        y:
+            PLATFORM_CHART_PADDING.top +
+            (1 - ratio) * platformChartInnerHeight,
+        label:
+            reactionMetric === "rate"
+                ? (reactionMax * ratio).toFixed(2)
+                : Math.round(reactionMax * ratio).toLocaleString(),
     }));
     $: weekdayTotals = weekdayLabels.map((_, index) =>
         overviewData.activityHeatmap.points
@@ -959,6 +994,112 @@
                                     </circle>
                                 {/each}
                             {/if}
+                        {/each}
+                    </svg>
+                </div>
+            {/if}
+        </div>
+
+        <div class="panel timeline-panel platform-panel">
+            <div class="panel-head">
+                <h2>Reactions over time</h2>
+                <div
+                    class="metric-switch"
+                    role="group"
+                    aria-label="Reaction metric"
+                >
+                    <button
+                        type="button"
+                        class:active={reactionMetric === "rate"}
+                        on:click={() => (reactionMetric = "rate")}
+                        >Per message</button
+                    >
+                    <button
+                        type="button"
+                        class:active={reactionMetric === "total"}
+                        on:click={() => (reactionMetric = "total")}>Total</button
+                    >
+                </div>
+            </div>
+            {#if reactionPoints.length === 0}
+                <p class="muted">No reaction data available.</p>
+            {:else}
+                <div class="platform-line-chart">
+                    <svg
+                        viewBox={`0 0 ${PLATFORM_CHART_WIDTH} ${PLATFORM_CHART_HEIGHT}`}
+                        preserveAspectRatio="none"
+                        role="img"
+                        aria-label="Reactions over time"
+                    >
+                        {#each reactionGridLines as gridLine}
+                            <line
+                                class="grid-line"
+                                x1={PLATFORM_CHART_PADDING.left}
+                                x2={PLATFORM_CHART_WIDTH -
+                                    PLATFORM_CHART_PADDING.right}
+                                y1={gridLine.y}
+                                y2={gridLine.y}
+                            />
+                            <text
+                                class="axis-label-y"
+                                x={PLATFORM_CHART_PADDING.left - 8}
+                                y={gridLine.y + 4}
+                                text-anchor="end">{gridLine.label}</text
+                            >
+                        {/each}
+                        {#each reactionPoints as point, i}
+                            {#if i % reactionLabelStep === 0}
+                                <text
+                                    class="axis-label-x"
+                                    x={platformChartX(i, reactionPoints.length)}
+                                    y={PLATFORM_CHART_HEIGHT -
+                                        PLATFORM_CHART_PADDING.bottom +
+                                        18}
+                                    text-anchor="middle"
+                                >
+                                    {new Date(
+                                        point.bucket,
+                                    ).toLocaleDateString("en-US", {
+                                        month: "short",
+                                        year: "2-digit",
+                                    })}
+                                </text>
+                            {/if}
+                        {/each}
+                        <polyline
+                            class="platform-line"
+                            fill="none"
+                            stroke="#a855f7"
+                            stroke-width="2"
+                            stroke-linejoin="round"
+                            stroke-linecap="round"
+                            points={reactionLinePoints
+                                .map((point) => `${point.x},${point.y}`)
+                                .join(" ")}
+                        />
+                        {#each reactionLinePoints as linePoint}
+                            <circle
+                                class="platform-line-dot"
+                                cx={linePoint.x}
+                                cy={linePoint.y}
+                                r="3"
+                                fill="#a855f7"
+                            >
+                                <title
+                                    >{new Date(
+                                        linePoint.point.bucket,
+                                    ).toLocaleDateString("en-US", {
+                                        month: "long",
+                                        year: "numeric",
+                                    })}: {linePoint.point.reaction_count.toLocaleString()}
+                                    reactions across {linePoint.point.message_count.toLocaleString()}
+                                    messages ({linePoint.point.reactions_per_message.toFixed(
+                                        3,
+                                    )} per message;
+                                    {linePoint.point.reacted_message_count.toLocaleString()}
+                                    messages reacted to)</title
+                                >
+                            </circle>
                         {/each}
                     </svg>
                 </div>

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -20,10 +21,159 @@ from gchat.api import (
 )
 from gchat.builder import build_database
 from gchat.moderation import REMOVED_MEDIA_URL, set_active_moderation, load_moderation_config
+from gchat.schema import SCHEMA_SQL
 from tests.test_ingest import ROOT, _write_discord_html_export
 
 
 class ApiTests(unittest.TestCase):
+    def test_bot_filter_conversation_stats_and_reaction_trends(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_dir = root / "config"
+            config_dir.mkdir()
+            (config_dir / "people.yaml").write_text(
+                """
+people:
+  - name: Human
+    color: "#123456"
+    identities: []
+  - name: Valheim
+    color: "#999999"
+    is_bot: true
+    identities: []
+""",
+                encoding="utf-8",
+            )
+            (config_dir / "themes.yaml").write_text(
+                "themes:\n  - name: General\n    channels: []\n",
+                encoding="utf-8",
+            )
+            db_path = root / "test.duckdb"
+            con = duckdb.connect(str(db_path))
+            con.execute(SCHEMA_SQL)
+            con.execute(
+                "INSERT INTO people VALUES (1, 'Human', '#123456'), "
+                "(2, 'Valheim', '#999999')"
+            )
+            con.execute("INSERT INTO sources VALUES (1, 'signal', 'Signal: Test')")
+            con.execute("INSERT INTO themes VALUES (1, 'General')")
+            con.execute("INSERT INTO channels VALUES (1, 1, 'general', 'General', 1)")
+
+            rows = []
+            for index in range(6):
+                conversation_id = 1 if index < 2 else 2
+                rows.append(
+                    (
+                        f"human-{index}",
+                        1,
+                        1,
+                        f"2025-01-{index + 1:02d} 12:00:00",
+                        "human message",
+                        2,
+                        0,
+                        conversation_id,
+                    )
+                )
+            for index in range(10):
+                rows.append(
+                    (
+                        f"bot-{index}",
+                        1,
+                        2,
+                        f"2025-02-{index + 1:02d} 12:00:00",
+                        "bot notification",
+                        2,
+                        2,
+                        3,
+                    )
+                )
+            con.executemany(
+                """
+                INSERT INTO messages (
+                    id, channel_id, person_id, ts, content, word_count,
+                    reaction_count, conversation_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+            con.close()
+
+            previous_config_dir = os.environ.get("GCHAT_CONFIG_DIR")
+            os.environ["GCHAT_CONFIG_DIR"] = str(config_dir)
+            try:
+                client = TestClient(create_app(db_path, data_dir=root / "data"))
+
+                overview = client.get("/api/overview").json()
+                self.assertEqual(overview["total_messages"], 6)
+                self.assertEqual(
+                    overview["message_stats"]["conversation_count"], 2
+                )
+                self.assertEqual(
+                    overview["message_stats"]["avg_messages_per_conversation"],
+                    3.0,
+                )
+                self.assertEqual(
+                    overview["message_stats"]["longest_conversation_message_count"],
+                    4,
+                )
+                self.assertEqual(
+                    overview["message_stats"]["most_active_month"]["count"], 6
+                )
+
+                monthly = client.get("/api/messages-by-month").json()["points"]
+                self.assertEqual(max(point["message_count"] for point in monthly), 6)
+                for metric in ("messages", "words", "conversations"):
+                    metric_overview = client.get(
+                        "/api/overview", params={"metric": metric}
+                    ).json()
+                    metric_monthly = client.get(
+                        "/api/messages-by-month", params={"metric": metric}
+                    ).json()["points"]
+                    self.assertEqual(
+                        metric_overview["message_stats"]["most_active_month"][
+                            "count"
+                        ],
+                        max(point["message_count"] for point in metric_monthly),
+                    )
+
+                with_bots = client.get(
+                    "/api/overview", params={"include_bots": "true"}
+                ).json()
+                self.assertEqual(with_bots["total_messages"], 16)
+                self.assertEqual(
+                    with_bots["message_stats"]["most_active_month"]["count"], 10
+                )
+
+                reactions = client.get("/api/reactions-over-time").json()["points"]
+                self.assertEqual(reactions[0]["reaction_count"], 0)
+                self.assertEqual(reactions[0]["reactions_per_message"], 0.0)
+
+                reactions_with_bots = client.get(
+                    "/api/reactions-over-time",
+                    params={"include_bots": "true"},
+                ).json()["points"]
+                self.assertEqual(reactions_with_bots[1]["reaction_count"], 20)
+                self.assertEqual(
+                    reactions_with_bots[1]["reactions_per_message"], 2.0
+                )
+
+                metadata = client.get("/api/metadata").json()
+                bot = next(
+                    person
+                    for person in metadata["people"]
+                    if person["name"] == "Valheim"
+                )
+                self.assertTrue(bot["is_bot"])
+
+                search = client.get("/api/search", params={"q": "notification"})
+                self.assertEqual(search.status_code, 200)
+                self.assertEqual(search.json()["total"], 10)
+            finally:
+                if previous_config_dir is None:
+                    os.environ.pop("GCHAT_CONFIG_DIR", None)
+                else:
+                    os.environ["GCHAT_CONFIG_DIR"] = previous_config_dir
+
     def test_word_metric_uses_materialized_count_with_legacy_fallback(self) -> None:
         materialized = _metric_sql("words", has_word_count=True)
         self.assertIn("m.word_count", materialized.inner_select_suffix)

@@ -92,6 +92,17 @@ export type PlatformOverTime = {
   }>;
 };
 
+export type ReactionsOverTime = {
+  granularity: "month";
+  points: Array<{
+    bucket: string;
+    reaction_count: number;
+    message_count: number;
+    reacted_message_count: number;
+    reactions_per_message: number;
+  }>;
+};
+
 export function apiUrl(path: string): string {
   if (!path) return path;
   if (path.startsWith("http://") || path.startsWith("https://")) {
@@ -115,7 +126,16 @@ export async function fetchJson<T>(
 
 export function filterQuery(params: URLSearchParams): string {
   const query = new URLSearchParams();
-  for (const key of ["from", "to", "people", "themes", "platforms"]) {
+  for (
+    const key of [
+      "from",
+      "to",
+      "people",
+      "themes",
+      "platforms",
+      "include_bots",
+    ]
+  ) {
     const value = params.get(key);
     if (value) query.set(key, value);
   }

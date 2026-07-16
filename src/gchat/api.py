@@ -440,6 +440,7 @@ class QueryFilters:
     people: list[int]
     themes: list[int]
     platforms: list[str]
+    include_bots: bool = False
 
 
 def _csv_ints(value: str | None, field: str) -> list[int]:
@@ -492,6 +493,19 @@ def _load_db_theme_names(db_path: Path) -> list[str]:
     with _connect(db_path) as con:
         rows = con.execute("SELECT name FROM themes ORDER BY id").fetchall()
     return [str(row[0]) for row in rows]
+
+
+def _load_bot_person_ids(db_path: Path, reconciliation: Any) -> frozenset[int]:
+    bot_names = reconciliation.people.bot_person_names
+    if not db_path.exists() or not bot_names:
+        return frozenset()
+    placeholders = ", ".join("?" for _ in bot_names)
+    with _connect(db_path) as con:
+        rows = con.execute(
+            f"SELECT id FROM people WHERE display_name IN ({placeholders})",
+            sorted(bot_names),
+        ).fetchall()
+    return frozenset(int(row[0]) for row in rows)
 
 
 def _load_configured_people_names() -> set[str]:
@@ -585,6 +599,19 @@ def _filters_clause(
         placeholders = ", ".join("?" for _ in filters.people)
         clauses.append(f"m.person_id IN ({placeholders})")
         params.extend(filters.people)
+    bot_names = (
+        reconciliation.people.bot_person_names
+        if reconciliation is not None and not filters.include_bots
+        else frozenset()
+    )
+    if bot_names:
+        placeholders = ", ".join("?" for _ in bot_names)
+        clauses.append(
+            f"m.person_id NOT IN ("
+            f"SELECT id FROM people WHERE display_name IN ({placeholders})"
+            f")"
+        )
+        params.extend(sorted(bot_names))
     if filters.themes:
         if reconciliation is None or theme_id_to_name is None:
             placeholders = ", ".join("?" for _ in filters.themes)
@@ -991,6 +1018,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     app.state.config_dir = _default_config_dir()
     app.state.fb_chat_names = _load_fb_chat_names()
     app.state.reconciliation = load_reconciliation(config_dir=app.state.config_dir)
+    app.state.bot_person_ids = _load_bot_person_ids(
+        app.state.db_path, app.state.reconciliation
+    )
     app.state.configured_people_names = _load_configured_people_names()
     app.state.primary_person_name = _load_primary_person_name()
     app.state.excluded_message_ids = _load_moderation(app.state.config_dir)
@@ -1052,6 +1082,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             app.state.fb_chat_names = _load_fb_chat_names()
             app.state.reconciliation = load_reconciliation(
                 config_dir=app.state.config_dir
+            )
+            app.state.bot_person_ids = _load_bot_person_ids(
+                app.state.db_path, app.state.reconciliation
             )
             app.state.configured_people_names = _load_configured_people_names()
             app.state.primary_person_name = _load_primary_person_name()
@@ -1967,6 +2000,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
         metric: str = Query(
             default="messages", pattern="^(messages|words|conversations)$"
         ),
@@ -1978,6 +2012,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -1990,6 +2025,12 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         )
         ms = _metric_sql(
             metric,
+            has_is_system=app.state.has_is_system,
+            has_word_count=app.state.has_word_count,
+            excluded_ids=app.state.excluded_message_ids,
+        )
+        message_scope = _metric_sql(
+            "messages",
             has_is_system=app.state.has_is_system,
             has_word_count=app.state.has_word_count,
             excluded_ids=app.state.excluded_message_ids,
@@ -2037,7 +2078,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     FROM messages m
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
-                    WHERE {where}
+                    WHERE {where}{message_scope.extra_where}
                 )
                 SELECT
                     COUNT(*) AS total_messages,
@@ -2070,7 +2111,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     FROM messages m
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
-                    WHERE {where}
+                    WHERE {where}{message_scope.extra_where}
                 ),
                 ordered AS (
                     SELECT ts, LAG(ts) OVER (ORDER BY ts) AS prev_ts
@@ -2098,7 +2139,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     FROM messages m
                     JOIN channels c ON c.id = m.channel_id
                     JOIN sources s ON c.source_id = s.id
-                    WHERE {where}
+                    WHERE {where}{message_scope.extra_where}
                 ),
                 ordered AS (
                     SELECT id, ts, LAG(ts) OVER (ORDER BY ts) AS prev_ts
@@ -2134,76 +2175,51 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 """,
                 params,
             ).fetchone()
-            most_active_year = con.execute(
-                f"""
-                SELECT date_trunc('year', m.ts) AS bucket, COUNT(*) AS count
-                FROM messages m
-                JOIN channels c ON c.id = m.channel_id
-                JOIN sources s ON c.source_id = s.id
-                WHERE {where}
-                GROUP BY bucket
-                ORDER BY count DESC, bucket ASC
-                LIMIT 1
-                """,
-                params,
-            ).fetchone()
-            most_active_month = con.execute(
-                f"""
-                SELECT date_trunc('month', m.ts) AS bucket, COUNT(*) AS count
-                FROM messages m
-                JOIN channels c ON c.id = m.channel_id
-                JOIN sources s ON c.source_id = s.id
-                WHERE {where}
-                GROUP BY bucket
-                ORDER BY count DESC, bucket ASC
-                LIMIT 1
-                """,
-                params,
-            ).fetchone()
-            most_active_day = con.execute(
-                f"""
-                SELECT date_trunc('day', m.ts) AS bucket, COUNT(*) AS count
-                FROM messages m
-                JOIN channels c ON c.id = m.channel_id
-                JOIN sources s ON c.source_id = s.id
-                WHERE {where}
-                GROUP BY bucket
-                ORDER BY count DESC, bucket ASC
-                LIMIT 1
-                """,
-                params,
-            ).fetchone()
-            most_active_hour = con.execute(
-                f"""
-                SELECT date_trunc('hour', m.ts) AS bucket, COUNT(*) AS count
-                FROM messages m
-                JOIN channels c ON c.id = m.channel_id
-                JOIN sources s ON c.source_id = s.id
-                WHERE {where}
-                GROUP BY bucket
-                ORDER BY count DESC, bucket ASC
-                LIMIT 1
-                """,
-                params,
-            ).fetchone()
+            most_active: dict[str, tuple[Any, Any] | None] = {}
+            for granularity in ("year", "month", "day", "hour"):
+                most_active[granularity] = con.execute(
+                    f"""
+                    SELECT date_trunc('{granularity}', bucket_ts) AS bucket,
+                           {ms.aggregate} AS count
+                    FROM (
+                        SELECT m.ts AS bucket_ts{ms.inner_select_suffix}
+                        FROM messages m
+                        JOIN channels c ON c.id = m.channel_id
+                        JOIN sources s ON c.source_id = s.id
+                        WHERE {where}{ms.extra_where}
+                    )
+                    GROUP BY bucket
+                    ORDER BY count DESC, bucket ASC
+                    LIMIT 1
+                    """,
+                    params,
+                ).fetchone()
+            most_active_year = most_active["year"]
+            most_active_month = most_active["month"]
+            most_active_day = most_active["day"]
+            most_active_hour = most_active["hour"]
             conversations_row = (None, None, None)
             if app.state.has_conversation_id:
                 conversations_row = con.execute(
                     f"""
-                    SELECT
-                        COUNT(DISTINCT m.conversation_id) AS conversation_count,
-                        AVG(per_conversation.message_count) AS avg_messages,
-                        MAX(per_conversation.message_count) AS longest_conversation
-                    FROM messages m
-                    JOIN channels c ON c.id = m.channel_id
-                    JOIN sources s ON c.source_id = s.id
-                    LEFT JOIN (
+                    WITH filtered AS (
+                        SELECT m.conversation_id
+                        FROM messages m
+                        JOIN channels c ON c.id = m.channel_id
+                        JOIN sources s ON c.source_id = s.id
+                        WHERE {where}{message_scope.extra_where}
+                          AND m.conversation_id IS NOT NULL
+                    ),
+                    per_conversation AS (
                         SELECT conversation_id, COUNT(*) AS message_count
-                        FROM messages
-                        WHERE conversation_id IS NOT NULL
+                        FROM filtered
                         GROUP BY conversation_id
-                    ) per_conversation ON per_conversation.conversation_id = m.conversation_id
-                    WHERE {where} AND m.conversation_id IS NOT NULL
+                    )
+                    SELECT
+                        COUNT(*) AS conversation_count,
+                        AVG(message_count) AS avg_messages,
+                        MAX(message_count) AS longest_conversation
+                    FROM per_conversation
                     """,
                     params,
                 ).fetchone() or (None, None, None)
@@ -2300,6 +2316,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
         metric: str = Query(
             default="messages", pattern="^(messages|words|conversations)$"
         ),
@@ -2311,6 +2328,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = [granularity]
         where = _filters_clause(
@@ -2355,6 +2373,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
         metric: str = Query(
             default="messages", pattern="^(messages|words|conversations)$"
         ),
@@ -2367,6 +2386,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = [granularity]
         where = _filters_clause(
@@ -2431,6 +2451,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
         metric: str = Query(
             default="messages", pattern="^(messages|words|conversations)$"
         ),
@@ -2442,6 +2463,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -2484,6 +2506,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
         metric: str = Query(
             default="messages", pattern="^(messages|words|conversations)$"
         ),
@@ -2495,6 +2518,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -2543,6 +2567,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
         metric: str = Query(
             default="messages", pattern="^(messages|words|conversations)$"
         ),
@@ -2554,6 +2579,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -2605,6 +2631,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
     ) -> dict[str, Any]:
         """Per-person lexical and participation diversity metrics."""
         filters = QueryFilters(
@@ -2613,12 +2640,17 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         needs_live = bool(
             filters.start
             or filters.end
             or filters.themes
             or filters.platforms
+            or (
+                bool(app.state.bot_person_ids)
+                and include_bots
+            )
             or not app.state.has_person_stats
         )
         people_extra = _load_people_extra()
@@ -2684,6 +2716,12 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                 continue
             display_name, color = meta
             if (
+                not include_bots
+                and display_name
+                in app.state.reconciliation.people.bot_person_names
+            ):
+                continue
+            if (
                 not filters.people
                 and app.state.configured_people_names
                 and display_name not in app.state.configured_people_names
@@ -2718,6 +2756,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
     ) -> dict[str, Any]:
         """Words used by one person that no other person uses in the filtered corpus."""
         filters = QueryFilters(
@@ -2726,6 +2765,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -2790,6 +2830,8 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
                     "name": row[1],
                     "color": row[2] or people_extra.get(row[1], {}).get("color", ""),
                     "avatar": people_extra.get(row[1], {}).get("avatar", ""),
+                    "is_bot": row[1]
+                    in app.state.reconciliation.people.bot_person_names,
                 }
                 for row in people
             ],
@@ -3378,6 +3420,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
         metric: str = Query(
             default="messages", pattern="^(messages|words|conversations)$"
         ),
@@ -3390,6 +3433,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -3443,6 +3487,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
         metric: str = Query(
             default="messages", pattern="^(messages|words|conversations)$"
         ),
@@ -3455,6 +3500,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         configured_themes = app.state.reconciliation.themes.configured_theme_names
         if not configured_themes:
@@ -3518,6 +3564,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
     ) -> dict[str, Any]:
         """Most used words under current filters."""
         filters = QueryFilters(
@@ -3526,6 +3573,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -3582,6 +3630,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
     ) -> dict[str, Any]:
         """Monthly usage count of a specific word."""
         normalized = "".join(ch for ch in word.casefold() if "a" <= ch <= "z")
@@ -3596,6 +3645,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -3664,6 +3714,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
     ) -> dict[str, Any]:
         """Who and which chats used a selected word the most."""
         normalized = "".join(ch for ch in word.casefold() if "a" <= ch <= "z")
@@ -3678,6 +3729,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -3778,6 +3830,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
     ) -> dict[str, Any]:
         """A few example messages containing a selected word."""
         normalized = "".join(ch for ch in word.casefold() if "a" <= ch <= "z")
@@ -3792,6 +3845,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -3877,6 +3931,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
     ) -> dict[str, Any]:
         """Most linked domains by total link count."""
         filters = QueryFilters(
@@ -3885,6 +3940,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -3927,6 +3983,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
     ) -> dict[str, Any]:
         """A few example messages containing a link to the given domain."""
         normalized = domain.strip().casefold()
@@ -3939,6 +3996,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -4042,6 +4100,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
     ) -> dict[str, Any]:
         """Authors ranked by total links sent."""
         filters = QueryFilters(
@@ -4050,6 +4109,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -4102,6 +4162,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
     ) -> dict[str, Any]:
         """Most mentioned names in messages."""
         filters = QueryFilters(
@@ -4110,6 +4171,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -4153,6 +4215,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
     ) -> dict[str, Any]:
         """Messages with the most total reactions."""
         filters = QueryFilters(
@@ -4161,6 +4224,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -4249,6 +4313,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
     ) -> dict[str, Any]:
         """Authors ranked by reactions received on their messages."""
         filters = QueryFilters(
@@ -4257,6 +4322,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -4292,6 +4358,69 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             ]
         }
 
+    @app.get("/api/reactions-over-time")
+    def reactions_over_time(
+        start: date | None = Query(default=None, alias="from"),
+        end: date | None = Query(default=None, alias="to"),
+        people: str | None = None,
+        themes: str | None = None,
+        platforms: str | None = None,
+        include_bots: bool = False,
+    ) -> dict[str, Any]:
+        """Monthly reaction volume and reactions per matching message."""
+        filters = QueryFilters(
+            start=start,
+            end=end,
+            people=_csv_ints(people, "people"),
+            themes=_csv_ints(themes, "themes"),
+            platforms=_csv_strings(platforms),
+            include_bots=include_bots,
+        )
+        params: list[Any] = []
+        where = _filters_clause(
+            filters, params, app.state.reconciliation, app.state.theme_id_to_name
+        )
+        message_scope = _metric_sql(
+            "messages",
+            has_is_system=app.state.has_is_system,
+            has_word_count=app.state.has_word_count,
+            excluded_ids=app.state.excluded_message_ids,
+        )
+        with _connect(app.state.db_path) as con:
+            rows = con.execute(
+                f"""
+                SELECT
+                    date_trunc('month', m.ts) AS bucket,
+                    SUM(COALESCE(m.reaction_count, 0)) AS reaction_count,
+                    COUNT(*) AS message_count,
+                    SUM(
+                        CASE WHEN COALESCE(m.reaction_count, 0) > 0 THEN 1 ELSE 0 END
+                    ) AS reacted_message_count
+                FROM messages m
+                JOIN channels c ON c.id = m.channel_id
+                JOIN sources s ON c.source_id = s.id
+                WHERE {where}{message_scope.extra_where}
+                GROUP BY bucket
+                ORDER BY bucket
+                """,
+                params,
+            ).fetchall()
+        return {
+            "granularity": "month",
+            "points": [
+                {
+                    "bucket": row[0].isoformat(),
+                    "reaction_count": int(row[1] or 0),
+                    "message_count": int(row[2] or 0),
+                    "reacted_message_count": int(row[3] or 0),
+                    "reactions_per_message": (
+                        float(row[1] or 0) / int(row[2]) if row[2] else 0.0
+                    ),
+                }
+                for row in rows
+            ],
+        }
+
     @app.get("/api/messages-by-month")
     def messages_by_month(
         start: date | None = Query(default=None, alias="from"),
@@ -4299,6 +4428,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
         metric: str = Query(
             default="messages", pattern="^(messages|words|conversations)$"
         ),
@@ -4311,6 +4441,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -4356,6 +4487,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
         metric: str = Query(
             default="messages", pattern="^(messages|words|conversations)$"
         ),
@@ -4368,6 +4500,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -4410,6 +4543,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         people: str | None = None,
         themes: str | None = None,
         platforms: str | None = None,
+        include_bots: bool = False,
     ) -> dict[str, Any]:
         """Aggregate reaction emoji counts across all matching messages."""
         import json as _json
@@ -4421,6 +4555,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=include_bots,
         )
         params: list[Any] = []
         where = _filters_clause(
@@ -4512,6 +4647,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             people=_csv_ints(people, "people"),
             themes=_csv_ints(themes, "themes"),
             platforms=_csv_strings(platforms),
+            include_bots=True,
         )
         params: list[Any] = []
         where = _filters_clause(

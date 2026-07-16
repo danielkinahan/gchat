@@ -63,6 +63,21 @@ people:
         name: "Alice Example"
 ```
 
+Set `is_bot: true` on a canonical person to exclude that person's messages from
+dashboard statistics by default. The dashboard's **Include bots** toggle adds
+them back without affecting search or message context:
+
+```yaml
+  - name: Example Bot
+    is_bot: true
+    identities:
+      - platform: discord
+        id: "345678901234567890"
+```
+
+Changing only `is_bot` is picked up by API config reload and does not require a
+database rebuild.
+
 `config/themes.yaml` maps source/channel pairs to a shared theme:
 
 ```yaml

@@ -15,6 +15,7 @@
         apiUrl,
         fetchJson,
         type Overview,
+        type ReactionsOverTime,
     } from "$lib/api";
     import { formatRuntimeMtime, selectedCountLabel } from "$lib/formatters";
     import { toReactionImageUrl, toDisplayAttachmentUrl } from "$lib/mediaUrls";
@@ -43,6 +44,7 @@
         ids: number[];
         color: string;
         avatar: string;
+        isBot: boolean;
     };
     type NameHistory = {
         chats: Array<{
@@ -116,7 +118,13 @@
             items: Array<{ id: number; name: string; message_count: number }>;
         };
         metadata: {
-            people: Array<{ id: number; name: string; color: string; avatar: string }>;
+            people: Array<{
+                id: number;
+                name: string;
+                color: string;
+                avatar: string;
+                is_bot: boolean;
+            }>;
             themes: Array<{ id: number; name: string; emoji: string }>;
             platforms: string[];
         };
@@ -128,12 +136,14 @@
                 counts: Record<string, number>;
             }>;
         };
+        reactionsOverTime: ReactionsOverTime;
         filters: {
             from: string;
             to: string;
             people: string;
             themes: string;
             platforms: string;
+            includeBots: boolean;
         };
     };
 
@@ -168,6 +178,7 @@
     let selectedPlatforms = data.filters.platforms
         ? data.filters.platforms.split(",")
         : [];
+    let includeBots = data.filters.includeBots;
     let selectedYear: number | null = selectedYearFromRange(fromDate, toDate);
     let topLimit = 10;
     let activeTab: Tab = "overview";
@@ -200,6 +211,7 @@
             params.set("themes", selectedThemes.join(","));
         if (selectedPlatforms.length > 0)
             params.set("platforms", selectedPlatforms.join(","));
+        if (includeBots) params.set("include_bots", "true");
 
         const path = params.toString() ? `?${params.toString()}` : "/";
         goto(path);
@@ -215,6 +227,7 @@
             params.set("themes", selectedThemes.join(","));
         if (selectedPlatforms.length > 0)
             params.set("platforms", selectedPlatforms.join(","));
+        if (includeBots) params.set("include_bots", "true");
         return params;
     }
 
@@ -400,12 +413,14 @@
     $: selectedPlatforms = data.filters.platforms
         ? data.filters.platforms.split(",")
         : [];
+    $: includeBots = data.filters.includeBots;
     $: filterSignature = [
         fromDate,
         toDate,
         selectedPeople.join(","),
         selectedThemes.join(","),
         selectedPlatforms.join(","),
+        includeBots ? "bots" : "people",
         String(topLimit),
     ].join("|");
     $: if (
@@ -440,6 +455,19 @@
             selectedPlatforms = selectedPlatforms.filter((p) => p !== platform);
         } else {
             selectedPlatforms = [...selectedPlatforms, platform];
+        }
+        updateFilters();
+    }
+
+    function toggleBots() {
+        includeBots = !includeBots;
+        if (!includeBots) {
+            const botIds = new Set(
+                data.metadata.people
+                    .filter((person) => person.is_bot)
+                    .map((person) => person.id),
+            );
+            selectedPeople = selectedPeople.filter((id) => !botIds.has(id));
         }
         updateFilters();
     }
@@ -535,17 +563,20 @@
             const existing = grouped.get(key);
             if (existing) {
                 existing.ids.push(person.id);
+                existing.isBot ||= person.is_bot;
             } else {
                 grouped.set(key, {
                     name: person.name,
                     ids: [person.id],
                     color: person.color || "",
                     avatar: person.avatar || "",
+                    isBot: person.is_bot,
                 });
             }
         }
         return [...grouped.values()]
             .map((option) => ({ ...option, ids: [...new Set(option.ids)] }))
+            .filter((option) => includeBots || !option.isBot)
             .sort((a, b) =>
                 a.name.localeCompare(b.name, undefined, {
                     sensitivity: "base",
@@ -659,8 +690,31 @@
                                 >{person.name.charAt(0).toUpperCase()}</span>
                             {/if}
                             <span class="person-chip-name">{person.name}</span>
+                            {#if person.isBot}
+                                <span class="bot-badge">Bot</span>
+                            {/if}
                         </button>
                     {/each}
+                </div>
+            </fieldset>
+        </div>
+
+        <div class="filter-group filter-card">
+            <fieldset class="date-range-fieldset">
+                <legend>
+                    <span>Bot messages</span>
+                    <small>{includeBots ? "Included" : "Hidden"}</small>
+                </legend>
+                <div class="year-list">
+                    <button
+                        type="button"
+                        class="year-chip"
+                        class:selected={includeBots}
+                        on:click={toggleBots}
+                        aria-pressed={includeBots}
+                    >
+                        Include bots
+                    </button>
                 </div>
             </fieldset>
         </div>
@@ -782,6 +836,7 @@
                 topChats: data.topChats,
                 topThemes: data.topThemes,
                 platformOverTime: data.platformOverTime,
+                reactionsOverTime: data.reactionsOverTime,
             }}
         />
     {/if}
