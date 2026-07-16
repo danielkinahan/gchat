@@ -24,6 +24,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .dictionary import partition_dictionary_words
+from .moderation import (
+    REMOVED_MEDIA_SVG,
+    REMOVED_MEDIA_URL,
+    file_sha256,
+    is_blocked_media_file,
+    load_moderation_config,
+    media_url_if_allowed,
+    set_active_moderation,
+)
 from .person_stats import (
     compute_exclusive_words,
     compute_person_stats,
@@ -431,18 +440,10 @@ def _csv_strings(value: str | None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def _load_excluded_message_ids() -> frozenset[str]:
-    """Load message IDs to exclude from language/word-count stats."""
-    config_path = _default_config_dir() / "excluded_messages.yaml"
-    if not config_path.exists():
-        return frozenset()
-    try:
-        data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    except Exception:
-        return frozenset()
-    if not isinstance(data, list):
-        return frozenset()
-    return frozenset(str(item).strip() for item in data if item and str(item).strip())
+def _load_moderation(config_dir: Path | None = None) -> frozenset[str]:
+    config = load_moderation_config(config_dir or _default_config_dir())
+    set_active_moderation(config)
+    return config.excluded_message_ids
 
 
 def _load_configured_theme_names() -> list[str]:
@@ -713,6 +714,7 @@ def _config_signature(
             "people.yaml",
             "themes.yaml",
             "fb_chat_names.json",
+            "moderation.yaml",
             "excluded_messages.yaml",
         )
     )
@@ -734,6 +736,27 @@ def _safe_child_path(root: Path, rel_path: str) -> Path | None:
 
 def _media_url(platform: str, source: str, rel_path: str) -> str:
     return f"/api/media?{urlencode({'platform': platform, 'source': source, 'path': rel_path})}"
+
+
+def _media_url_for_file(platform: str, source: str, rel_path: str, file_path: Path) -> str:
+    return media_url_if_allowed(_media_url(platform, source, rel_path), file_path)
+
+
+def _resolve_media_target(data_dir: Path, platform: str, source: str, path: str) -> Path | None:
+    if platform == "facebook":
+        source_root = (data_dir / "facebook" / source).resolve()
+        return _safe_child_path(source_root, path)
+    if platform == "signal":
+        source_root = _signal_source_root(data_dir, source)
+        if source_root is None:
+            return None
+        return _safe_child_path(source_root, path)
+    source_root = (data_dir / "discord").resolve()
+    target = _safe_child_path(source_root, path)
+    if target is not None and target.exists() and target.is_file():
+        return target
+    discord_media_root = (data_dir / "discord-media").resolve()
+    return _safe_child_path(discord_media_root, path)
 
 
 def _normalize_facebook_preview_path(preview: str, source_folder: str) -> str:
@@ -841,7 +864,7 @@ def _resolve_local_attachment_url(
         )
         if candidate and candidate.exists() and candidate.is_file():
             relative = candidate.relative_to(source_root).as_posix()
-            return _media_url("facebook", source_folder, relative)
+            return _media_url_for_file("facebook", source_folder, relative, candidate)
         return None
 
     if source_name.startswith("Signal: "):
@@ -853,7 +876,7 @@ def _resolve_local_attachment_url(
         direct = _safe_child_path(source_root, normalized_preview)
         if direct and direct.exists() and direct.is_file():
             relative = direct.relative_to(source_root).as_posix()
-            return _media_url("signal", source_folder, relative)
+            return _media_url_for_file("signal", source_folder, relative, direct)
         if signal_filename_index:
             mapped_rel_path = signal_filename_index.get(source_folder, {}).get(
                 Path(normalized_preview).name.casefold()
@@ -861,7 +884,9 @@ def _resolve_local_attachment_url(
             if mapped_rel_path:
                 mapped = _safe_child_path(source_root, mapped_rel_path)
                 if mapped and mapped.exists() and mapped.is_file():
-                    return _media_url("signal", source_folder, mapped_rel_path)
+                    return _media_url_for_file(
+                        "signal", source_folder, mapped_rel_path, mapped
+                    )
         return None
 
     if source_name.startswith("Discord: "):
@@ -886,20 +911,24 @@ def _resolve_local_attachment_url(
         ):
             try:
                 relative = absolute_candidate.relative_to(source_root).as_posix()
-                return _media_url("discord", source_folder, relative)
+                return _media_url_for_file(
+                    "discord", source_folder, relative, absolute_candidate
+                )
             except ValueError:
                 try:
                     relative = absolute_candidate.relative_to(
                         discord_media_root
                     ).as_posix()
-                    return _media_url("discord", source_folder, relative)
+                    return _media_url_for_file(
+                        "discord", source_folder, relative, absolute_candidate
+                    )
                 except ValueError:
                     pass
 
         direct = _safe_child_path(source_root, normalized_preview)
         if direct and direct.exists() and direct.is_file():
             relative = direct.relative_to(source_root).as_posix()
-            return _media_url("discord", source_folder, relative)
+            return _media_url_for_file("discord", source_folder, relative, direct)
 
         basename = Path(normalized_preview).name
         fallback_candidates = [
@@ -911,9 +940,11 @@ def _resolve_local_attachment_url(
             if fallback and fallback.exists() and fallback.is_file():
                 if str(fallback).startswith(str(discord_media_root)):
                     relative = fallback.relative_to(discord_media_root).as_posix()
-                    return _media_url("discord", source_folder, relative)
+                    return _media_url_for_file(
+                        "discord", source_folder, relative, fallback
+                    )
                 relative = fallback.relative_to(source_root).as_posix()
-                return _media_url("discord", source_folder, relative)
+                return _media_url_for_file("discord", source_folder, relative, fallback)
 
         return None
 
@@ -937,7 +968,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     app.state.reconciliation = load_reconciliation(config_dir=app.state.config_dir)
     app.state.configured_people_names = _load_configured_people_names()
     app.state.primary_person_name = _load_primary_person_name()
-    app.state.excluded_message_ids = _load_excluded_message_ids()
+    app.state.excluded_message_ids = _load_moderation(app.state.config_dir)
     configured_theme_names = _load_configured_theme_names()
     if not configured_theme_names:
         configured_theme_names = _load_db_theme_names(app.state.db_path)
@@ -990,7 +1021,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             )
             app.state.configured_people_names = _load_configured_people_names()
             app.state.primary_person_name = _load_primary_person_name()
-            app.state.excluded_message_ids = _load_excluded_message_ids()
+            app.state.excluded_message_ids = _load_moderation(app.state.config_dir)
             configured_theme_names = _load_configured_theme_names()
             if not configured_theme_names:
                 configured_theme_names = _load_db_theme_names(app.state.db_path)
@@ -1157,29 +1188,31 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             "up_to_date": current_signature == app.state._runtime_signature,
         }
 
-    @app.get("/api/media")
-    def media_file(platform: str, source: str, path: str) -> FileResponse:
+    @app.get("/api/media-removed")
+    def media_removed() -> Response:
+        return Response(content=REMOVED_MEDIA_SVG, media_type="image/svg+xml")
+
+    @app.get("/api/media-hash")
+    def media_hash(platform: str, source: str, path: str) -> dict[str, str]:
+        if platform not in {"facebook", "signal", "discord"}:
+            raise HTTPException(status_code=404, detail="Unsupported media platform")
+        target = _resolve_media_target(app.state.data_dir, platform, source, path)
+        if target is None or not target.is_file():
+            raise HTTPException(status_code=404, detail="Media file not found")
+        stat = target.stat()
+        digest = file_sha256(str(target.resolve()), stat.st_mtime_ns, stat.st_size)
+        return {"sha256": digest, "path": path}
+
+    @app.get("/api/media", response_model=None)
+    def media_file(platform: str, source: str, path: str) -> FileResponse | Response:
         if platform not in {"facebook", "signal", "discord"}:
             raise HTTPException(status_code=404, detail="Unsupported media platform")
 
-        target: Path | None = None
-        if platform == "facebook":
-            source_root = (app.state.data_dir / "facebook" / source).resolve()
-            target = _safe_child_path(source_root, path)
-        elif platform == "signal":
-            source_root = _signal_source_root(app.state.data_dir, source)
-            if source_root is None:
-                raise HTTPException(status_code=404, detail="Media source not found")
-            target = _safe_child_path(source_root, path)
-        else:
-            source_root = (app.state.data_dir / "discord").resolve()
-            target = _safe_child_path(source_root, path)
-            if target is None or not target.exists() or not target.is_file():
-                discord_media_root = (app.state.data_dir / "discord-media").resolve()
-                target = _safe_child_path(discord_media_root, path)
-
-        if target is None or not target.exists() or not target.is_file():
+        target = _resolve_media_target(app.state.data_dir, platform, source, path)
+        if target is None or not target.is_file():
             raise HTTPException(status_code=404, detail="Media file not found")
+        if is_blocked_media_file(target):
+            return Response(content=REMOVED_MEDIA_SVG, media_type="image/svg+xml")
         return FileResponse(target)
 
     @app.get("/api/message-context")

@@ -23,6 +23,7 @@
         url: string | null,
     ): "image" | "video" | "audio" | "link" | null {
         if (!url) return null;
+        if (url.includes("/api/media-removed")) return "image";
         const u = url.toLowerCase();
         if (u.match(/\.(png|jpe?g|gif|webp)(?:$|\?)/)) return "image";
         if (u.match(/\.(mp4|webm|ogg|mov)(?:$|\?)/)) return "video";

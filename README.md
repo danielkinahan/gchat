@@ -34,6 +34,7 @@ deno task check
 config/
   people.yaml
   themes.yaml
+  moderation.yaml
 data/
   discord/
     <guild id>/<channel id>.html
@@ -76,6 +77,20 @@ themes:
 
 If `config/people.yaml` or `config/themes.yaml` is missing, gChat uses the
 corresponding `*.example.yaml` file.
+
+`config/moderation.yaml` (see `config/moderation.example.yaml`) controls content
+moderation in one place:
+
+- `excluded_message_ids` — omitted from language/word-count stats (still visible
+  in search and context). Find IDs via Search → "Show in context" → message ID
+  in the URL fragment.
+- `blocked_media` — attachments replaced with a placeholder when served. Prefer
+  SHA-256 content hashes (stable across re-exports). Discover a hash with
+  `GET /api/media-hash?platform=...&source=...&path=...` or `sha256sum` on the
+  file on disk.
+
+Legacy `config/excluded_messages.yaml` (a plain list of message IDs) is still
+supported if `moderation.yaml` is absent.
 
 During build, gChat also materializes per-person diversity metrics into the
 `person_stats` table (vocabulary breadth, chat/theme/platform spread). The

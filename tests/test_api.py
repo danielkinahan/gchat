@@ -16,6 +16,7 @@ from gchat.api import (
     create_app,
 )
 from gchat.builder import build_database
+from gchat.moderation import REMOVED_MEDIA_URL, set_active_moderation, load_moderation_config
 from tests.test_ingest import ROOT, _write_discord_html_export
 
 
@@ -550,6 +551,68 @@ class ApiTests(unittest.TestCase):
                 signal_url,
                 "/api/media?platform=signal&source=signal-export-test&path=media%2Fsignal-2022-08-16-105045+PM.jpeg",
             )
+
+    def test_blocked_media_returns_placeholder(self) -> None:
+        import hashlib
+        import os
+
+        with TemporaryDirectory() as tmp:
+            data_dir = Path(tmp) / "data"
+            config_dir = Path(tmp) / "config"
+            config_dir.mkdir()
+            media_source_dir = data_dir / "facebook" / "blocked_source" / "photos"
+            media_source_dir.mkdir(parents=True)
+            media_file = media_source_dir / "secret.jpg"
+            media_file.write_bytes(b"blocked-bytes")
+            digest = hashlib.sha256(b"blocked-bytes").hexdigest()
+            (config_dir / "moderation.yaml").write_text(
+                f"blocked_media:\n  sha256:\n    - {digest}\n",
+                encoding="utf-8",
+            )
+
+            previous_config_dir = os.environ.get("GCHAT_CONFIG_DIR")
+            os.environ["GCHAT_CONFIG_DIR"] = str(config_dir)
+            try:
+                client = TestClient(create_app(data_dir=data_dir))
+                media_resp = client.get(
+                    "/api/media",
+                    params={
+                        "platform": "facebook",
+                        "source": "blocked_source",
+                        "path": "photos/secret.jpg",
+                    },
+                )
+                self.assertEqual(media_resp.status_code, 200)
+                self.assertEqual(media_resp.headers["content-type"], "image/svg+xml")
+                self.assertIn(b"removed from gChat", media_resp.content)
+
+                removed_resp = client.get("/api/media-removed")
+                self.assertEqual(removed_resp.status_code, 200)
+                self.assertEqual(removed_resp.headers["content-type"], "image/svg+xml")
+
+                hash_resp = client.get(
+                    "/api/media-hash",
+                    params={
+                        "platform": "facebook",
+                        "source": "blocked_source",
+                        "path": "photos/secret.jpg",
+                    },
+                )
+                self.assertEqual(hash_resp.status_code, 200)
+                self.assertEqual(hash_resp.json()["sha256"], digest)
+
+                set_active_moderation(load_moderation_config(config_dir))
+                resolved = _resolve_local_attachment_url(
+                    "photos/secret.jpg",
+                    "Facebook: blocked_source",
+                    data_dir,
+                )
+                self.assertEqual(resolved, REMOVED_MEDIA_URL)
+            finally:
+                if previous_config_dir is None:
+                    os.environ.pop("GCHAT_CONFIG_DIR", None)
+                else:
+                    os.environ["GCHAT_CONFIG_DIR"] = previous_config_dir
 
 
 if __name__ == "__main__":

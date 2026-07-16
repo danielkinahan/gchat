@@ -1,0 +1,19 @@
+# Unified moderation rules for gChat.
+#
+# excluded_message_ids — hidden from language/word-count stats (still visible in
+# search and context). Find IDs via Search → "Show in context" → message_id in URL.
+#
+# blocked_media — images/files replaced with a placeholder when served. Use SHA-256
+# content hashes so blocks survive export path/filename changes. Discover a hash with:
+#   curl -s "http://localhost:8000/api/media-hash?platform=signal&source=...&path=..."
+# or: sha256sum /path/to/file
+
+excluded_message_ids:
+  # - a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+
+blocked_media:
+  sha256:
+    # - abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
+  filenames:
+    # Optional basename matches (less stable across re-exports):
+    # - IMG_0001.jpg

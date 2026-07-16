@@ -53,6 +53,7 @@ export function attachmentKind(
   preview: string | null,
 ): "image" | "video" | "audio" | "link" | "label" | null {
   if (!preview) return null;
+  if (preview.includes("/api/media-removed")) return "image";
   const normalized = preview.toLowerCase();
   const hasProtocol = normalized.startsWith("http://") ||
     normalized.startsWith("https://");
