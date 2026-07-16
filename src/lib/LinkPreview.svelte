@@ -1,18 +1,12 @@
 <script lang="ts">
+    import {
+        fetchLinkPreview,
+        type LinkPreviewData,
+    } from "$lib/linkPreview";
+
     export let url: string;
 
-    type Preview = {
-        url: string;
-        resolved_url?: string | null;
-        title?: string | null;
-        description?: string | null;
-        image?: string | null;
-        site_name?: string | null;
-        favicon?: string | null;
-        error?: string | null;
-    };
-
-    let preview: Preview | null = null;
+    let preview: LinkPreviewData | null = null;
     let loading = true;
     let lastUrl = "";
 
@@ -22,18 +16,10 @@
         loading = true;
         preview = null;
         try {
-            const response = await fetch(
-                `/api/link-preview?url=${encodeURIComponent(target)}`,
-            );
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            preview = (await response.json()) as Preview;
-        } catch (err) {
-            preview = {
-                url: target,
-                error: err instanceof Error ? err.message : "Failed to load",
-            };
+            const result = await fetchLinkPreview(target);
+            if (lastUrl === target) preview = result;
         } finally {
-            loading = false;
+            if (lastUrl === target) loading = false;
         }
     }
 
@@ -47,7 +33,7 @@
         }
     }
 
-    function hasContent(p: Preview | null): boolean {
+    function hasContent(p: LinkPreviewData | null): boolean {
         if (!p) return false;
         if (p.error) return false;
         return Boolean(

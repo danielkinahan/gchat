@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { tick } from "svelte";
+    import { onMount, tick } from "svelte";
     import { goto } from "$app/navigation";
     import MessageCard from "$lib/components/MessageCard.svelte";
     import ChatsTab from "$lib/tabs/ChatsTab.svelte";
@@ -15,8 +15,6 @@
         apiUrl,
         fetchJson,
         type Overview,
-        type TimePoint,
-        type TopPeople,
     } from "$lib/api";
     import { formatRuntimeMtime, selectedCountLabel } from "$lib/formatters";
     import { toReactionImageUrl, toDisplayAttachmentUrl } from "$lib/mediaUrls";
@@ -46,11 +44,53 @@
         color: string;
         avatar: string;
     };
+    type NameHistory = {
+        chats: Array<{
+            id: number;
+            platform: string;
+            source_name: string;
+            current_name: string;
+            platform_channel_id: string;
+            previous_names: Array<{
+                previous_name: string | null;
+                new_name: string;
+                author_name?: string | null;
+                ts: string | null;
+            }>;
+            participants: Array<{
+                id: number;
+                display_name: string;
+                history: Array<{
+                    previous_name: string | null;
+                    new_name: string;
+                    author_name?: string | null;
+                    ts: string | null;
+                }>;
+            }>;
+        }>;
+    };
+    type Tab =
+        | "overview"
+        | "people"
+        | "language"
+        | "chats"
+        | "nicknames"
+        | "links"
+        | "interactions"
+        | "emoji"
+        | "search";
+    type RuntimeState = {
+        db_path: string;
+        db_exists: boolean;
+        db_mtime_ns: number | null;
+        config_dir: string;
+        cached_signature: unknown;
+        current_signature: unknown;
+        up_to_date: boolean;
+    };
+
     export let data: {
         overview: Overview;
-        messagesOverTime: { granularity: string; points: TimePoint[] };
-        topPeople: TopPeople;
-        calendar: { points: Array<{ day: string; message_count: number }> };
         activityHeatmap: {
             points: Array<{
                 weekday: number;
@@ -72,31 +112,6 @@
         messagesByHour: {
             points: Array<{ hour: number; message_count: number }>;
         };
-        nameHistory: {
-            chats: Array<{
-                id: number;
-                platform: string;
-                source_name: string;
-                current_name: string;
-                platform_channel_id: string;
-                previous_names: Array<{
-                    previous_name: string | null;
-                    new_name: string;
-                    author_name?: string | null;
-                    ts: string | null;
-                }>;
-                participants: Array<{
-                    id: number;
-                    display_name: string;
-                    history: Array<{
-                        previous_name: string | null;
-                        new_name: string;
-                        author_name?: string | null;
-                        ts: string | null;
-                    }>;
-                }>;
-            }>;
-        };
         topThemes: {
             items: Array<{ id: number; name: string; message_count: number }>;
         };
@@ -104,15 +119,6 @@
             people: Array<{ id: number; name: string; color: string; avatar: string }>;
             themes: Array<{ id: number; name: string; emoji: string }>;
             platforms: string[];
-        };
-        runtimeState: {
-            db_path: string;
-            db_exists: boolean;
-            db_mtime_ns: number | null;
-            config_dir: string;
-            cached_signature: unknown;
-            current_signature: unknown;
-            up_to_date: boolean;
         };
         platformOverTime: {
             granularity: string;
@@ -164,19 +170,25 @@
         : [];
     let selectedYear: number | null = selectedYearFromRange(fromDate, toDate);
     let topLimit = 10;
-    let activeTab:
-        | "overview"
-        | "people"
-        | "language"
-        | "chats"
-        | "nicknames"
-        | "links"
-        | "interactions"
-        | "emoji"
-        | "search" = "overview";
+    let activeTab: Tab = "overview";
+    let mountedTabs: Partial<Record<Tab, boolean>> = { overview: true };
     let peopleFilterOptions: PeopleFilterOption[] = [];
     let nicknamePeople: NicknamePersonGroup[] = [];
-    let runtimeState = data.runtimeState;
+    let runtimeState: RuntimeState | null = null;
+    let nameHistory: NameHistory | null = null;
+    let nameHistoryLoading = false;
+    let nameHistoryError = "";
+    let nameHistoryFilterKey: string | null = null;
+
+    onMount(() => {
+        void fetchJson<RuntimeState>("/api/runtime-state")
+            .then((state) => {
+                runtimeState = state;
+            })
+            .catch(() => {
+                runtimeState = null;
+            });
+    });
 
     function updateFilters() {
         const params = new URLSearchParams();
@@ -206,20 +218,46 @@
         return params;
     }
 
+    function activateTab(tab: Tab) {
+        activeTab = tab;
+        mountedTabs = { ...mountedTabs, [tab]: true };
+        if (tab === "chats" || tab === "nicknames") {
+            void loadNameHistory();
+        }
+    }
+
     function openLanguageTab() {
-        activeTab = "language";
+        activateTab("language");
     }
 
     function openOverviewTab() {
-        activeTab = "overview";
+        activateTab("overview");
     }
 
     function openChatsTab() {
-        activeTab = "chats";
+        activateTab("chats");
     }
 
     function openNicknamesTab() {
-        activeTab = "nicknames";
+        activateTab("nicknames");
+    }
+
+    async function loadNameHistory(): Promise<void> {
+        const filterKey = currentFilterParams().toString();
+        if (nameHistoryLoading || nameHistoryFilterKey === filterKey) return;
+        nameHistoryLoading = true;
+        nameHistoryFilterKey = filterKey;
+        nameHistoryError = "";
+        try {
+            nameHistory = await fetchJson<NameHistory>(
+                `/api/name-history${filterKey ? `?${filterKey}` : ""}`,
+            );
+        } catch (err) {
+            nameHistoryError =
+                err instanceof Error ? err.message : "Failed to load name history";
+        } finally {
+            nameHistoryLoading = false;
+        }
     }
 
     let snippetMessages: Array<any> = [];
@@ -343,11 +381,11 @@
     }
 
     function openLinksTab() {
-        activeTab = "links";
+        activateTab("links");
     }
 
     function openInteractionsTab() {
-        activeTab = "interactions";
+        activateTab("interactions");
     }
 
     $: fromDate = data.filters.from;
@@ -370,8 +408,13 @@
         selectedPlatforms.join(","),
         String(topLimit),
     ].join("|");
-
-    $: runtimeState = data.runtimeState;
+    $: if (
+        (activeTab === "chats" || activeTab === "nicknames") &&
+        !nameHistoryLoading &&
+        nameHistoryFilterKey !== currentFilterParams().toString()
+    ) {
+        void loadNameHistory();
+    }
 
     function togglePerson(ids: number[]) {
         const hasAnySelected = ids.some((id) => selectedPeople.includes(id));
@@ -422,7 +465,7 @@
 
     $: nicknamePeople = (() => {
         const grouped = new Map<string, NicknamePersonGroup>();
-        for (const chat of data.nameHistory.chats) {
+        for (const chat of nameHistory?.chats ?? []) {
             if (chat.platform !== "facebook") continue;
             for (const person of chat.participants) {
                 if (!person.history.length) continue;
@@ -680,12 +723,12 @@
         <button
             class:active={activeTab === "overview"}
             type="button"
-            on:click={() => (activeTab = "overview")}>Messages</button
+            on:click={() => activateTab("overview")}>Messages</button
         >
         <button
             class:active={activeTab === "people"}
             type="button"
-            on:click={() => (activeTab = "people")}>People</button
+            on:click={() => activateTab("people")}>People</button
         >
         <button
             class:active={activeTab === "language"}
@@ -715,82 +758,114 @@
         <button
             class:active={activeTab === "emoji"}
             type="button"
-            on:click={() => (activeTab = "emoji")}>Emoji</button
+            on:click={() => activateTab("emoji")}>Emoji</button
         >
         <button
             class:active={activeTab === "search"}
             type="button"
-            on:click={() => (activeTab = "search")}>Search</button
+            on:click={() => activateTab("search")}>Search</button
         >
     </section>
 
-    <MessagesTab
-        active={activeTab === "overview"}
-        {filterSignature}
-        {currentFilterParams}
-        {topLimit}
-        {openInContext}
-        baseData={{
-            overview: data.overview,
-            topPeople: data.topPeople,
-            calendar: data.calendar,
-            activityHeatmap: data.activityHeatmap,
-            messagesByMonth: data.messagesByMonth,
-            messagesByHour: data.messagesByHour,
-            topChats: data.topChats,
-            topThemes: data.topThemes,
-            platformOverTime: data.platformOverTime,
-        }}
-    />
+    {#if mountedTabs.overview}
+        <MessagesTab
+            active={activeTab === "overview"}
+            {filterSignature}
+            {currentFilterParams}
+            {topLimit}
+            {openInContext}
+            baseData={{
+                overview: data.overview,
+                activityHeatmap: data.activityHeatmap,
+                messagesByMonth: data.messagesByMonth,
+                messagesByHour: data.messagesByHour,
+                topChats: data.topChats,
+                topThemes: data.topThemes,
+                platformOverTime: data.platformOverTime,
+            }}
+        />
+    {/if}
 
-    <PeopleTab
-        active={activeTab === "people"}
-        {filterSignature}
-        {currentFilterParams}
-        {topLimit}
-    />
+    {#if mountedTabs.people}
+        <PeopleTab
+            active={activeTab === "people"}
+            {filterSignature}
+            {currentFilterParams}
+            {topLimit}
+        />
+    {/if}
 
-    <LanguageTab
-        active={activeTab === "language"}
-        {filterSignature}
-        {currentFilterParams}
-        {topLimit}
-        {openInContext}
-    />
+    {#if mountedTabs.language}
+        <LanguageTab
+            active={activeTab === "language"}
+            {filterSignature}
+            {currentFilterParams}
+            {topLimit}
+            {openInContext}
+        />
+    {/if}
 
-    <LinksTab
-        active={activeTab === "links"}
-        {filterSignature}
-        {currentFilterParams}
-        {topLimit}
-        {openInContext}
-    />
+    {#if mountedTabs.links}
+        <LinksTab
+            active={activeTab === "links"}
+            {filterSignature}
+            {currentFilterParams}
+            {topLimit}
+            {openInContext}
+        />
+    {/if}
 
-    <InteractionsTab
-        active={activeTab === "interactions"}
-        {filterSignature}
-        {currentFilterParams}
-        {topLimit}
-        {openInContext}
-        resolveReactionImage={toReactionImageUrl}
-    />
+    {#if mountedTabs.interactions}
+        <InteractionsTab
+            active={activeTab === "interactions"}
+            {filterSignature}
+            {currentFilterParams}
+            {topLimit}
+            {openInContext}
+            resolveReactionImage={toReactionImageUrl}
+        />
+    {/if}
 
-    <ChatsTab chats={data.nameHistory.chats} active={activeTab === "chats"} />
+    {#if mountedTabs.chats}
+        {#if nameHistory}
+            <ChatsTab chats={nameHistory.chats} active={activeTab === "chats"} />
+        {:else if activeTab === "chats"}
+            <section class="tab-content">
+                <p class="muted">
+                    {nameHistoryLoading ? "Loading chat history…" : nameHistoryError}
+                </p>
+            </section>
+        {/if}
+    {/if}
 
-    <NicknamesTab people={nicknamePeople} active={activeTab === "nicknames"} />
+    {#if mountedTabs.nicknames}
+        {#if nameHistory}
+            <NicknamesTab people={nicknamePeople} active={activeTab === "nicknames"} />
+        {:else if activeTab === "nicknames"}
+            <section class="tab-content">
+                <p class="muted">
+                    {nameHistoryLoading ? "Loading nickname history…" : nameHistoryError}
+                </p>
+            </section>
+        {/if}
+    {/if}
 
-    <EmojiTab
-        active={activeTab === "emoji"}
-        {filterSignature}
-        {currentFilterParams}
-        {topLimit}
-    />
+    {#if mountedTabs.emoji}
+        <EmojiTab
+            active={activeTab === "emoji"}
+            {filterSignature}
+            {currentFilterParams}
+            {topLimit}
+        />
+    {/if}
 
-    <SearchTab
-        active={activeTab === "search"}
-        {currentFilterParams}
-        {openInContext}
-    />
+    {#if mountedTabs.search}
+        <SearchTab
+            active={activeTab === "search"}
+            {currentFilterParams}
+            {openInContext}
+        />
+    {/if}
     {#if snippetModalVisible}
         <div
             class="snippet-modal-backdrop"
@@ -834,7 +909,7 @@
                     <p class="muted">{snippetError}</p>
                 {:else}
                     <div class="snippet-body">
-                        {#each snippetMessages as message}
+                        {#each snippetMessages as message (message.id)}
                             <MessageCard
                                 {message}
                                 highlight={message.id === snippetTargetId}
@@ -861,17 +936,19 @@
     {/if}
 </main>
 
-<footer class="runtime-footer">
-    <div class="runtime-footer-inner">
-        <strong>Runtime</strong>
-        <span
-            class:runtime-ok={runtimeState.up_to_date}
-            class:runtime-stale={!runtimeState.up_to_date}
-        >
-            {runtimeState.up_to_date ? "Up to date" : "Needs refresh"}
-        </span>
-        <span class="runtime-footer-mtime">
-            DB updated {formatRuntimeMtime(runtimeState.db_mtime_ns)}
-        </span>
-    </div>
-</footer>
+{#if runtimeState}
+    <footer class="runtime-footer">
+        <div class="runtime-footer-inner">
+            <strong>Runtime</strong>
+            <span
+                class:runtime-ok={runtimeState.up_to_date}
+                class:runtime-stale={!runtimeState.up_to_date}
+            >
+                {runtimeState.up_to_date ? "Up to date" : "Needs refresh"}
+            </span>
+            <span class="runtime-footer-mtime">
+                DB updated {formatRuntimeMtime(runtimeState.db_mtime_ns)}
+            </span>
+        </div>
+    </footer>
+{/if}

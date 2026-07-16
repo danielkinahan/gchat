@@ -12,6 +12,9 @@ from fastapi.testclient import TestClient
 
 from gchat.api import (
     _build_signal_filename_index,
+    _excluded_ids_sql,
+    _is_safe_link_host,
+    _metric_sql,
     _resolve_local_attachment_url,
     create_app,
 )
@@ -21,6 +24,30 @@ from tests.test_ingest import ROOT, _write_discord_html_export
 
 
 class ApiTests(unittest.TestCase):
+    def test_word_metric_uses_materialized_count_with_legacy_fallback(self) -> None:
+        materialized = _metric_sql("words", has_word_count=True)
+        self.assertIn("m.word_count", materialized.inner_select_suffix)
+        self.assertNotIn("regexp_extract_all", materialized.inner_select_suffix)
+
+        legacy = _metric_sql("words", has_word_count=False)
+        self.assertIn("regexp_extract_all", legacy.inner_select_suffix)
+
+    def test_excluded_message_ids_are_sql_escaped(self) -> None:
+        fragment = _excluded_ids_sql(frozenset({"safe", "quote'id"}))
+        self.assertIn("'quote''id'", fragment)
+        self.assertNotIn("'quote'id'", fragment)
+        conversations = _metric_sql(
+            "conversations",
+            has_is_system=True,
+            excluded_ids=frozenset({"safe"}),
+        )
+        self.assertIn("NOT m.is_system", conversations.extra_where)
+        self.assertIn("'safe'", conversations.extra_where)
+
+    def test_link_preview_rejects_internal_hosts(self) -> None:
+        self.assertFalse(_is_safe_link_host("127.0.0.1"))
+        self.assertFalse(_is_safe_link_host("localhost"))
+
     def test_read_endpoints(self) -> None:
         with TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
@@ -57,7 +84,12 @@ class ApiTests(unittest.TestCase):
             build_database(data_dir, db_path, config_dir=config_dir)
 
             client = TestClient(create_app(db_path, data_dir=data_dir))
-            overview = client.get("/api/overview").json()
+            overview_response = client.get("/api/overview")
+            self.assertEqual(
+                overview_response.headers.get("cache-control"),
+                "private, max-age=60",
+            )
+            overview = overview_response.json()
             self.assertGreater(overview["total_messages"], 0)
             self.assertTrue(overview["people"])
             self.assertIn("message_stats", overview)

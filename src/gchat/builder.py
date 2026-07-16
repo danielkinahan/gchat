@@ -114,6 +114,8 @@ def build_database(
     config_dir: Path | None = None,
 ) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    if output_path.exists() and not overwrite:
+        raise FileExistsError(f"Database already exists: {output_path}")
 
     # Build to a temporary file so the API can continue serving the old DB
     temp_output = output_path.with_suffix(output_path.suffix + ".tmp")
@@ -434,9 +436,7 @@ def build_database(
     con.execute("COMMIT")
     con.close()
 
-    # Atomically replace the old database with the new one
-    if output_path.exists():
-        output_path.unlink()
-    temp_output.rename(output_path)
+    # Atomic on a single filesystem, so readers never observe a missing DB path.
+    temp_output.replace(output_path)
 
     _notify(status, f"Build complete: {output_path}")

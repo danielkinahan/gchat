@@ -1,6 +1,5 @@
 <script lang="ts">
     import { fetchJson } from "$lib/api";
-    import { tick } from "svelte";
 
     type SearchResult = {
         id: string;
@@ -60,13 +59,32 @@
         }
     }
 
-    function highlight(text: string | null, q: string): string {
-        if (!text || !q) return text ?? "";
+    function highlightedParts(
+        text: string | null,
+        q: string,
+    ): Array<{ text: string; highlighted: boolean }> {
+        if (!text || !q) {
+            return text ? [{ text, highlighted: false }] : [];
+        }
         const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        return text.replace(
-            new RegExp(escaped, "gi"),
-            (m) => `<mark>${m}</mark>`,
-        );
+        const matcher = new RegExp(escaped, "gi");
+        const parts: Array<{ text: string; highlighted: boolean }> = [];
+        let cursor = 0;
+        for (const match of text.matchAll(matcher)) {
+            const index = match.index ?? 0;
+            if (index > cursor) {
+                parts.push({
+                    text: text.slice(cursor, index),
+                    highlighted: false,
+                });
+            }
+            parts.push({ text: match[0], highlighted: true });
+            cursor = index + match[0].length;
+        }
+        if (cursor < text.length) {
+            parts.push({ text: text.slice(cursor), highlighted: false });
+        }
+        return parts;
     }
 
     function formatTs(ts: string | null): string {
@@ -141,9 +159,15 @@
                                 <time class="muted">{formatTs(r.ts)}</time>
                             {/if}
                         </div>
-                        <p
-                            class="result-content"
-                        >{@html highlight(r.content, query.trim())}</p>
+                        <p class="result-content">
+                            {#each highlightedParts(r.content, query.trim()) as part}
+                                {#if part.highlighted}
+                                    <mark>{part.text}</mark>
+                                {:else}
+                                    {part.text}
+                                {/if}
+                            {/each}
+                        </p>
                         <button
                             type="button"
                             class="result-context-btn"

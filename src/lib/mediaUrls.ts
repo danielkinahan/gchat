@@ -1,4 +1,4 @@
-import { apiUrl } from "./api.ts";
+import { apiUrl } from "./api";
 
 export function toMediaUrl(value: string | null): string | null {
   return value && value.startsWith("/api/") ? apiUrl(value) : value;

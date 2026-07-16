@@ -81,7 +81,7 @@
     }
 
     async function loadTopWords() {
-        const filterKey = currentFilterParams().toString();
+        const filterKey = filterSignature;
         if (isLoadingWords || loadedWordsFilterKey === filterKey) return;
         const requestId = ++wordsRequestId;
         isLoadingWords = true;
@@ -155,6 +155,8 @@
     $: chartPoints = wordOverTime.points;
     $: chartMax = Math.max(...chartPoints.map((p) => p.percent), 0.01);
     $: labelStep = Math.max(1, Math.ceil(chartPoints.length / 7));
+    $: peopleMaxCount = maxCount(wordBreakdown.people);
+    $: chatMaxCount = maxCount(wordBreakdown.chats);
 
     function formatPercent(value: number): string {
         if (value >= 10) return `${value.toFixed(1)}%`;
@@ -307,7 +309,7 @@
                                 >
                                     <div
                                         class="mini-bar"
-                                        style={`width:${(person.count / maxCount(wordBreakdown.people)) * 100}% ; background:${person.color}`}
+                                        style={`width:${(person.count / peopleMaxCount) * 100}% ; background:${person.color}`}
                                     ></div>
                                 </div>
                                 <strong>{person.count.toLocaleString()}</strong>
@@ -327,7 +329,7 @@
                                 >
                                     <div
                                         class="mini-bar chat"
-                                        style={`width:${(chat.count / maxCount(wordBreakdown.chats)) * 100}%`}
+                                        style={`width:${(chat.count / chatMaxCount) * 100}%`}
                                     ></div>
                                 </div>
                                 <strong>{chat.count.toLocaleString()}</strong>

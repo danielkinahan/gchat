@@ -93,7 +93,7 @@
     $: visibleMentions = filteredMentions.slice(0, topLimit);
 
     async function loadData() {
-        const filterKey = currentFilterParams().toString();
+        const filterKey = filterSignature;
         if (isLoading || loadedFilterKey === filterKey) return;
         isLoading = true;
         error = "";

@@ -26,7 +26,6 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from .dictionary import partition_dictionary_words
 from .moderation import (
     REMOVED_MEDIA_SVG,
-    REMOVED_MEDIA_URL,
     file_sha256,
     is_blocked_media_file,
     load_moderation_config,
@@ -58,7 +57,7 @@ def _is_safe_link_host(host: str) -> bool:
     """Reject obvious internal/loopback hosts to mitigate SSRF abuse."""
     if not host:
         return False
-    lowered = host.split(":")[0].strip().lower()
+    lowered = host.strip().lower().rstrip(".")
     if lowered in {"localhost", "broadcasthost"} or lowered.endswith(".local"):
         return False
     try:
@@ -101,9 +100,9 @@ def _select_link_preview_meta(soup: BeautifulSoup, names: list[str]) -> str | No
 def _fetch_link_preview(url: str) -> dict[str, Any]:
     """Fetch the URL and parse OpenGraph/HTML metadata into a preview payload."""
     parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
         raise ValueError("URL must be http(s) with a host")
-    if not _is_safe_link_host(parsed.netloc):
+    if not _is_safe_link_host(parsed.hostname):
         raise ValueError("Host is not allowed")
 
     headers = {
@@ -113,24 +112,42 @@ def _fetch_link_preview(url: str) -> dict[str, Any]:
     }
     with httpx.Client(
         timeout=_LINK_PREVIEW_TIMEOUT_SECONDS,
-        follow_redirects=True,
+        follow_redirects=False,
         headers=headers,
     ) as client:
-        with client.stream("GET", url) as response:
-            response.raise_for_status()
-            content_type = response.headers.get("content-type", "")
-            if "html" not in content_type.lower():
-                raise ValueError(f"Unsupported content-type: {content_type}")
-            chunks: list[bytes] = []
-            total = 0
-            for chunk in response.iter_bytes():
-                chunks.append(chunk)
-                total += len(chunk)
-                if total >= _LINK_PREVIEW_MAX_BYTES:
-                    break
-            raw = b"".join(chunks)[:_LINK_PREVIEW_MAX_BYTES]
-            final_url = str(response.url)
-            encoding = response.encoding or "utf-8"
+        current_url = url
+        for redirect_count in range(6):
+            current = urlparse(current_url)
+            if (
+                current.scheme not in ("http", "https")
+                or not current.hostname
+                or not _is_safe_link_host(current.hostname)
+            ):
+                raise ValueError("Redirect host is not allowed")
+            with client.stream("GET", current_url) as response:
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise ValueError("Redirect response has no location")
+                    current_url = urljoin(str(response.url), location)
+                    continue
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "")
+                if "html" not in content_type.lower():
+                    raise ValueError(f"Unsupported content-type: {content_type}")
+                chunks: list[bytes] = []
+                total = 0
+                for chunk in response.iter_bytes():
+                    chunks.append(chunk)
+                    total += len(chunk)
+                    if total >= _LINK_PREVIEW_MAX_BYTES:
+                        break
+                raw = b"".join(chunks)[:_LINK_PREVIEW_MAX_BYTES]
+                final_url = str(response.url)
+                encoding = response.encoding or "utf-8"
+                break
+        else:
+            raise ValueError("Too many redirects")
     try:
         body = raw.decode(encoding, errors="replace")
     except LookupError:
@@ -256,13 +273,16 @@ def _excluded_ids_sql(excluded_ids: frozenset[str]) -> str:
     """Return a WHERE fragment excluding specific message IDs, or empty string."""
     if not excluded_ids:
         return ""
-    ids_literal = ", ".join(f"'{id_}'" for id_ in sorted(excluded_ids))
+    ids_literal = ", ".join(
+        f"'{id_.replace(chr(39), chr(39) * 2)}'" for id_ in sorted(excluded_ids)
+    )
     return f" AND m.id NOT IN ({ids_literal})"
 
 
 def _metric_sql(
     metric: str,
     has_is_system: bool = False,
+    has_word_count: bool = True,
     excluded_ids: frozenset[str] | None = None,
 ) -> _MetricSql:
     is_system_filter = " AND NOT m.is_system" if has_is_system else ""
@@ -271,7 +291,7 @@ def _metric_sql(
         return _MetricSql(
             aggregate="SUM(word_count)",
             inner_select_suffix=(
-                f", m.conversation_id, {_word_count_expr()} AS word_count"
+                f", m.conversation_id, {_word_count_expr(has_word_count)} AS word_count"
             ),
             extra_where=f"{is_system_filter}{excluded_filter}",
         )
@@ -279,7 +299,10 @@ def _metric_sql(
         return _MetricSql(
             aggregate="COUNT(DISTINCT conversation_id)",
             inner_select_suffix=", m.conversation_id",
-            extra_where=" AND m.conversation_id IS NOT NULL",
+            extra_where=(
+                f" AND m.conversation_id IS NOT NULL"
+                f"{is_system_filter}{excluded_filter}"
+            ),
         )
     return _MetricSql(
         aggregate="COUNT(*)",
@@ -288,7 +311,9 @@ def _metric_sql(
     )
 
 
-def _word_count_expr() -> str:
+def _word_count_expr(has_word_count: bool = True) -> str:
+    if has_word_count:
+        return "COALESCE(m.word_count, 0)"
     return "COALESCE(array_length(regexp_extract_all(replace(lower(coalesce(m.content, '')), chr(39), ''), '[a-z]{3,}')), 0)"
 
 
@@ -989,6 +1014,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     )
     app.state.has_is_edited = _messages_has_column(app.state.db_path, "is_edited")
     app.state.has_is_system = _messages_has_column(app.state.db_path, "is_system")
+    app.state.has_word_count = _messages_has_column(app.state.db_path, "word_count")
     app.state.has_person_stats = _table_exists(app.state.db_path, "person_stats")
     app.state.has_conversation_id = _messages_has_column(
         app.state.db_path, "conversation_id"
@@ -998,10 +1024,15 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         _path_signature(app.state.db_path),
         _config_signature(app.state.config_dir),
     )
+    app.state._runtime_last_check = 0.0
     app.state._runtime_lock = threading.Lock()
     _THEME_CHANNEL_IDS = app.state.theme_to_channel_ids
 
-    def _refresh_runtime_state() -> None:
+    def _refresh_runtime_state(force: bool = False) -> None:
+        now = _time.monotonic()
+        if not force and now - app.state._runtime_last_check < 1.0:
+            return
+        app.state._runtime_last_check = now
         current_signature = (
             _path_signature(app.state.db_path),
             _config_signature(app.state.config_dir),
@@ -1015,6 +1046,9 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             )
             if current_signature == app.state._runtime_signature:
                 return
+            database_changed = (
+                current_signature[0] != app.state._runtime_signature[0]
+            )
             app.state.fb_chat_names = _load_fb_chat_names()
             app.state.reconciliation = load_reconciliation(
                 config_dir=app.state.config_dir
@@ -1046,15 +1080,19 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             app.state.has_is_system = _messages_has_column(
                 app.state.db_path, "is_system"
             )
+            app.state.has_word_count = _messages_has_column(
+                app.state.db_path, "word_count"
+            )
             app.state.has_person_stats = _table_exists(
                 app.state.db_path, "person_stats"
             )
             app.state.has_conversation_id = _messages_has_column(
                 app.state.db_path, "conversation_id"
             )
-            app.state.signal_filename_index = _build_signal_filename_index(
-                app.state.data_dir
-            )
+            if database_changed:
+                app.state.signal_filename_index = _build_signal_filename_index(
+                    app.state.data_dir
+                )
             app.state._runtime_signature = current_signature
             global _THEME_CHANNEL_IDS
             _THEME_CHANNEL_IDS = app.state.theme_to_channel_ids
@@ -1082,7 +1120,21 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
             return await call_next(request)
         if not _is_authenticated(request):
             return JSONResponse({"error": "Unauthorized"}, status_code=401)
-        return await call_next(request)
+        response = await call_next(request)
+        if (
+            request.method == "GET"
+            and path.startswith("/api/")
+            and path
+            not in {
+                "/api/runtime-state",
+                "/api/link-preview",
+                "/api/message-window",
+                "/api/search",
+            }
+            and not path.startswith(("/api/auth/", "/api/media"))
+        ):
+            response.headers.setdefault("Cache-Control", "private, max-age=60")
+        return response
 
     @app.get("/api/auth/status")
     def auth_status(request: Request) -> dict[str, bool]:
@@ -1159,7 +1211,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
     @app.post("/api/reload")
     def reload_api() -> dict[str, Any]:
         """Reload cached DB/config state without restarting the process."""
-        _refresh_runtime_state()
+        _refresh_runtime_state(force=True)
         current_signature = (
             _path_signature(app.state.db_path),
             _config_signature(app.state.config_dir),
@@ -1939,6 +1991,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         ms = _metric_sql(
             metric,
             has_is_system=app.state.has_is_system,
+            has_word_count=app.state.has_word_count,
             excluded_ids=app.state.excluded_message_ids,
         )
         with _connect(app.state.db_path) as con:
@@ -2266,6 +2319,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         ms = _metric_sql(
             metric,
             has_is_system=app.state.has_is_system,
+            has_word_count=app.state.has_word_count,
             excluded_ids=app.state.excluded_message_ids,
         )
         with _connect(app.state.db_path) as con:
@@ -2321,6 +2375,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         ms = _metric_sql(
             metric,
             has_is_system=app.state.has_is_system,
+            has_word_count=app.state.has_word_count,
             excluded_ids=app.state.excluded_message_ids,
         )
         with _connect(app.state.db_path) as con:
@@ -2395,6 +2450,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         ms = _metric_sql(
             metric,
             has_is_system=app.state.has_is_system,
+            has_word_count=app.state.has_word_count,
             excluded_ids=app.state.excluded_message_ids,
         )
         with _connect(app.state.db_path) as con:
@@ -2447,6 +2503,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         ms = _metric_sql(
             metric,
             has_is_system=app.state.has_is_system,
+            has_word_count=app.state.has_word_count,
             excluded_ids=app.state.excluded_message_ids,
         )
         with _connect(app.state.db_path) as con:
@@ -2506,6 +2563,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         ms = _metric_sql(
             metric,
             has_is_system=app.state.has_is_system,
+            has_word_count=app.state.has_word_count,
             excluded_ids=app.state.excluded_message_ids,
         )
         with _connect(app.state.db_path) as con:
@@ -3341,6 +3399,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         ms = _metric_sql(
             metric,
             has_is_system=app.state.has_is_system,
+            has_word_count=app.state.has_word_count,
             excluded_ids=app.state.excluded_message_ids,
         )
         with _connect(app.state.db_path) as con:
@@ -3409,6 +3468,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         ms = _metric_sql(
             metric,
             has_is_system=app.state.has_is_system,
+            has_word_count=app.state.has_word_count,
             excluded_ids=app.state.excluded_message_ids,
         )
         with _connect(app.state.db_path) as con:
@@ -4259,6 +4319,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         ms = _metric_sql(
             metric,
             has_is_system=app.state.has_is_system,
+            has_word_count=app.state.has_word_count,
             excluded_ids=app.state.excluded_message_ids,
         )
         with _connect(app.state.db_path) as con:
@@ -4315,6 +4376,7 @@ def create_app(db_path: Path | None = None, data_dir: Path | None = None) -> Fas
         ms = _metric_sql(
             metric,
             has_is_system=app.state.has_is_system,
+            has_word_count=app.state.has_word_count,
             excluded_ids=app.state.excluded_message_ids,
         )
         with _connect(app.state.db_path) as con:

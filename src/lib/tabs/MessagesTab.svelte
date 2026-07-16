@@ -12,13 +12,17 @@
         formatMostActiveDay,
         formatMostActiveHour,
     } from "$lib/formatters";
+    import {
+        hourlyTotals,
+        monthlyTotals,
+    } from "$lib/dashboardMetrics";
+    import type { PlatformOverTime } from "$lib/api";
 
     type CountMetric = "messages" | "words" | "conversations";
 
     type MessageTabData = {
         overview: Overview;
         topPeople: TopPeople;
-        calendar: { points: Array<{ day: string; message_count: number }> };
         activityHeatmap: {
             points: Array<{
                 weekday: number;
@@ -52,8 +56,6 @@
     export let openInContext: (messageId: string) => void;
     export let baseData: {
         overview: Overview;
-        topPeople: TopPeople;
-        calendar: { points: Array<{ day: string; message_count: number }> };
         activityHeatmap: {
             points: Array<{
                 weekday: number;
@@ -93,8 +95,7 @@
     let messageMetric: CountMetric = "messages";
     let overviewData: MessageTabData = {
         overview: baseData.overview,
-        topPeople: baseData.topPeople,
-        calendar: baseData.calendar,
+        topPeople: { items: baseData.overview.people.slice(0, topLimit) },
         activityHeatmap: baseData.activityHeatmap,
         messagesByMonth: baseData.messagesByMonth,
         messagesByHour: baseData.messagesByHour,
@@ -114,7 +115,6 @@
     let loadedConversationMetricFilterKey: string | null = null;
 
     type MessagesTopOverride = {
-        topPeople: TopPeople;
         topChats: MessageTabData["topChats"];
         topThemes: MessageTabData["topThemes"];
     };
@@ -143,21 +143,12 @@
         const query = baseParams.toString();
         const [
             overview,
-            topPeople,
-            calendar,
             activityHeatmap,
-            messagesByMonth,
-            messagesByHour,
+            platformOverTime,
             topChats,
             topThemes,
         ] = await Promise.all([
             fetchJson<Overview>(`/api/overview?${query}`),
-            fetchJson<TopPeople>(
-                `/api/top-people?limit=${topLimit}&${query}`,
-            ),
-            fetchJson<{
-                points: Array<{ day: string; message_count: number }>;
-            }>(`/api/calendar?${query}`),
             fetchJson<{
                 points: Array<{
                     weekday: number;
@@ -165,12 +156,9 @@
                     message_count: number;
                 }>;
             }>(`/api/activity-heatmap?${query}`),
-            fetchJson<{
-                points: Array<{ month: string; message_count: number }>;
-            }>(`/api/messages-by-month?${query}`),
-            fetchJson<{
-                points: Array<{ hour: number; message_count: number }>;
-            }>(`/api/messages-by-hour?${query}`),
+            fetchJson<PlatformOverTime>(
+                `/api/platform-over-time?granularity=month&${query}`,
+            ),
             fetchJson<{
                 items: Array<{
                     id: number;
@@ -189,18 +177,17 @@
         ]);
         return {
             overview,
-            topPeople,
-            calendar,
+            topPeople: { items: overview.people.slice(0, topLimit) },
             activityHeatmap,
-            messagesByMonth,
-            messagesByHour,
+            messagesByMonth: monthlyTotals(platformOverTime),
+            messagesByHour: hourlyTotals(activityHeatmap.points),
             topChats,
             topThemes,
         };
     }
 
     async function loadWordMetricData() {
-        const filterKey = currentFilterParams().toString();
+        const filterKey = filterSignature;
         if (
             isLoadingWordMetric ||
             (loadedWordMetricFilterKey === filterKey && wordMetricData)
@@ -231,7 +218,7 @@
     }
 
     async function loadConversationMetricData() {
-        const filterKey = currentFilterParams().toString();
+        const filterKey = filterSignature;
         if (
             isLoadingConversationMetric ||
             (loadedConversationMetricFilterKey === filterKey &&
@@ -311,10 +298,7 @@
         try {
             const baseParams = currentFilterParams();
             const query = baseParams.toString();
-            const [topPeople, topChats, topThemes] = await Promise.all([
-                fetchJson<TopPeople>(
-                    `/api/top-people?limit=${topLimit}&${query}`,
-                ),
+            const [topChats, topThemes] = await Promise.all([
                 fetchJson<MessageTabData["topChats"]>(
                     `/api/top-chats?limit=${topLimit}&${query}`,
                 ),
@@ -323,7 +307,7 @@
                 ),
             ]);
             if (requestId !== messagesTopRequestId) return;
-            messagesTopOverride = { topPeople, topChats, topThemes };
+            messagesTopOverride = { topChats, topThemes };
             messagesTopOverrideKey = filterKey;
         } catch {
             // fall back to base data silently
@@ -337,6 +321,7 @@
     $: if (
         messageMetric === "messages" &&
         active &&
+        topLimit !== 10 &&
         !isLoadingMessagesTop &&
         messagesTopOverrideKey !== filterSignature
     ) {
@@ -346,13 +331,20 @@
     $: if (messageMetric === "messages") {
         overviewData = {
             overview: baseData.overview,
-            topPeople: messagesTopOverride?.topPeople ?? baseData.topPeople,
-            calendar: baseData.calendar,
+            topPeople: {
+                items: baseData.overview.people.slice(0, topLimit),
+            },
             activityHeatmap: baseData.activityHeatmap,
             messagesByMonth: baseData.messagesByMonth,
             messagesByHour: baseData.messagesByHour,
-            topChats: messagesTopOverride?.topChats ?? baseData.topChats,
-            topThemes: messagesTopOverride?.topThemes ?? baseData.topThemes,
+            topChats:
+                topLimit !== 10 && messagesTopOverride
+                    ? messagesTopOverride.topChats
+                    : baseData.topChats,
+            topThemes:
+                topLimit !== 10 && messagesTopOverride
+                    ? messagesTopOverride.topThemes
+                    : baseData.topThemes,
         };
     }
     $: if (messageMetric === "words" && wordMetricData) {
@@ -364,6 +356,10 @@
     $: overviewMetricLabel = messageCountLabel(messageMetric);
     $: overviewMetricTitle = messageCountTitle(messageMetric);
     $: messageStats = overviewData.overview.message_stats;
+    $: gapRange = formatGapRange(
+        messageStats.longest_period_without_messages_start,
+        messageStats.longest_period_without_messages_end,
+    );
 
     function maxMessageCount(points: Array<{ message_count: number }>): number {
         return Math.max(...points.map((point) => point.message_count || 0), 1);
@@ -629,10 +625,6 @@
                     </div>
                     <div>
                         <span>Longest period without messages</span>
-                        {@const gapRange = formatGapRange(
-                            messageStats.longest_period_without_messages_start,
-                            messageStats.longest_period_without_messages_end,
-                        )}
                         {#if gapRange}
                             <strong class="hover-title" title={gapRange}>
                                 {formatDuration(
